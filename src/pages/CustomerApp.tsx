@@ -31,7 +31,7 @@ import {
 import { cn, formatCurrency } from '../lib/utils';
 import { getLocalCategoryOptions, syncAllCategoryOptions, resolveProductOptions, calculateProductEffectivePrice, getProductPriceRange } from '../lib/optionsHelper';
 import { calculateDistanceMeters, getCurrentPosition, fetchAllServerGeofences } from '../lib/geoHelper';
-import { DeliveryZone, fetchAllServerDeliveryZones, getLocalDeliveryZones } from '../lib/deliveryHelper';
+import { DeliveryZone, fetchAllServerDeliveryZones, getLocalDeliveryZones, DEFAULT_DELIVERY_ZONES } from '../lib/deliveryHelper';
 import { initMetaPixel, trackViewContent, trackAddToCart, trackPurchase, trackCallWaiter } from '../lib/analytics';
 
 type CartItem = {
@@ -87,15 +87,18 @@ export default function CustomerApp() {
   } | null>(null);
   const [isLocatingDelivery, setIsLocatingDelivery] = useState(false);
   const [deliveryLocationError, setDeliveryLocationError] = useState<string | null>(null);
-  const [deliveryZones, setDeliveryZones] = useState<DeliveryZone[]>([]);
-  const [selectedZoneId, setSelectedZoneId] = useState<string>('');
+  const [deliveryZones, setDeliveryZones] = useState<DeliveryZone[]>(DEFAULT_DELIVERY_ZONES);
+  const [selectedZoneId, setSelectedZoneId] = useState<string>('dz_ps');
+  const [orderType, setOrderType] = useState<'delivery' | 'dine_in'>(
+    (!tableId || tableId === 'delivery' || tableId === 'd') ? 'delivery' : 'dine_in'
+  );
   const [orderPlaced, setOrderPlaced] = useState(false);
   const [lastOrderId, setLastOrderId] = useState<number | null>(null);
   const [waiterCalled, setWaiterCalled] = useState(false);
   const [isCallingWaiter, setIsCallingWaiter] = useState(false);
 
-  // Delivery order is active when no specific tableId is present in URL
-  const isDeliveryOrder = !tableId;
+  // Delivery order is active when in delivery mode or without specific tableId
+  const isDeliveryOrder = orderType === 'delivery' || !tableId;
 
   useEffect(() => {
     fetchData();
@@ -154,14 +157,16 @@ export default function CustomerApp() {
       // Fetch restaurant delivery zones and fees
       try {
         const allZones = await fetchAllServerDeliveryZones();
-        const rZones = allZones[res.id] || res.delivery_zones || getLocalDeliveryZones(res.id) || [];
-        setDeliveryZones(rZones);
-        const activeFirst = rZones.find((z: DeliveryZone) => z.is_active !== false);
+        const rZones = allZones[res.id] || res.delivery_zones || getLocalDeliveryZones(res.id) || DEFAULT_DELIVERY_ZONES;
+        const validZones = Array.isArray(rZones) && rZones.length > 0 ? rZones : DEFAULT_DELIVERY_ZONES;
+        setDeliveryZones(validZones);
+        const activeFirst = validZones.find((z: DeliveryZone) => z.is_active !== false);
         if (activeFirst) {
           setSelectedZoneId(activeFirst.id);
         }
       } catch (e) {
         console.warn('Delivery zones sync error:', e);
+        setDeliveryZones(DEFAULT_DELIVERY_ZONES);
       }
 
       setRestaurant(res);
@@ -495,7 +500,7 @@ export default function CustomerApp() {
           : 'توصيل عام';
 
         const deliveryHeader = isDeliveryOrder
-          ? `[🛵 دليفري | ${zoneInfoStr} | الاسم: ${deliveryInfo.customerName.trim()} | هاتف: ${deliveryInfo.phone.trim()} | العنوان: ${deliveryInfo.address.trim()}${deliveryInfo.notes.trim() ? ` | ملاحظات: ${deliveryInfo.notes.trim()}` : ''}]`
+          ? `[🛵 دليفري | ${zoneInfoStr} | الاسم: ${deliveryInfo.customerName.trim()} | هاتف: ${deliveryInfo.phone.trim()} | العنوان: ${deliveryInfo.address.trim()}${deliveryLocation ? ` | لوكيشن: ${deliveryLocation.mapsUrl}` : ''}${deliveryInfo.notes.trim() ? ` | ملاحظات: ${deliveryInfo.notes.trim()}` : ''}]`
           : '';
 
         const orderItemsList = cart.map((item, itemIdx) => {
@@ -770,20 +775,24 @@ export default function CustomerApp() {
               </div>
             </button>
           ) : (
-            <div className="flex-1 h-14 rounded-[18px] bg-gradient-to-r from-purple-50 to-indigo-50 border border-purple-200/80 px-3.5 flex items-center justify-between">
+            <button 
+              type="button"
+              onClick={() => setIsCartOpen(true)}
+              className="flex-1 h-14 rounded-[18px] bg-gradient-to-r from-purple-50 to-indigo-50 hover:from-purple-100 hover:to-indigo-100 border border-purple-200/80 px-3.5 flex items-center justify-between transition-all active:scale-98 cursor-pointer shadow-xs"
+            >
               <div className={cn("flex flex-col leading-[1.2]", isRTL ? "items-end text-right" : "items-start text-left")}>
                 <span className="text-[12px] font-black text-purple-900 flex items-center gap-1">
                   <Bike size={14} className="text-purple-600 inline shrink-0" />
                   {isRTL ? 'طلب دليفري وتوصيل' : 'Delivery Mode'}
                 </span>
-                <span className="text-[10px] font-bold text-purple-600">
-                  {isRTL ? '0% رسوم خدمة صالة' : '0% Service Fee'}
+                <span className="text-[10px] font-bold text-purple-700">
+                  {selectedZone ? `${selectedZone.name} (+${selectedZone.fee} جـ)` : (isRTL ? '0% رسوم خدمة صالة' : '0% Service Fee')}
                 </span>
               </div>
-              <span className="text-[10px] font-black bg-purple-200/70 text-purple-900 px-2 py-1 rounded-lg">
-                {isRTL ? 'أي مكان' : 'Anywhere'}
+              <span className="text-[10px] font-black bg-purple-600 text-white px-2.5 py-1 rounded-xl shadow-xs">
+                {selectedZone ? selectedZone.name : (isRTL ? 'اختر المنطقة' : 'Select Area')}
               </span>
-            </div>
+            </button>
           )}
 
         </div>
@@ -1360,6 +1369,38 @@ export default function CustomerApp() {
                   </motion.div>
                 ))}
               </div>
+              {/* Order Mode Switcher (Dine-in vs Delivery) */}
+              <div className="p-4 bg-gray-100/80 border-t border-gray-200">
+                <div className="flex bg-white p-1 rounded-2xl border border-gray-200 shadow-xs">
+                  <button
+                    type="button"
+                    onClick={() => setOrderType('delivery')}
+                    className={cn(
+                      "flex-1 py-2.5 px-3 rounded-xl text-xs font-black flex items-center justify-center gap-1.5 transition-all cursor-pointer",
+                      isDeliveryOrder
+                        ? "bg-purple-600 text-white shadow-md shadow-purple-600/30"
+                        : "text-gray-600 hover:text-gray-900 hover:bg-gray-50"
+                    )}
+                  >
+                    <Bike size={16} />
+                    <span>{isRTL ? '🛵 توصيل دليفري (0% خدمة)' : '🛵 Delivery (0% Fee)'}</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setOrderType('dine_in')}
+                    className={cn(
+                      "flex-1 py-2.5 px-3 rounded-xl text-xs font-black flex items-center justify-center gap-1.5 transition-all cursor-pointer",
+                      !isDeliveryOrder
+                        ? "bg-gray-900 text-white shadow-md shadow-gray-900/30"
+                        : "text-gray-600 hover:text-gray-900 hover:bg-gray-50"
+                    )}
+                  >
+                    <UtensilsCrossed size={16} />
+                    <span>{isRTL ? '🍽️ داخل الصالة (طاولة)' : '🍽️ Dine-in (Table)'}</span>
+                  </button>
+                </div>
+              </div>
+
               {/* Delivery Details Form when isDeliveryOrder is true */}
               {isDeliveryOrder && (
                 <div className="p-6 bg-purple-50/60 border-t border-purple-100 space-y-4">
@@ -1381,9 +1422,9 @@ export default function CustomerApp() {
                       <label className="block text-[11px] font-black text-purple-900 text-right">
                         {isRTL ? 'اختر منطقة / مكان التوصيل *' : 'Select Delivery Area / Zone *'}
                       </label>
-                      <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+                      <div className="grid grid-cols-2 sm:grid-cols-2 gap-2">
                         {activeDeliveryZones.map((zone) => {
-                          const isSelected = (selectedZone?.id === zone.id);
+                          const isSelected不易 = (selectedZone?.id === zone.id);
                           return (
                             <button
                               key={zone.id}
@@ -1391,23 +1432,23 @@ export default function CustomerApp() {
                               onClick={() => setSelectedZoneId(zone.id)}
                               className={cn(
                                 "p-3 rounded-2xl border text-right transition-all flex flex-col justify-between gap-1 shadow-sm active:scale-95 cursor-pointer",
-                                isSelected 
+                                isSelected不易 
                                   ? "bg-purple-600 text-white border-purple-600 shadow-md ring-2 ring-purple-300"
                                   : "bg-white text-gray-800 border-gray-200 hover:border-purple-300 hover:bg-purple-50/50"
                               )}
                             >
                               <div className="flex items-center justify-between w-full">
-                                <span className={cn("text-xs font-black truncate", isSelected ? "text-white" : "text-gray-900")}>
+                                <span className={cn("text-xs font-black truncate", isSelected不易 ? "text-white" : "text-gray-900")}>
                                   {zone.name}
                                 </span>
-                                {isSelected && <CheckCircle2 size={14} className="text-white shrink-0" />}
+                                {isSelected不易 && <CheckCircle2 size={14} className="text-white shrink-0" />}
                               </div>
                               <div className="flex items-center justify-between text-[11px] font-bold">
-                                <span className={isSelected ? "text-purple-100" : "text-purple-700 font-black"}>
+                                <span className={isSelected不易 ? "text-purple-100" : "text-purple-700 font-black"}>
                                   +{currency(zone.fee)}
                                 </span>
                                 {zone.estimated_time && (
-                                  <span className={cn("text-[10px]", isSelected ? "text-purple-200" : "text-gray-400")}>
+                                  <span className={cn("text-[10px]", isSelected不易 ? "text-purple-200" : "text-gray-400")}>
                                     {zone.estimated_time}
                                   </span>
                                 )}
@@ -1418,6 +1459,86 @@ export default function CustomerApp() {
                       </div>
                     </div>
                   )}
+
+                  {/* GPS Auto Location Detection (Optional) */}
+                  <div className="space-y-1.5 pt-1">
+                    <label className="block text-[11px] font-bold text-gray-700 text-right">
+                      {isRTL ? 'تحديد اللوكيشن تلقائياً بالـ GPS (اختياري):' : 'Auto GPS Location (Optional):'}
+                    </label>
+
+                    {!deliveryLocation ? (
+                      <button
+                        type="button"
+                        onClick={handleGetDeliveryLocation}
+                        disabled={isLocatingDelivery}
+                        className="w-full py-3 px-4 bg-gradient-to-r from-blue-50 to-indigo-50 hover:from-blue-100 hover:to-indigo-100 border-2 border-dashed border-blue-300 hover:border-blue-400 text-blue-900 rounded-2xl text-xs font-black flex items-center justify-between shadow-xs active:scale-98 transition-all cursor-pointer"
+                      >
+                        <div className="flex items-center gap-2.5">
+                          <div className="w-8 h-8 rounded-xl bg-blue-600 text-white flex items-center justify-center shrink-0 shadow-sm">
+                            {isLocatingDelivery ? (
+                              <div className="w-4 h-4 border-2 border-white/40 border-t-white rounded-full animate-spin" />
+                            ) : (
+                              <Crosshair size={16} className="animate-pulse" />
+                            )}
+                          </div>
+                          <div className="text-right">
+                            <span className="block font-black text-blue-950 text-xs">
+                              {isRTL ? '📍 تحديد موقعي الحالي تلقائياً بالـ GPS' : '📍 Detect Current GPS Location'}
+                            </span>
+                            <span className="block text-[10px] text-blue-700 font-medium">
+                              {isRTL ? 'ضغطة واحدة لمشاركة رابط الخريطة مع الدليفري' : 'Share live Google Maps link with courier'}
+                            </span>
+                          </div>
+                        </div>
+                        <span className="text-[11px] bg-blue-600 hover:bg-blue-700 text-white font-bold px-3 py-1.5 rounded-xl shrink-0 shadow-sm">
+                          {isLocatingDelivery ? (isRTL ? 'جارِ التحديد...' : 'Locating...') : (isRTL ? 'تحديد الموقع' : 'Detect GPS')}
+                        </span>
+                      </button>
+                    ) : (
+                      <div className="p-3 bg-emerald-50 border border-emerald-300 rounded-2xl space-y-2 animate-in fade-in">
+                        <div className="flex items-center justify-between">
+                          <div className="flex items-center gap-2 text-emerald-950 font-black text-xs">
+                            <CheckCircle2 size={16} className="text-emerald-600 shrink-0" />
+                            <span>{isRTL ? '✓ تم حفظ موقعك الجغرافي (GPS) بنجاح' : '✓ GPS Location saved'}</span>
+                          </div>
+                          <button
+                            type="button"
+                            onClick={handleClearDeliveryLocation}
+                            className="text-[10px] text-red-600 hover:text-red-800 font-bold bg-white px-2.5 py-1 rounded-lg border border-red-200 shadow-xs cursor-pointer"
+                          >
+                            {isRTL ? 'إلغاء الموقع' : 'Remove'}
+                          </button>
+                        </div>
+                        <div className="flex items-center justify-between bg-white p-2.5 rounded-xl border border-emerald-200">
+                          <span className="text-gray-700 font-mono text-[11px] font-bold">
+                            📍 {deliveryLocation.latitude.toFixed(5)}, {deliveryLocation.longitude.toFixed(5)}
+                          </span>
+                          <a
+                            href={deliveryLocation.mapsUrl}
+                            target="_blank"
+                            rel="noreferrer"
+                            className="text-blue-600 hover:text-blue-800 font-bold text-xs flex items-center gap-1 bg-blue-50 px-2 py-1 rounded-lg border border-blue-200"
+                          >
+                            <span>{isRTL ? 'معاينة على الخريطة' : 'Preview Map'}</span>
+                            <ExternalLink size={12} />
+                          </a>
+                        </div>
+                      </div>
+                    )}
+
+                    {deliveryLocationError && (
+                      <div className="p-2.5 bg-amber-50 border border-amber-200 text-amber-900 text-[11px] rounded-xl font-medium text-right flex items-center justify-between gap-2">
+                        <span>⚠️ {deliveryLocationError}</span>
+                        <button
+                          type="button"
+                          onClick={handleGetDeliveryLocation}
+                          className="text-[10px] bg-amber-200/80 px-2 py-0.5 rounded-md font-bold text-amber-900 shrink-0 cursor-pointer"
+                        >
+                          إعادة المحاولة
+                        </button>
+                      </div>
+                    )}
+                  </div>
                   
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                     <div>

@@ -565,9 +565,19 @@ async function startServer() {
     }
   });
 
+  const DEFAULT_DELIVERY_ZONES_SERVER = [
+    { id: 'dz_ps', name: 'بورسعيد', fee: 30, estimated_time: '30-45 دقيقة', is_active: true },
+    { id: 'dz_pf', name: 'بورفؤاد', fee: 40, estimated_time: '40-50 دقيقة', is_active: true },
+    { id: 'dz_fy', name: 'الفيروز', fee: 50, estimated_time: '45-60 دقيقة', is_active: true },
+    { id: 'dz_em', name: 'الحي الاماراتي', fee: 50, estimated_time: '45-60 دقيقة', is_active: true },
+  ];
+
   // Get All Restaurant Delivery Zones API
   app.get("/api/restaurants/delivery-zones", (req, res) => {
-    res.status(200).json({ delivery_zones: restaurantDeliveryZonesStore });
+    res.status(200).json({ 
+      delivery_zones: restaurantDeliveryZonesStore,
+      default_zones: DEFAULT_DELIVERY_ZONES_SERVER
+    });
   });
 
   // Vite integration

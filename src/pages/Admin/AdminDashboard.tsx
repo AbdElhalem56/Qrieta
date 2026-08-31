@@ -2399,24 +2399,17 @@ export default function AdminDashboard() {
                     </button>
                     <button
                       type="button"
-                      onClick={() => handleAddPresetZone('حي الزهور', 30, '30-40 دقيقة')}
+                      onClick={() => handleAddPresetZone('الفيروز', 50, '45-60 دقيقة')}
                       className="px-3.5 py-1.5 bg-white hover:bg-purple-100 text-purple-900 border border-purple-200 rounded-xl text-xs font-black transition-all active:scale-95 shadow-sm"
                     >
-                      + حي الزهور (30 جـ)
+                      + الفيروز (50 جـ)
                     </button>
                     <button
                       type="button"
-                      onClick={() => handleAddPresetZone('حي الشرق', 25, '20-30 دقيقة')}
+                      onClick={() => handleAddPresetZone('الحي الاماراتي', 50, '45-60 دقيقة')}
                       className="px-3.5 py-1.5 bg-white hover:bg-purple-100 text-purple-900 border border-purple-200 rounded-xl text-xs font-black transition-all active:scale-95 shadow-sm"
                     >
-                      + حي الشرق (25 جـ)
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => handleAddPresetZone('حي الضواحي', 35, '35-45 دقيقة')}
-                      className="px-3.5 py-1.5 bg-white hover:bg-purple-100 text-purple-900 border border-purple-200 rounded-xl text-xs font-black transition-all active:scale-95 shadow-sm"
-                    >
-                      + حي الضواحي (35 جـ)
+                      + الحي الاماراتي (50 جـ)
                     </button>
                   </div>
                 </div>
