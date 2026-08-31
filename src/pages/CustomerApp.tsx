@@ -200,9 +200,12 @@ export default function CustomerApp() {
 
       setRestaurant(res);
 
-      // If table QR ordering is active and restaurant has geofence enabled, check location
-      if (tableId && res.geofence_enabled && res.latitude && res.longitude) {
+      // If table QR ordering is active and restaurant has geofence enabled with valid coordinates, check location
+      if (tableId && res.geofence_enabled && typeof res.latitude === 'number' && typeof res.longitude === 'number' && !isNaN(res.latitude) && !isNaN(res.longitude) && res.latitude !== 0 && res.longitude !== 0) {
         checkGeofence(res);
+      } else {
+        // Clear any previous geo checking status if geofence is disabled
+        setGeoState({ status: 'idle' });
       }
       
       const queries: any[] = [
@@ -386,7 +389,8 @@ export default function CustomerApp() {
   const checkGeofence = async (targetRes?: Restaurant): Promise<boolean> => {
     const activeRes = targetRes || restaurant;
     if (!activeRes || !activeRes.geofence_enabled || !activeRes.latitude || !activeRes.longitude) {
-      return true; // No geofence restriction active
+      setGeoState({ status: 'idle' });
+      return true; // No geofence restriction active - do NOT request location permission
     }
 
     setGeoState(prev => ({ ...prev, status: 'checking' }));
