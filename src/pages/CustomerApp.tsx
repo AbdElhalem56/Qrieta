@@ -31,7 +31,7 @@ import {
 } from 'lucide-react';
 import { cn, formatCurrency } from '../lib/utils';
 import { getLocalCategoryOptions, syncAllCategoryOptions, resolveProductOptions, calculateProductEffectivePrice, getProductPriceRange } from '../lib/optionsHelper';
-import { calculateDistanceMeters, getCurrentPosition, fetchAllServerGeofences } from '../lib/geoHelper';
+import { calculateDistanceMeters, getCurrentPosition, fetchAllServerGeofences, getLocalRestaurantGeofence } from '../lib/geoHelper';
 import { DeliveryZone, fetchAllServerDeliveryZones, getLocalDeliveryZones, DEFAULT_DELIVERY_ZONES } from '../lib/deliveryHelper';
 import { initMetaPixel, trackViewContent, trackAddToCart, trackPurchase, trackCallWaiter } from '../lib/analytics';
 
@@ -112,8 +112,8 @@ export default function CustomerApp() {
   const [waiterCalled, setWaiterCalled] = useState(false);
   const [isCallingWaiter, setIsCallingWaiter] = useState(false);
 
-  // Delivery order is active when in delivery mode or without specific tableId
-  const isDeliveryOrder = orderType === 'delivery' || !tableId;
+  // Delivery order is active when in delivery mode
+  const isDeliveryOrder = orderType === 'delivery';
 
   useEffect(() => {
     // Default to Arabic on initial customer load unless user explicitly set language
@@ -163,10 +163,10 @@ export default function CustomerApp() {
         initMetaPixel(pixelToInit);
       }
 
-      // Merge server geofences if present
+      // Merge server geofences and payment model if present
       try {
         const geofences = await fetchAllServerGeofences();
-        const g = geofences[res.id];
+        const g = geofences[res.id] || (res.slug ? geofences[res.slug] : null) || getLocalRestaurantGeofence(res.id) || (res.slug ? getLocalRestaurantGeofence(res.slug) : null);
         if (g) {
           res.geofence_enabled = g.geofence_enabled === true;
           res.latitude = g.latitude !== undefined ? g.latitude : res.latitude;
@@ -182,10 +182,14 @@ export default function CustomerApp() {
         } else {
           // If no custom geofence is configured, default geofence_enabled to false
           res.geofence_enabled = res.geofence_enabled === true;
+          res.is_prepaid = res.is_prepaid !== undefined ? res.is_prepaid : (res.payment_model === 'prepaid');
+          res.payment_model = res.payment_model || (res.is_prepaid ? 'prepaid' : 'postpaid');
         }
       } catch (e) {
         console.warn('Geofence sync error:', e);
         res.geofence_enabled = res.geofence_enabled === true;
+        res.is_prepaid = res.is_prepaid !== undefined ? res.is_prepaid : (res.payment_model === 'prepaid');
+        res.payment_model = res.payment_model || (res.is_prepaid ? 'prepaid' : 'postpaid');
       }
 
       // Fetch restaurant delivery zones and fees
@@ -638,7 +642,14 @@ export default function CustomerApp() {
           }
         }
 
-        const isPrepaidRest = !!(restaurant.is_prepaid || restaurant.payment_model === 'prepaid');
+        const isPrepaidRest = Boolean(
+          restaurant.is_prepaid === true || 
+          restaurant.payment_model === 'prepaid' ||
+          (restaurant.id && getLocalRestaurantGeofence(restaurant.id)?.is_prepaid) ||
+          (restaurant.id && getLocalRestaurantGeofence(restaurant.id)?.payment_model === 'prepaid') ||
+          (restaurant.slug && getLocalRestaurantGeofence(restaurant.slug)?.is_prepaid) ||
+          (restaurant.slug && getLocalRestaurantGeofence(restaurant.slug)?.payment_model === 'prepaid')
+        );
         setCart([]);
         setIsCartOpen(false);
         setLastOrderId(order.id);
@@ -1975,11 +1986,8 @@ export default function CustomerApp() {
               {/* Daily Order Number Badge (Resets daily at 12 AM per restaurant) */}
               <div className="w-full bg-gradient-to-r from-gray-900 to-gray-800 text-white rounded-2xl p-4 mb-4 shadow-md flex items-center justify-between">
                 <div className="text-right">
-                  <span className="text-[11px] font-bold text-gray-300 block uppercase tracking-wider">
+                  <span className="text-xs sm:text-sm font-bold text-gray-300 block uppercase tracking-wider">
                     {isRTL ? 'رقم الطلب الخاص بك اليوم' : 'Daily Order #'}
-                  </span>
-                  <span className="text-[11px] text-gray-400 font-medium">
-                    {isRTL ? 'يبدأ العد من رقم 1 يومياً' : 'Sequence starts at 1 daily'}
                   </span>
                 </div>
                 <div className="bg-white/15 px-4 py-2 rounded-xl border border-white/20">

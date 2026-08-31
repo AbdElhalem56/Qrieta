@@ -246,22 +246,25 @@ export default function SuperAdminDashboard() {
       const { data } = await supabase.from('restaurants').select('*');
       const geofences = await fetchAllServerGeofences();
       if (data) {
-        const merged = data.map(r => ({
-          ...r,
-          service_fee_percentage: geofences[r.id]?.service_fee_percentage !== undefined 
-            ? geofences[r.id].service_fee_percentage 
-            : (r.service_fee_percentage !== undefined ? r.service_fee_percentage : 0),
-          is_prepaid: geofences[r.id]?.is_prepaid !== undefined
-            ? geofences[r.id].is_prepaid
-            : (r.is_prepaid !== undefined ? r.is_prepaid : (r.payment_model === 'prepaid')),
-          payment_model: geofences[r.id]?.payment_model || r.payment_model || (geofences[r.id]?.is_prepaid || r.is_prepaid ? 'prepaid' : 'postpaid'),
-          ...(geofences[r.id] ? {
-            geofence_enabled: geofences[r.id].geofence_enabled ?? r.geofence_enabled,
-            latitude: geofences[r.id].latitude ?? r.latitude,
-            longitude: geofences[r.id].longitude ?? r.longitude,
-            geofence_radius_meters: geofences[r.id].geofence_radius_meters ?? r.geofence_radius_meters,
-          } : {})
-        }));
+        const merged = data.map(r => {
+          const g = geofences[r.id] || (r.slug ? geofences[r.slug] : null);
+          return {
+            ...r,
+            service_fee_percentage: g?.service_fee_percentage !== undefined 
+              ? g.service_fee_percentage 
+              : (r.service_fee_percentage !== undefined ? r.service_fee_percentage : 0),
+            is_prepaid: g?.is_prepaid !== undefined
+              ? g.is_prepaid
+              : (r.is_prepaid !== undefined ? r.is_prepaid : (r.payment_model === 'prepaid')),
+            payment_model: g?.payment_model || r.payment_model || (g?.is_prepaid || r.is_prepaid ? 'prepaid' : 'postpaid'),
+            ...(g ? {
+              geofence_enabled: g.geofence_enabled ?? r.geofence_enabled,
+              latitude: g.latitude ?? r.latitude,
+              longitude: g.longitude ?? r.longitude,
+              geofence_radius_meters: g.geofence_radius_meters ?? r.geofence_radius_meters,
+            } : {})
+          };
+        });
         setRestaurants(merged);
       }
     } catch (err) {
@@ -540,7 +543,7 @@ export default function SuperAdminDashboard() {
       
       // Persist geofence, prepaid mode, and service fees to persistent server store and local cache
       if (targetId) {
-        await syncRestaurantGeofence(targetId, geofencePayload);
+        await syncRestaurantGeofence(targetId, geofencePayload, editingRes.slug);
       }
       
       setIsResModalOpen(false);

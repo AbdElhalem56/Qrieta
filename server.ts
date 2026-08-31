@@ -472,6 +472,9 @@ async function startServer() {
 
     try {
       restaurantGeofencesStore[restaurant_id] = geofence || {};
+      if (req.body.slug) {
+        restaurantGeofencesStore[req.body.slug] = geofence || {};
+      }
       persistGeofences();
 
       const supabaseUrl = process.env.VITE_SUPABASE_URL || process.env.SUPABASE_URL;

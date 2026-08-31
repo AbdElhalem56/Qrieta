@@ -89,13 +89,16 @@ export function saveLocalRestaurantGeofence(restaurantId: string, geofence: Rest
   }
 }
 
-export async function syncRestaurantGeofence(restaurantId: string, geofence: RestaurantGeofence): Promise<boolean> {
+export async function syncRestaurantGeofence(restaurantId: string, geofence: RestaurantGeofence, slug?: string): Promise<boolean> {
   saveLocalRestaurantGeofence(restaurantId, geofence);
+  if (slug) {
+    saveLocalRestaurantGeofence(slug, geofence);
+  }
   try {
     const res = await fetch('/api/restaurants/geofence', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ restaurant_id: restaurantId, geofence }),
+      body: JSON.stringify({ restaurant_id: restaurantId, geofence, slug }),
     });
     return res.ok;
   } catch (e) {
