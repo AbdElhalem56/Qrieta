@@ -493,46 +493,43 @@ export default function SuperAdminDashboard() {
         payment_model: (isPrepaid ? 'prepaid' : 'postpaid') as 'prepaid' | 'postpaid'
       };
 
-      // Base fields that are standard in Supabase restaurants table
-      const baseDbPayload: Record<string, any> = {
+      // Guaranteed pure standard Supabase columns that always exist
+      const pureStandardDbPayload: Record<string, any> = {
         name: editingRes.name,
         slug: editingRes.slug,
         primary_color: editingRes.primary_color || '#f97316',
         secondary_color: editingRes.secondary_color || '#1f2937',
         is_active: editingRes.is_active !== undefined ? editingRes.is_active : true,
-        service_fee_percentage: serviceFee,
-        is_prepaid: isPrepaid,
-        payment_model: isPrepaid ? 'prepaid' : 'postpaid',
       };
       if (editingRes.logo_url !== undefined) {
-        baseDbPayload.logo_url = editingRes.logo_url;
+        pureStandardDbPayload.logo_url = editingRes.logo_url;
       }
+
+      // Extended DB payload in case custom columns exist in Supabase
+      const extendedDbPayload: Record<string, any> = {
+        ...pureStandardDbPayload,
+        ...geofencePayload
+      };
 
       let targetId = editingRes.id;
 
       if (editingRes.id) {
-        // Try updating with geofence fields first
-        let updateRes = await supabase.from('restaurants').update({
-          ...baseDbPayload,
-          ...geofencePayload
-        }).eq('id', editingRes.id);
+        // Try updating with all fields first
+        let updateRes = await supabase.from('restaurants').update(extendedDbPayload).eq('id', editingRes.id);
 
-        // If it failed because columns do not exist in Supabase schema, fall back to baseDbPayload
+        // If it failed because custom columns do not exist in remote Supabase schema cache, update core columns
         if (updateRes.error) {
-          console.warn('Supabase update with geofence failed, retrying with base columns:', updateRes.error);
-          updateRes = await supabase.from('restaurants').update(baseDbPayload).eq('id', editingRes.id);
+          console.warn('Supabase update with custom columns failed, falling back to core columns:', updateRes.error);
+          updateRes = await supabase.from('restaurants').update(pureStandardDbPayload).eq('id', editingRes.id);
           if (updateRes.error) throw updateRes.error;
         }
       } else {
         // Insert new restaurant
-        let insertRes = await supabase.from('restaurants').insert({
-          ...baseDbPayload,
-          ...geofencePayload
-        }).select().single();
+        let insertRes = await supabase.from('restaurants').insert(extendedDbPayload).select().single();
 
         if (insertRes.error) {
-          console.warn('Supabase insert with geofence failed, retrying with base columns:', insertRes.error);
-          insertRes = await supabase.from('restaurants').insert(baseDbPayload).select().single();
+          console.warn('Supabase insert with custom columns failed, falling back to core columns:', insertRes.error);
+          insertRes = await supabase.from('restaurants').insert(pureStandardDbPayload).select().single();
           if (insertRes.error) throw insertRes.error;
         }
         
@@ -541,14 +538,14 @@ export default function SuperAdminDashboard() {
         }
       }
       
-      // Persist geofence to backend store and local cache
+      // Persist geofence, prepaid mode, and service fees to persistent server store and local cache
       if (targetId) {
         await syncRestaurantGeofence(targetId, geofencePayload);
       }
       
       setIsResModalOpen(false);
       await fetchRestaurants();
-      alert('تم حفظ بيانات المطعم والنطاق الجغرافي بنجاح! 📍');
+      alert('تم حفظ بيانات المطعم وإعدادات الدفع والنطاق الجغرافي بنجاح! 📍💳');
     } catch (err: any) {
       console.error('Res save error:', err);
       alert(`خطأ في الحفظ: ${err.message || 'فشلت العملية'}`);
