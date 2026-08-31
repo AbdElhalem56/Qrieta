@@ -142,8 +142,10 @@ export default function CustomerApp() {
 
     if (res) {
       // Initialize Meta Pixel if configured for this restaurant
-      if (res.fb_pixel_id) {
-        initMetaPixel(res.fb_pixel_id);
+      const cachedPixel = typeof window !== 'undefined' ? localStorage.getItem(`qrieta_fb_pixel_${res.id}`) : null;
+      const pixelToInit = res.fb_pixel_id || cachedPixel;
+      if (pixelToInit) {
+        initMetaPixel(pixelToInit);
       }
 
       // Merge server geofences if present

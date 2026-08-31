@@ -324,27 +324,65 @@ export default function AdminDashboard() {
       .select('*')
       .eq('id', targetId)
       .single();
-    if (data) setRestaurant(data);
+    if (data) {
+      const cachedPixel = localStorage.getItem(`qrieta_fb_pixel_${data.id}`);
+      setRestaurant({
+        ...data,
+        fb_pixel_id: data.fb_pixel_id || cachedPixel || ''
+      });
+    }
   };
 
   const updateRestaurantColors = async () => {
     if (!restaurant) return;
     setIsSavingColors(true);
-    const { error } = await supabase
-      .from('restaurants')
-      .update({
+    try {
+      // 1. Guaranteed standard columns in restaurants table
+      const basePayload: Record<string, any> = {
+        name: restaurant.name,
         primary_color: restaurant.primary_color,
         secondary_color: restaurant.secondary_color,
-        name: restaurant.name,
-        logo_url: restaurant.logo_url,
-        fb_pixel_id: restaurant.fb_pixel_id || null,
-        custom_domain: restaurant.custom_domain || null
-      })
-      .eq('id', restaurant.id);
-    
-    if (error) alert(error.message);
-    else alert('تم حفظ الإعدادات بنجاح');
-    setIsSavingColors(false);
+        logo_url: restaurant.logo_url
+      };
+
+      // 2. Try extended payload if database has fb_pixel_id column
+      const extendedPayload: Record<string, any> = {
+        ...basePayload,
+        fb_pixel_id: restaurant.fb_pixel_id || null
+      };
+
+      let { error } = await supabase
+        .from('restaurants')
+        .update(extendedPayload)
+        .eq('id', restaurant.id);
+
+      // If failed due to missing columns in DB schema (e.g. fb_pixel_id or other column not present in schema)
+      if (error && (error.message?.includes('column') || error.message?.includes('schema cache'))) {
+        console.warn('Extended columns update failed, retrying with core columns:', error.message);
+        const retryRes = await supabase
+          .from('restaurants')
+          .update(basePayload)
+          .eq('id', restaurant.id);
+        error = retryRes.error;
+      }
+
+      if (error) {
+        alert('حدث خطأ أثناء حفظ الإعدادات: ' + error.message);
+      } else {
+        // Persist fb_pixel_id locally to guarantee it stays available
+        if (restaurant.fb_pixel_id) {
+          localStorage.setItem(`qrieta_fb_pixel_${restaurant.id}`, restaurant.fb_pixel_id);
+        } else {
+          localStorage.removeItem(`qrieta_fb_pixel_${restaurant.id}`);
+        }
+        alert(isRTL ? 'تم حفظ جميع الإعدادات بنجاح!' : 'Settings saved successfully!');
+      }
+    } catch (err: any) {
+      console.error('Error in updateRestaurantColors:', err);
+      alert('حدث خطأ أثناء الحفظ: ' + (err.message || 'فشلت العملية'));
+    } finally {
+      setIsSavingColors(false);
+    }
   };
 
   const fetchData = async (resId?: string) => {

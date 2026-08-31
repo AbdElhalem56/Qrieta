@@ -37,6 +37,9 @@ begin
     if not exists (select 1 from information_schema.columns where table_name='restaurants' and column_name='geofence_radius_meters') then
         alter table public.restaurants add column geofence_radius_meters integer default 100;
     end if;
+    if not exists (select 1 from information_schema.columns where table_name='restaurants' and column_name='fb_pixel_id') then
+        alter table public.restaurants add column fb_pixel_id text;
+    end if;
 end $$;
 
 -- Migration: Enforce CASCADE on all foreign keys referencing restaurants
