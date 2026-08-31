@@ -1,6 +1,7 @@
 import React, { useEffect, useState, useRef } from 'react';
 import { createClient } from '@supabase/supabase-js';
 import { supabase, supabaseUrl, supabaseAnonKey, Restaurant, Table } from '../../lib/supabase';
+import qretaLogo from '../../assets/images/qreta_logo_1787613852268.jpg';
 import { 
   Building2, 
   Plus, 
@@ -639,10 +640,10 @@ export default function SuperAdminDashboard() {
       {/* Mobile Top Bar */}
       <div className="md:hidden flex items-center justify-between p-4 border-b bg-white sticky top-0 z-[100]">
         <div className="flex items-center gap-3">
-          <div className="w-10 h-10 bg-gray-900 rounded-xl flex items-center justify-center text-white">
-            <Settings size={20} />
+          <div className="w-10 h-10 bg-white border border-gray-200 rounded-xl flex items-center justify-center p-1 overflow-hidden shadow-xs">
+            <img src={qretaLogo} alt="Qrieta Logo" className="w-full h-full object-contain" referrerPolicy="no-referrer" />
           </div>
-          <h1 className="text-xl font-black italic">Qrieta HQ</h1>
+          <h1 className="text-xl font-black italic text-gray-900">Qrieta HQ</h1>
         </div>
         <div className="flex items-center gap-2">
           <button 
@@ -673,11 +674,14 @@ export default function SuperAdminDashboard() {
         isSidebarOpen ? "translate-x-0" : "translate-x-full"
       )}>
         <div>
-          <div className="p-8 hidden md:flex items-center gap-3">
-            <div className="w-10 h-10 bg-gray-900 rounded-xl flex items-center justify-center text-white">
-              <Settings size={20} />
+          <div className="p-6 hidden md:flex items-center gap-3 border-b">
+            <div className="w-11 h-11 bg-white border border-gray-200 rounded-xl flex items-center justify-center p-1 overflow-hidden shadow-xs">
+              <img src={qretaLogo} alt="Qrieta Logo" className="w-full h-full object-contain" referrerPolicy="no-referrer" />
             </div>
-            <h1 className="text-xl font-black italic">Qrieta HQ</h1>
+            <div>
+              <h1 className="text-lg font-black italic text-gray-900 leading-tight">Qrieta HQ</h1>
+              <p className="text-[10px] text-gray-500 font-bold">Super Admin Panel</p>
+            </div>
           </div>
           
           <nav className="p-4 space-y-2 w-full mt-4 md:mt-0">
