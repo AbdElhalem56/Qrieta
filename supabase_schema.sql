@@ -40,6 +40,12 @@ begin
     if not exists (select 1 from information_schema.columns where table_name='restaurants' and column_name='fb_pixel_id') then
         alter table public.restaurants add column fb_pixel_id text;
     end if;
+    if not exists (select 1 from information_schema.columns where table_name='restaurants' and column_name='is_prepaid') then
+        alter table public.restaurants add column is_prepaid boolean default false;
+    end if;
+    if not exists (select 1 from information_schema.columns where table_name='restaurants' and column_name='payment_model') then
+        alter table public.restaurants add column payment_model text default 'postpaid';
+    end if;
 end $$;
 
 -- Migration: Enforce CASCADE on all foreign keys referencing restaurants

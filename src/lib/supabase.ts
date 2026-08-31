@@ -25,6 +25,8 @@ export type Restaurant = {
   fb_pixel_id?: string;
   custom_domain?: string;
   tiktok_pixel_id?: string;
+  is_prepaid?: boolean;
+  payment_model?: 'prepaid' | 'postpaid';
 };
 
 export type Table = {

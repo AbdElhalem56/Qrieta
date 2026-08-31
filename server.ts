@@ -489,7 +489,9 @@ async function startServer() {
             latitude: geofence.latitude,
             longitude: geofence.longitude,
             geofence_radius_meters: geofence.geofence_radius_meters,
-            service_fee_percentage: geofence.service_fee_percentage
+            service_fee_percentage: geofence.service_fee_percentage,
+            is_prepaid: geofence.is_prepaid,
+            payment_model: geofence.payment_model
           }).eq("id", restaurant_id);
         } catch (dbErr) {
           // In case column doesn't exist yet, file store is the source of truth
@@ -506,6 +508,95 @@ async function startServer() {
   // Get All Restaurant Geofences API
   app.get("/api/restaurants/geofence", (req, res) => {
     res.status(200).json({ geofences: restaurantGeofencesStore });
+  });
+
+  // Persistent daily order sequence store (starts from 1 each day at 12:00 AM)
+  const dailySequenceFilePath = path.join(process.cwd(), "daily-order-sequences.json");
+  let dailySequenceStore: Record<string, number> = {};
+
+  try {
+    if (fs.existsSync(dailySequenceFilePath)) {
+      const sData = fs.readFileSync(dailySequenceFilePath, "utf-8");
+      dailySequenceStore = JSON.parse(sData || "{}");
+    }
+  } catch (e) {
+    console.warn("Could not read daily-order-sequences.json:", e);
+  }
+
+  const persistDailySequences = () => {
+    try {
+      fs.writeFileSync(dailySequenceFilePath, JSON.stringify(dailySequenceStore, null, 2), "utf-8");
+    } catch (e) {
+      console.warn("Could not write daily-order-sequences.json:", e);
+    }
+  };
+
+  // API to get/assign daily sequence order number per restaurant
+  app.post("/api/orders/daily-sequence", async (req, res) => {
+    const { restaurant_id, action } = req.body;
+    if (!restaurant_id) {
+      return res.status(400).json({ error: "معرف المطعم مطلوب." });
+    }
+
+    try {
+      const now = new Date();
+      // Date in YYYY-MM-DD
+      const dateKey = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+      const storeKey = `${restaurant_id}_${dateKey}`;
+
+      // Also count today's orders in database from 00:00:00 local time
+      let dbCount = 0;
+      const supabaseUrl = process.env.VITE_SUPABASE_URL || process.env.SUPABASE_URL;
+      const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+      const anonKey = process.env.VITE_SUPABASE_ANON_KEY || process.env.SUPABASE_ANON_KEY;
+
+      if (supabaseUrl) {
+        const client = serviceRoleKey
+          ? createClient(supabaseUrl, serviceRoleKey)
+          : createClient(supabaseUrl, anonKey || "");
+
+        const startOfDay = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0, 0, 0, 0);
+        try {
+          const { count, error } = await client
+            .from("orders")
+            .select("id", { count: "exact", head: true })
+            .eq("restaurant_id", restaurant_id)
+            .gte("created_at", startOfDay.toISOString());
+
+          if (!error && typeof count === 'number') {
+            dbCount = count;
+          }
+        } catch (dbErr) {
+          console.warn("Daily count error from DB:", dbErr);
+        }
+      }
+
+      const currentSaved = dailySequenceStore[storeKey] || 0;
+      let sequence = Math.max(dbCount, currentSaved);
+
+      if (action === 'next') {
+        sequence = Math.max(sequence + 1, dbCount);
+        if (sequence <= 0) sequence = 1;
+        dailySequenceStore[storeKey] = sequence;
+        persistDailySequences();
+      } else {
+        if (sequence <= 0) {
+          sequence = dbCount > 0 ? dbCount : 1;
+          dailySequenceStore[storeKey] = sequence;
+          persistDailySequences();
+        }
+      }
+
+      res.status(200).json({
+        success: true,
+        restaurant_id,
+        date: dateKey,
+        daily_order_number: sequence
+      });
+    } catch (err: any) {
+      console.error("Daily sequence API error:", err);
+      res.status(500).json({ error: err.message || "فشل في جلب رقم الطلب اليومي" });
+    }
   });
 
   // Persistent restaurant delivery zones store

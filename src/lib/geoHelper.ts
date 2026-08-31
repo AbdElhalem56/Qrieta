@@ -6,6 +6,8 @@ export interface RestaurantGeofence {
   longitude?: number | null;
   geofence_radius_meters?: number;
   service_fee_percentage?: number;
+  is_prepaid?: boolean;
+  payment_model?: 'prepaid' | 'postpaid';
 }
 
 // Calculate distance in meters between two GPS coordinates using Haversine formula

@@ -38,7 +38,8 @@ import {
   Receipt,
   Bike,
   Copy,
-  Check
+  Check,
+  CreditCard
 } from 'lucide-react';
 import { QRCodeSVG } from 'qrcode.react';
 import { 
@@ -250,6 +251,10 @@ export default function SuperAdminDashboard() {
           service_fee_percentage: geofences[r.id]?.service_fee_percentage !== undefined 
             ? geofences[r.id].service_fee_percentage 
             : (r.service_fee_percentage !== undefined ? r.service_fee_percentage : 0),
+          is_prepaid: geofences[r.id]?.is_prepaid !== undefined
+            ? geofences[r.id].is_prepaid
+            : (r.is_prepaid !== undefined ? r.is_prepaid : (r.payment_model === 'prepaid')),
+          payment_model: geofences[r.id]?.payment_model || r.payment_model || (geofences[r.id]?.is_prepaid || r.is_prepaid ? 'prepaid' : 'postpaid'),
           ...(geofences[r.id] ? {
             geofence_enabled: geofences[r.id].geofence_enabled ?? r.geofence_enabled,
             latitude: geofences[r.id].latitude ?? r.latitude,
@@ -474,12 +479,18 @@ export default function SuperAdminDashboard() {
         ? Number(editingRes.service_fee_percentage)
         : 0;
 
+      const isPrepaid = editingRes.is_prepaid !== undefined 
+        ? !!editingRes.is_prepaid 
+        : editingRes.payment_model === 'prepaid';
+
       const geofencePayload = {
         geofence_enabled: !!editingRes.geofence_enabled,
         latitude: editingRes.latitude !== undefined && editingRes.latitude !== null && editingRes.latitude !== '' ? Number(editingRes.latitude) : null,
         longitude: editingRes.longitude !== undefined && editingRes.longitude !== null && editingRes.longitude !== '' ? Number(editingRes.longitude) : null,
         geofence_radius_meters: editingRes.geofence_radius_meters ? Number(editingRes.geofence_radius_meters) : 100,
-        service_fee_percentage: serviceFee
+        service_fee_percentage: serviceFee,
+        is_prepaid: isPrepaid,
+        payment_model: (isPrepaid ? 'prepaid' : 'postpaid') as 'prepaid' | 'postpaid'
       };
 
       // Base fields that are standard in Supabase restaurants table
@@ -490,6 +501,8 @@ export default function SuperAdminDashboard() {
         secondary_color: editingRes.secondary_color || '#1f2937',
         is_active: editingRes.is_active !== undefined ? editingRes.is_active : true,
         service_fee_percentage: serviceFee,
+        is_prepaid: isPrepaid,
+        payment_model: isPrepaid ? 'prepaid' : 'postpaid',
       };
       if (editingRes.logo_url !== undefined) {
         baseDbPayload.logo_url = editingRes.logo_url;
@@ -841,7 +854,18 @@ export default function SuperAdminDashboard() {
                         </div>
                         <div>
                           <h3 className="text-xl font-bold text-gray-900">{res.name}</h3>
-                          <p className="text-xs font-mono text-gray-400">slug: {res.slug}</p>
+                          <div className="flex items-center gap-2 mt-1">
+                            <p className="text-xs font-mono text-gray-400">slug: {res.slug}</p>
+                            {res.is_prepaid || res.payment_model === 'prepaid' ? (
+                              <span className="bg-emerald-100 text-emerald-800 text-[10px] font-black px-2 py-0.5 rounded-md inline-flex items-center gap-1">
+                                <CreditCard size={10} /> مسبق الدفع
+                              </span>
+                            ) : (
+                              <span className="bg-gray-100 text-gray-600 text-[10px] font-bold px-2 py-0.5 rounded-md inline-flex items-center gap-1">
+                                غير مسبق الدفع
+                              </span>
+                            )}
+                          </div>
                         </div>
                       </div>
                       <div className="flex gap-2 transition-all relative z-[50]">
@@ -1949,6 +1973,81 @@ export default function SuperAdminDashboard() {
                           />
                          <span className="font-mono text-xs">{editingRes?.secondary_color}</span>
                        </div>
+                    </div>
+
+                    {/* Restaurant Payment System Model */}
+                    <div className="col-span-2 bg-gradient-to-br from-emerald-50/80 to-teal-50/80 border-2 border-emerald-200/90 rounded-3xl p-5 md:p-6 space-y-4 text-right shadow-sm">
+                      <div className="flex items-center gap-3">
+                        <div className="w-10 h-10 rounded-2xl bg-emerald-600 text-white flex items-center justify-center shadow-md shrink-0">
+                          <CreditCard size={20} />
+                        </div>
+                        <div>
+                          <h4 className="font-black text-gray-900 text-sm md:text-base">نظام محاسبة ودفع الطلبات (Payment Mode)</h4>
+                          <p className="text-xs text-gray-500 font-medium mt-0.5">
+                            تحديد آلية دفع الحساب عند طلب الزبائن من طاولات المطعم
+                          </p>
+                        </div>
+                      </div>
+
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-2">
+                        {/* Option 1: Postpaid / Non-prepaid */}
+                        <div
+                          onClick={() => setEditingRes({ ...editingRes, is_prepaid: false, payment_model: 'postpaid' })}
+                          className={cn(
+                            "p-4 rounded-2xl border-2 transition-all cursor-pointer flex flex-col justify-between text-right relative select-none",
+                            !editingRes?.is_prepaid && editingRes?.payment_model !== 'prepaid'
+                              ? "bg-white border-emerald-500 shadow-md ring-2 ring-emerald-400/30"
+                              : "bg-white/60 border-gray-200 hover:border-gray-300 hover:bg-white"
+                          )}
+                        >
+                          <div className="flex items-center justify-between mb-2">
+                            <span className="font-black text-sm text-gray-900">المطعم غير مسبق الدفع</span>
+                            <div className={cn(
+                              "w-5 h-5 rounded-full border-2 flex items-center justify-center",
+                              !editingRes?.is_prepaid && editingRes?.payment_model !== 'prepaid'
+                                ? "border-emerald-500 bg-emerald-500 text-white"
+                                : "border-gray-300"
+                            )}>
+                              {(!editingRes?.is_prepaid && editingRes?.payment_model !== 'prepaid') && (
+                                <div className="w-2 h-2 bg-white rounded-full" />
+                              )}
+                            </div>
+                          </div>
+                          <p className="text-[11px] text-gray-500 leading-relaxed font-medium">
+                            (دفع لاحق كالمعتاد) — يستلم الزبون الأوردر أولاً ثم يدفع الحساب عند المغادرة دون مطالبته بالتوجه للكاشير.
+                          </p>
+                          <span className="text-[10px] text-gray-400 font-bold mt-2">الوضع الافتراضي (عادي)</span>
+                        </div>
+
+                        {/* Option 2: Prepaid */}
+                        <div
+                          onClick={() => setEditingRes({ ...editingRes, is_prepaid: true, payment_model: 'prepaid' })}
+                          className={cn(
+                            "p-4 rounded-2xl border-2 transition-all cursor-pointer flex flex-col justify-between text-right relative select-none",
+                            (editingRes?.is_prepaid || editingRes?.payment_model === 'prepaid')
+                              ? "bg-white border-emerald-500 shadow-md ring-2 ring-emerald-400/30"
+                              : "bg-white/60 border-gray-200 hover:border-gray-300 hover:bg-white"
+                          )}
+                        >
+                          <div className="flex items-center justify-between mb-2">
+                            <span className="font-black text-sm text-emerald-800">المطعم مسبق الدفع</span>
+                            <div className={cn(
+                              "w-5 h-5 rounded-full border-2 flex items-center justify-center",
+                              (editingRes?.is_prepaid || editingRes?.payment_model === 'prepaid')
+                                ? "border-emerald-500 bg-emerald-500 text-white"
+                                : "border-gray-300"
+                            )}>
+                              {(editingRes?.is_prepaid || editingRes?.payment_model === 'prepaid') && (
+                                <div className="w-2 h-2 bg-white rounded-full" />
+                              )}
+                            </div>
+                          </div>
+                          <p className="text-[11px] text-emerald-700 leading-relaxed font-medium">
+                            تظهر للزبون شاشة تنبيه فورية بعد تأكيد الأوردر: <strong>"بالرجاء التوجه للكاشير ودفع مبلغ ($) للطلب الخاص بك رقم ($)"</strong> قبل التجهيز.
+                          </p>
+                          <span className="text-[10px] text-emerald-600 font-black mt-2">دفع فوري عند الكاشير 💳</span>
+                        </div>
+                      </div>
                     </div>
 
                     {/* Service Fee / VAT Setting Section */}

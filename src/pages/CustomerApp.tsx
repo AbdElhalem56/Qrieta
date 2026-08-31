@@ -26,7 +26,8 @@ import {
   User,
   Navigation,
   Crosshair,
-  ExternalLink
+  ExternalLink,
+  CreditCard
 } from 'lucide-react';
 import { cn, formatCurrency } from '../lib/utils';
 import { getLocalCategoryOptions, syncAllCategoryOptions, resolveProductOptions, calculateProductEffectivePrice, getProductPriceRange } from '../lib/optionsHelper';
@@ -105,6 +106,9 @@ export default function CustomerApp() {
   );
   const [orderPlaced, setOrderPlaced] = useState(false);
   const [lastOrderId, setLastOrderId] = useState<number | null>(null);
+  const [placedDailyOrderNum, setPlacedDailyOrderNum] = useState<number | string | null>(null);
+  const [placedOrderTotal, setPlacedOrderTotal] = useState<number>(0);
+  const [placedOrderIsPrepaid, setPlacedOrderIsPrepaid] = useState<boolean>(false);
   const [waiterCalled, setWaiterCalled] = useState(false);
   const [isCallingWaiter, setIsCallingWaiter] = useState(false);
 
@@ -170,6 +174,10 @@ export default function CustomerApp() {
           res.service_fee_percentage = geofences[res.id].service_fee_percentage !== undefined 
             ? geofences[res.id].service_fee_percentage 
             : (res.service_fee_percentage !== undefined ? res.service_fee_percentage : 0);
+          res.is_prepaid = geofences[res.id].is_prepaid !== undefined
+            ? geofences[res.id].is_prepaid
+            : (res.is_prepaid !== undefined ? res.is_prepaid : (res.payment_model === 'prepaid'));
+          res.payment_model = geofences[res.id].payment_model || res.payment_model || (res.is_prepaid ? 'prepaid' : 'postpaid');
         }
       } catch (e) {
         console.warn('Geofence sync error:', e);
@@ -583,9 +591,51 @@ export default function CustomerApp() {
           throw new Error(itemsErr.message);
         }
 
+        // Calculate/fetch daily sequence order number (resets to 1 at 12:00 AM per restaurant)
+        let dailySeqNum: number | string = 1;
+        try {
+          const seqRes = await fetch('/api/orders/daily-sequence', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              restaurant_id: restaurant.id,
+              action: 'next'
+            })
+          });
+          if (seqRes.ok) {
+            const seqData = await seqRes.json();
+            if (seqData?.daily_order_number) {
+              dailySeqNum = seqData.daily_order_number;
+            }
+          }
+        } catch (seqErr) {
+          console.warn('Could not get daily sequence from API, calculating via DB/local:', seqErr);
+        }
+
+        if (dailySeqNum === 1) {
+          try {
+            const now = new Date();
+            const startOfDay = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0, 0, 0, 0);
+            const { count, error } = await supabase
+              .from('orders')
+              .select('id', { count: 'exact', head: true })
+              .eq('restaurant_id', restaurant.id)
+              .gte('created_at', startOfDay.toISOString());
+            if (!error && typeof count === 'number' && count > 0) {
+              dailySeqNum = count;
+            }
+          } catch (cErr) {
+            console.warn('Count fallback error:', cErr);
+          }
+        }
+
+        const isPrepaidRest = !!(restaurant.is_prepaid || restaurant.payment_model === 'prepaid');
         setCart([]);
         setIsCartOpen(false);
         setLastOrderId(order.id);
+        setPlacedDailyOrderNum(dailySeqNum);
+        setPlacedOrderTotal(total);
+        setPlacedOrderIsPrepaid(isPrepaidRest && !isDeliveryOrder);
         setOrderPlaced(true);
 
         // Track Meta Pixel Purchase event
@@ -596,10 +646,7 @@ export default function CustomerApp() {
           restaurantName: restaurant?.name
         });
 
-        setTimeout(() => {
-          setOrderPlaced(false);
-          setLastOrderId(null);
-        }, 5000);
+        // NOTE: Modal stays open until the customer explicitly dismisses it, as requested
       }
     } catch (err: any) {
       console.error('Checkout error:', err);
@@ -1882,32 +1929,114 @@ export default function CustomerApp() {
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
-            className="fixed inset-0 z-[200] bg-white/90 backdrop-blur-xl flex flex-col items-center justify-center p-8 text-center"
+            className="fixed inset-0 z-[200] bg-black/60 backdrop-blur-md flex flex-col items-center justify-center p-4 sm:p-6 text-center select-none"
           >
             <motion.div
-              initial={{ scale: 0.8, opacity: 0 }}
-              animate={{ scale: 1, opacity: 1 }}
-              className="w-24 h-24 bg-green-500 text-white rounded-[32px] flex items-center justify-center shadow-xl mb-6"
+              initial={{ scale: 0.9, y: 20, opacity: 0 }}
+              animate={{ scale: 1, y: 0, opacity: 1 }}
+              exit={{ scale: 0.9, y: 20, opacity: 0 }}
+              className="bg-white rounded-3xl max-w-md w-full p-6 sm:p-8 shadow-2xl border border-gray-100 flex flex-col items-center relative overflow-hidden text-right"
+              dir={isRTL ? 'rtl' : 'ltr'}
             >
-              <CheckCircle2 size={48} strokeWidth={3} />
-            </motion.div>
-            <h2 className="text-3xl font-black mb-2">
-              {isDeliveryOrder ? (isRTL ? 'تم استلام طلب التوصيل!' : 'Delivery Order Received!') : (isRTL ? 'تم استلام طلبك!' : 'Order Placed!')}
-            </h2>
-            <p className="text-gray-600 font-medium mb-3">
-              {isRTL ? `رقم الطلب الخاص بك هو #${lastOrderId}` : `Your order #${lastOrderId} has been received.`}
-            </p>
-            {isDeliveryOrder && deliveryInfo.phone && (
-              <p className="text-xs text-purple-700 bg-purple-50 border border-purple-200 px-4 py-2 rounded-xl mb-6 font-bold max-w-sm">
-                {isRTL ? `سيتواصل معك فريق ${restaurant.name} على رقم (${deliveryInfo.phone}) لتأكيد التوصيل.` : `We will contact you at ${deliveryInfo.phone} to confirm delivery.`}
+              {/* Close Button Top Corner */}
+              <button
+                onClick={() => { setOrderPlaced(false); setPlacedDailyOrderNum(null); }}
+                className="absolute top-4 left-4 sm:top-5 sm:left-5 text-gray-400 hover:text-gray-700 bg-gray-100 hover:bg-gray-200 p-2 rounded-full transition-all cursor-pointer"
+                title={isRTL ? 'إغلاق' : 'Close'}
+              >
+                <X size={20} />
+              </button>
+
+              {/* Success Icon */}
+              <div className="w-20 h-20 bg-gradient-to-tr from-emerald-500 to-green-400 text-white rounded-3xl flex items-center justify-center shadow-lg shadow-green-500/20 mb-4">
+                <CheckCircle2 size={42} strokeWidth={2.5} />
+              </div>
+
+              {/* Title */}
+              <h2 className="text-2xl sm:text-3xl font-black text-gray-900 mb-1 text-center w-full">
+                {isDeliveryOrder 
+                  ? (isRTL ? 'تم استلام طلب التوصيل بنجاح!' : 'Delivery Order Received!') 
+                  : (isRTL ? 'تم استلام طلبك بنجاح!' : 'Order Received Successfully!')}
+              </h2>
+              
+              <p className="text-xs sm:text-sm text-gray-500 font-medium mb-4 text-center">
+                {isRTL ? `شكراً لطلبك من ${restaurant?.name || 'مطعمنا'}` : `Thank you for ordering from ${restaurant?.name || 'our restaurant'}`}
               </p>
-            )}
-            <button
-              onClick={() => setOrderPlaced(false)}
-              className="bg-gray-900 text-white px-8 py-4 rounded-2xl font-black active:scale-95 transition-all"
-            >
-              {isRTL ? 'حسناً' : 'Done'}
-            </button>
+
+              {/* Daily Order Number Badge (Resets daily at 12 AM per restaurant) */}
+              <div className="w-full bg-gradient-to-r from-gray-900 to-gray-800 text-white rounded-2xl p-4 mb-4 shadow-md flex items-center justify-between">
+                <div className="text-right">
+                  <span className="text-[11px] font-bold text-gray-300 block uppercase tracking-wider">
+                    {isRTL ? 'رقم الطلب الخاص بك اليوم' : 'Daily Order #'}
+                  </span>
+                  <span className="text-[11px] text-gray-400 font-medium">
+                    {isRTL ? 'يبدأ العد من رقم 1 يومياً' : 'Sequence starts at 1 daily'}
+                  </span>
+                </div>
+                <div className="bg-white/15 px-4 py-2 rounded-xl border border-white/20">
+                  <span className="text-3xl sm:text-4xl font-black font-mono tracking-tight text-white">
+                    #{placedDailyOrderNum || lastOrderId || 1}
+                  </span>
+                </div>
+              </div>
+
+              {/* Conditional Notice based on Prepaid vs Non-prepaid vs Delivery */}
+              {placedOrderIsPrepaid ? (
+                /* PREPAID RESTAURANT TABLE ORDER CALLOUT */
+                <div className="w-full bg-amber-50 border-2 border-amber-300 rounded-2xl p-4 sm:p-5 mb-5 text-right space-y-2 shadow-sm">
+                  <div className="flex items-center gap-2 text-amber-800 font-black text-sm sm:text-base">
+                    <CreditCard size={20} className="shrink-0 text-amber-600 animate-pulse" />
+                    <span>تنبيه الدفع المسبق (كاشير)</span>
+                  </div>
+                  <p className="text-xs sm:text-sm text-amber-900 font-black leading-relaxed">
+                    بالرجاء التوجه للكاشير ودفع مبلغ{' '}
+                    <span className="text-sm sm:text-base font-black text-amber-950 bg-amber-200/90 px-2 py-0.5 rounded-lg">
+                      {formatCurrency(placedOrderTotal)}
+                    </span>{' '}
+                    للطلب الخاص بك رقم{' '}
+                    <span className="text-sm sm:text-base font-black text-amber-950 bg-amber-200/90 px-2 py-0.5 rounded-lg font-mono">
+                      #{placedDailyOrderNum || lastOrderId || 1}
+                    </span>
+                  </p>
+                  <p className="text-[11px] text-amber-700 font-medium">
+                    * يتم إرسال الأوردر للمطبخ مباشرة بعد تأكيد السداد لدى الكاشير.
+                  </p>
+                </div>
+              ) : isDeliveryOrder ? (
+                /* DELIVERY ORDER NOTICE */
+                <div className="w-full bg-purple-50 border border-purple-200 rounded-2xl p-4 mb-5 text-right space-y-1">
+                  <p className="text-xs text-purple-900 font-black">
+                    {isRTL ? 'إجمالي الطلب مع التوصيل:' : 'Total Amount:'}{' '}
+                    <span className="text-purple-700 text-sm font-black">{formatCurrency(placedOrderTotal)}</span>
+                  </p>
+                  {deliveryInfo.phone && (
+                    <p className="text-xs text-purple-700 font-medium">
+                      {isRTL 
+                        ? `سيتواصل معك فريق ${restaurant.name} على رقم (${deliveryInfo.phone}) لتأكيد التوصيل.` 
+                        : `We will contact you at ${deliveryInfo.phone} to confirm delivery.`}
+                    </p>
+                  )}
+                </div>
+              ) : (
+                /* STANDARD POSTPAID TABLE ORDER NOTICE */
+                <div className="w-full bg-emerald-50 border border-emerald-200 rounded-2xl p-4 mb-5 text-right">
+                  <p className="text-xs sm:text-sm text-emerald-900 font-bold">
+                    {isRTL ? 'طلبك قيد التحضير الآن وسيصل إلى طاولتك في أقرب وقت!' : 'Your order is being prepared and will be served to your table soon!'}
+                  </p>
+                  <p className="text-xs text-emerald-700 font-medium mt-1">
+                    {isRTL ? 'إجمالي الحساب:' : 'Total:'} {formatCurrency(placedOrderTotal)} (دفع عند المغادرة)
+                  </p>
+                </div>
+              )}
+
+              {/* Action Button - Dismiss Modal */}
+              <button
+                onClick={() => { setOrderPlaced(false); setPlacedDailyOrderNum(null); }}
+                className="w-full bg-gray-900 hover:bg-gray-800 text-white py-3.5 sm:py-4 rounded-2xl font-black text-sm sm:text-base active:scale-95 transition-all shadow-xl shadow-gray-900/10 cursor-pointer"
+              >
+                {isRTL ? 'حسناً - إغلاق' : 'Got it - Close'}
+              </button>
+            </motion.div>
           </motion.div>
         )}
       </AnimatePresence>
