@@ -20,7 +20,11 @@ import {
   MapPin,
   AlertTriangle,
   ShieldCheck,
-  RefreshCw
+  RefreshCw,
+  Bike,
+  Phone,
+  User,
+  Navigation
 } from 'lucide-react';
 import { cn, formatCurrency } from '../lib/utils';
 import { getLocalCategoryOptions, syncAllCategoryOptions, resolveProductOptions, calculateProductEffectivePrice, getProductPriceRange } from '../lib/optionsHelper';
@@ -66,10 +70,19 @@ export default function CustomerApp() {
     selectedOptions: Record<string, string>;
     notes: string;
   }>({ sugar: 'none', selectedOptions: {}, notes: '' });
+  const [deliveryInfo, setDeliveryInfo] = useState<{
+    customerName: string;
+    phone: string;
+    address: string;
+    notes: string;
+  }>({ customerName: '', phone: '', address: '', notes: '' });
   const [orderPlaced, setOrderPlaced] = useState(false);
   const [lastOrderId, setLastOrderId] = useState<number | null>(null);
   const [waiterCalled, setWaiterCalled] = useState(false);
   const [isCallingWaiter, setIsCallingWaiter] = useState(false);
+
+  // Delivery order is active when no specific tableId is present in URL
+  const isDeliveryOrder = !tableId;
 
   useEffect(() => {
     fetchData();
@@ -299,7 +312,8 @@ export default function CustomerApp() {
   };
 
   const subtotal = cart.reduce((acc, item) => acc + item.product.price * item.quantity, 0);
-  const serviceFeePercentage = Number(restaurant?.service_fee_percentage || 0);
+  // Service fee is strictly for dine-in / table orders. For delivery orders, service fee is completely removed (0%)
+  const serviceFeePercentage = isDeliveryOrder ? 0 : Number(restaurant?.service_fee_percentage || 0);
   const serviceFeeAmount = subtotal * (serviceFeePercentage / 100);
   const total = subtotal + serviceFeeAmount;
   const currency = (amount: number) => formatCurrency(amount, isRTL ? 'ar-EG' : 'en-US');
@@ -350,16 +364,31 @@ export default function CustomerApp() {
   const placeOrder = async () => {
     if (!restaurant || cart.length === 0) return;
 
-    // Check geofence if table ordering is active and restaurant has geofence enabled
-    if (tableId && restaurant.geofence_enabled && restaurant.latitude && restaurant.longitude) {
-      const isAllowed = await checkGeofence();
-      if (!isAllowed) {
-        if (geoState.status === 'outside') {
-          alert(`⚠️ لا يمكن إتمام الطلب: أنت خارج النطاق الجغرافي للمطعم (${geoState.distance} متر، والحد الأقصى المسموح ${restaurant.geofence_radius_meters || 100} متر). الطلب عبر كود الطاولة متاح فقط داخل المطعم.`);
-        } else {
-          alert('⚠️ يلزم تفعيل إذن الموقع الجغرافي للتحقق من تواجدك داخل صالة المطعم قبل إرسال طلب الطاولة.');
-        }
+    if (isDeliveryOrder) {
+      if (!deliveryInfo.customerName.trim()) {
+        alert(isRTL ? '⚠️ يرجى كتابة اسم المستلم لإتمام طلب التوصيل.' : 'Please enter customer name for delivery.');
         return;
+      }
+      if (!deliveryInfo.phone.trim() || deliveryInfo.phone.trim().length < 6) {
+        alert(isRTL ? '⚠️ يرجى كتابة رقم هاتف صحيح للتواصل وتأكيد التوصيل.' : 'Please enter a valid phone number for delivery.');
+        return;
+      }
+      if (!deliveryInfo.address.trim()) {
+        alert(isRTL ? '⚠️ يرجى كتابة عنوان التوصيل بالتفصيل (الشارع، العمارة، رقم الشقة).' : 'Please enter detailed delivery address.');
+        return;
+      }
+    } else {
+      // Check geofence if table ordering is active and restaurant has geofence enabled
+      if (tableId && restaurant.geofence_enabled && restaurant.latitude && restaurant.longitude) {
+        const isAllowed = await checkGeofence();
+        if (!isAllowed) {
+          if (geoState.status === 'outside') {
+            alert(`⚠️ لا يمكن إتمام الطلب: أنت خارج النطاق الجغرافي للمطعم (${geoState.distance} متر، والحد الأقصى المسموح ${restaurant.geofence_radius_meters || 100} متر). الطلب عبر كود الطاولة متاح فقط داخل المطعم.`);
+          } else {
+            alert('⚠️ يلزم تفعيل إذن الموقع الجغرافي للتحقق من تواجدك داخل صالة المطعم قبل إرسال طلب الطاولة.');
+          }
+          return;
+        }
       }
     }
 
@@ -367,10 +396,10 @@ export default function CustomerApp() {
 
     try {
       // Validate tableId format: Supabase expects uuid. 
-      // If tableId is not a valid UUID format, we set it to null
+      // If tableId is not a valid UUID format or delivery order, we set it to null
       let validTableId = null;
       const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
-      if (tableId && uuidRegex.test(tableId)) {
+      if (!isDeliveryOrder && tableId && uuidRegex.test(tableId)) {
         validTableId = tableId;
       }
       
@@ -396,12 +425,20 @@ export default function CustomerApp() {
       }
 
       if (order) {
-        const orderItemsList = cart.map(item => {
+        const deliveryHeader = isDeliveryOrder
+          ? `[🛵 دليفري | الاسم: ${deliveryInfo.customerName.trim()} | هاتف: ${deliveryInfo.phone.trim()} | العنوان: ${deliveryInfo.address.trim()}${deliveryInfo.notes.trim() ? ` | ملاحظات: ${deliveryInfo.notes.trim()}` : ''}]`
+          : '';
+
+        const orderItemsList = cart.map((item, itemIdx) => {
           // Compile chosen options into notes string if any
           let compiledNotes = item.notes ? item.notes.trim() : '';
           if (item.selectedOptionLabels && item.selectedOptionLabels.length > 0) {
             const optionsSummary = item.selectedOptionLabels.map(l => `${l.optionName}: ${l.choiceName}`).join(' | ');
             compiledNotes = compiledNotes ? `[${optionsSummary}] - ${compiledNotes}` : `[${optionsSummary}]`;
+          }
+
+          if (deliveryHeader && itemIdx === 0) {
+            compiledNotes = compiledNotes ? `${deliveryHeader} - ${compiledNotes}` : deliveryHeader;
           }
 
           // Check if any option is sugar-related
@@ -625,43 +662,60 @@ export default function CustomerApp() {
             </span>
           </button>
           
-          {/* Call Waiter */}
-          <button 
-            onClick={callWaiter}
-            disabled={isCallingWaiter || waiterCalled}
-            className={cn(
-              "flex-1 h-14 rounded-[18px] font-black transition-all active:scale-95 flex items-center justify-between px-3.5 gap-2",
-              waiterCalled 
-                ? "bg-green-500 text-white" 
-                : "text-white"
-            )}
-            style={!waiterCalled ? { backgroundColor: primaryColor } : {}}
-          >
-            <div className={cn("flex flex-col leading-[1.2]", isRTL ? "items-end text-right" : "items-start text-left")}>
-              <span className="text-[13px] font-black tracking-tight">
-                {waiterCalled 
-                  ? (isRTL ? 'طلبك مرسل' : 'Notified')
-                  : (isRTL ? 'نداء النادل' : 'Call Waiter')
-                }
-              </span>
-              <span className="text-[10px] font-medium opacity-80">
-                {waiterCalled
-                  ? (isRTL ? 'النادل في طريقه إليك' : 'Coming right now!')
-                  : (isRTL ? 'سنرسل النادل إليك' : "We'll notify our staff")
-                }
-              </span>
-            </div>
-
-            <div className="w-9 h-9 rounded-full bg-white/20 flex items-center justify-center shrink-0">
-              {isCallingWaiter ? (
-                <div className="w-5 h-5 border-2 border-white/40 border-t-white rounded-full animate-spin" />
-              ) : waiterCalled ? (
-                <CheckCircle size={20} className="text-white" />
-              ) : (
-                <Bell size={20} className={cn("text-white", !waiterCalled && "animate-swing")} />
+          {/* Call Waiter (for Table orders) OR Delivery Badge (for Delivery orders) */}
+          {!isDeliveryOrder ? (
+            <button 
+              onClick={callWaiter}
+              disabled={isCallingWaiter || waiterCalled}
+              className={cn(
+                "flex-1 h-14 rounded-[18px] font-black transition-all active:scale-95 flex items-center justify-between px-3.5 gap-2",
+                waiterCalled 
+                  ? "bg-green-500 text-white" 
+                  : "text-white"
               )}
+              style={!waiterCalled ? { backgroundColor: primaryColor } : {}}
+            >
+              <div className={cn("flex flex-col leading-[1.2]", isRTL ? "items-end text-right" : "items-start text-left")}>
+                <span className="text-[13px] font-black tracking-tight">
+                  {waiterCalled 
+                    ? (isRTL ? 'طلبك مرسل' : 'Notified')
+                    : (isRTL ? 'نداء النادل' : 'Call Waiter')
+                  }
+                </span>
+                <span className="text-[10px] font-medium opacity-80">
+                  {waiterCalled
+                    ? (isRTL ? 'النادل في طريقه إليك' : 'Coming right now!')
+                    : (isRTL ? 'سنرسل النادل إليك' : "We'll notify our staff")
+                  }
+                </span>
+              </div>
+
+              <div className="w-9 h-9 rounded-full bg-white/20 flex items-center justify-center shrink-0">
+                {isCallingWaiter ? (
+                  <div className="w-5 h-5 border-2 border-white/40 border-t-white rounded-full animate-spin" />
+                ) : waiterCalled ? (
+                  <CheckCircle size={20} className="text-white" />
+                ) : (
+                  <Bell size={20} className={cn("text-white", !waiterCalled && "animate-swing")} />
+                )}
+              </div>
+            </button>
+          ) : (
+            <div className="flex-1 h-14 rounded-[18px] bg-gradient-to-r from-purple-50 to-indigo-50 border border-purple-200/80 px-3.5 flex items-center justify-between">
+              <div className={cn("flex flex-col leading-[1.2]", isRTL ? "items-end text-right" : "items-start text-left")}>
+                <span className="text-[12px] font-black text-purple-900 flex items-center gap-1">
+                  <Bike size={14} className="text-purple-600 inline shrink-0" />
+                  {isRTL ? 'طلب دليفري وتوصيل' : 'Delivery Mode'}
+                </span>
+                <span className="text-[10px] font-bold text-purple-600">
+                  {isRTL ? '0% رسوم خدمة صالة' : '0% Service Fee'}
+                </span>
+              </div>
+              <span className="text-[10px] font-black bg-purple-200/70 text-purple-900 px-2 py-1 rounded-lg">
+                {isRTL ? 'أي مكان' : 'Anywhere'}
+              </span>
             </div>
-          </button>
+          )}
 
         </div>
       </div>
@@ -1237,6 +1291,81 @@ export default function CustomerApp() {
                   </motion.div>
                 ))}
               </div>
+              {/* Delivery Details Form when isDeliveryOrder is true */}
+              {isDeliveryOrder && (
+                <div className="p-6 bg-purple-50/60 border-t border-purple-100 space-y-3.5">
+                  <div className="flex items-center gap-2 text-purple-950 font-black text-sm">
+                    <Bike size={18} className="text-purple-600" />
+                    <span>{isRTL ? 'بيانات التوصيل (دليفري خارجي)' : 'Delivery Information'}</span>
+                  </div>
+                  
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                    <div>
+                      <label className="block text-[11px] font-bold text-gray-600 mb-1">
+                        {isRTL ? 'الاسم بالكامل *' : 'Full Name *'}
+                      </label>
+                      <div className="relative">
+                        <User size={15} className={cn("absolute top-3 text-gray-400", isRTL ? "right-3" : "left-3")} />
+                        <input
+                          type="text"
+                          value={deliveryInfo.customerName}
+                          onChange={(e) => setDeliveryInfo(prev => ({ ...prev, customerName: e.target.value }))}
+                          placeholder={isRTL ? "مثال: أحمد محمد" : "e.g. John Doe"}
+                          className={cn("w-full bg-white border border-gray-200 rounded-xl py-2.5 text-xs font-bold text-gray-900 focus:outline-none focus:ring-2 focus:ring-purple-500 focus:border-transparent", isRTL ? "pr-9 pl-3" : "pl-9 pr-3")}
+                          required
+                        />
+                      </div>
+                    </div>
+
+                    <div>
+                      <label className="block text-[11px] font-bold text-gray-600 mb-1">
+                        {isRTL ? 'رقم الهاتف / الواتساب *' : 'Phone / WhatsApp *'}
+                      </label>
+                      <div className="relative">
+                        <Phone size={15} className={cn("absolute top-3 text-gray-400", isRTL ? "right-3" : "left-3")} />
+                        <input
+                          type="tel"
+                          value={deliveryInfo.phone}
+                          onChange={(e) => setDeliveryInfo(prev => ({ ...prev, phone: e.target.value }))}
+                          placeholder={isRTL ? "مثال: 01012345678" : "e.g. 01012345678"}
+                          className={cn("w-full bg-white border border-gray-200 rounded-xl py-2.5 text-xs font-bold text-gray-900 focus:outline-none focus:ring-2 focus:ring-purple-500 focus:border-transparent", isRTL ? "pr-9 pl-3" : "pl-9 pr-3")}
+                          required
+                        />
+                      </div>
+                    </div>
+                  </div>
+
+                  <div>
+                    <label className="block text-[11px] font-bold text-gray-600 mb-1">
+                      {isRTL ? 'عنوان التوصيل بالتفصيل *' : 'Delivery Address *'}
+                    </label>
+                    <div className="relative">
+                      <MapPin size={15} className={cn("absolute top-3 text-gray-400", isRTL ? "right-3" : "left-3")} />
+                      <input
+                        type="text"
+                        value={deliveryInfo.address}
+                        onChange={(e) => setDeliveryInfo(prev => ({ ...prev, address: e.target.value }))}
+                        placeholder={isRTL ? "المنطقة، الشارع، رقم المبنى، رقم الشقة" : "Area, Street, Building, Flat #"}
+                        className={cn("w-full bg-white border border-gray-200 rounded-xl py-2.5 text-xs font-bold text-gray-900 focus:outline-none focus:ring-2 focus:ring-purple-500 focus:border-transparent", isRTL ? "pr-9 pl-3" : "pl-9 pr-3")}
+                        required
+                      />
+                    </div>
+                  </div>
+
+                  <div>
+                    <label className="block text-[11px] font-bold text-gray-600 mb-1">
+                      {isRTL ? 'ملاحظات إضافية للتوصيل (اختياري)' : 'Delivery Notes (Optional)'}
+                    </label>
+                    <input
+                      type="text"
+                      value={deliveryInfo.notes}
+                      onChange={(e) => setDeliveryInfo(prev => ({ ...prev, notes: e.target.value }))}
+                      placeholder={isRTL ? "علامة مميزة، وقت معين، أو رن الجرس" : "Landmarks, specific timing, etc."}
+                      className="w-full bg-white border border-gray-200 rounded-xl py-2.5 px-3 text-xs font-bold text-gray-900 focus:outline-none focus:ring-2 focus:ring-purple-500 focus:border-transparent"
+                    />
+                  </div>
+                </div>
+              )}
  
               <div className="p-8 bg-gray-50 border-t border-gray-100 space-y-4">
                 {/* Price Breakdown */}
@@ -1246,13 +1375,26 @@ export default function CustomerApp() {
                     <span className="font-black text-gray-800">{currency(subtotal)}</span>
                   </div>
 
-                  {serviceFeePercentage > 0 && (
-                    <div className="flex items-center justify-between text-xs font-bold text-indigo-700 bg-indigo-50/70 px-3 py-2 rounded-xl">
-                      <span className="flex items-center gap-1">
-                        <span>{isRTL ? `قيمة الخدمة والضريبة المضافة (${serviceFeePercentage}%)` : `Service Fee & VAT (${serviceFeePercentage}%)`}</span>
+                  {/* If delivery, show 0% fee with clear badge */}
+                  {isDeliveryOrder ? (
+                    <div className="flex items-center justify-between text-xs font-bold text-purple-700 bg-purple-50/80 px-3 py-2 rounded-xl border border-purple-100">
+                      <span className="flex items-center gap-1.5">
+                        <Bike size={14} className="text-purple-600 shrink-0" />
+                        <span>{isRTL ? 'رسوم خدمة الصالة (طلب دليفري)' : 'Dine-in Service Fee'}</span>
                       </span>
-                      <span className="font-black">+{currency(serviceFeeAmount)}</span>
+                      <span className="font-black text-purple-700 bg-purple-200/60 px-2 py-0.5 rounded-md text-[11px]">
+                        {isRTL ? 'مجاناً 0% (معفى)' : '0% FREE'}
+                      </span>
                     </div>
+                  ) : (
+                    serviceFeePercentage > 0 && (
+                      <div className="flex items-center justify-between text-xs font-bold text-indigo-700 bg-indigo-50/70 px-3 py-2 rounded-xl">
+                        <span className="flex items-center gap-1">
+                          <span>{isRTL ? `قيمة الخدمة والضريبة المضافة (${serviceFeePercentage}%)` : `Service Fee & VAT (${serviceFeePercentage}%)`}</span>
+                        </span>
+                        <span className="font-black">+{currency(serviceFeeAmount)}</span>
+                      </div>
+                    )
                   )}
                 </div>
 
@@ -1273,7 +1415,7 @@ export default function CustomerApp() {
                     <div className="w-6 h-6 border-4 border-white/30 border-t-white rounded-full animate-spin" />
                   ) : (
                     <>
-                      <span>{isRTL ? 'إرسال الطلب' : 'Complete Order'}</span>
+                      <span>{isDeliveryOrder ? (isRTL ? 'تأكيد وإرسال طلب التوصيل' : 'Submit Delivery Order') : (isRTL ? 'إرسال الطلب' : 'Complete Order')}</span>
                       <CheckCircle2 size={24} />
                     </>
                   )}
@@ -1299,10 +1441,17 @@ export default function CustomerApp() {
             >
               <CheckCircle2 size={48} strokeWidth={3} />
             </motion.div>
-            <h2 className="text-3xl font-black mb-2">{isRTL ? 'تم استلام طلبك!' : 'Order Placed!'}</h2>
-            <p className="text-gray-500 font-medium mb-8">
+            <h2 className="text-3xl font-black mb-2">
+              {isDeliveryOrder ? (isRTL ? 'تم استلام طلب التوصيل!' : 'Delivery Order Received!') : (isRTL ? 'تم استلام طلبك!' : 'Order Placed!')}
+            </h2>
+            <p className="text-gray-600 font-medium mb-3">
               {isRTL ? `رقم الطلب الخاص بك هو #${lastOrderId}` : `Your order #${lastOrderId} has been received.`}
             </p>
+            {isDeliveryOrder && deliveryInfo.phone && (
+              <p className="text-xs text-purple-700 bg-purple-50 border border-purple-200 px-4 py-2 rounded-xl mb-6 font-bold max-w-sm">
+                {isRTL ? `سيتواصل معك فريق ${restaurant.name} على رقم (${deliveryInfo.phone}) لتأكيد التوصيل.` : `We will contact you at ${deliveryInfo.phone} to confirm delivery.`}
+              </p>
+            )}
             <button
               onClick={() => setOrderPlaced(false)}
               className="bg-gray-900 text-white px-8 py-4 rounded-2xl font-black active:scale-95 transition-all"

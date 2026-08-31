@@ -34,7 +34,10 @@ import {
   MapPin,
   Navigation,
   Percent,
-  Receipt
+  Receipt,
+  Bike,
+  Copy,
+  Check
 } from 'lucide-react';
 import { QRCodeSVG } from 'qrcode.react';
 import { 
@@ -56,6 +59,7 @@ export default function SuperAdminDashboard() {
   const [tables, setTables] = useState<Table[]>([]);
   const [search, setSearch] = useState('');
   const [isLocating, setIsLocating] = useState(false);
+  const [copiedDeliveryLink, setCopiedDeliveryLink] = useState(false);
   
   // UI States
   const [activeTab, setActiveTab] = useState<'restaurants' | 'tables' | 'staff' | 'analytics' | 'orders'>('restaurants');
@@ -621,7 +625,9 @@ export default function SuperAdminDashboard() {
       canvasContext?.drawImage(img, 0, 0);
       const pngFile = canvas.toDataURL("image/png");
       const downloadLink = document.createElement("a");
-      downloadLink.download = `Table-${tableNum}.png`;
+      downloadLink.download = tableNum === 'delivery' 
+        ? `${selectedRestaurant?.name || 'Restaurant'}-Delivery-QR.png` 
+        : `Table-${tableNum}.png`;
       downloadLink.href = pngFile;
       downloadLink.click();
     };
@@ -897,10 +903,22 @@ export default function SuperAdminDashboard() {
                          <Users size={18} />
                          <span>Staff: {profiles.filter(p => p.restaurant_id === res.id).length}</span>
                        </div>
-                       <a href={`/r/${res.slug}`} target="_blank" className="flex items-center gap-2 text-gray-900 hover:underline">
-                         <span>Live View</span>
-                         <ExternalLink size={16} />
-                       </a>
+                       <div className="flex items-center gap-3">
+                         <a 
+                           href={`/r/${res.slug}`} 
+                           target="_blank" 
+                           rel="noreferrer"
+                           className="flex items-center gap-1 text-purple-700 hover:text-purple-900 bg-purple-50 px-2.5 py-1 rounded-lg transition-colors text-xs font-black"
+                           title="رابط الدليفري والطلبات الخارجية المباشر"
+                         >
+                           <Bike size={14} />
+                           <span>دليفري</span>
+                         </a>
+                         <a href={`/r/${res.slug}`} target="_blank" className="flex items-center gap-2 text-gray-900 hover:underline text-xs">
+                           <span>Live View</span>
+                           <ExternalLink size={16} />
+                         </a>
+                       </div>
                     </div>
                   </motion.div>
                 ))}
@@ -938,6 +956,86 @@ export default function SuperAdminDashboard() {
                       )}
                    </div>
                 </header>
+
+                {/* Delivery QR Code Highlighted Card for Selected Restaurant */}
+                {selectedRestaurant && (() => {
+                  const deliveryUrl = `${window.location.origin}/r/${selectedRestaurant.slug}`;
+                  return (
+                    <div className="mb-10 bg-gradient-to-br from-purple-900 via-indigo-900 to-slate-900 text-white rounded-3xl md:rounded-[36px] p-6 md:p-8 shadow-xl relative overflow-hidden border border-purple-400/20">
+                      <div className="absolute top-0 left-0 -mt-12 -ml-12 w-64 h-64 bg-purple-500/20 rounded-full blur-3xl pointer-events-none" />
+                      <div className="relative z-10 flex flex-col lg:flex-row items-center justify-between gap-6">
+                        <div className="space-y-3 max-w-xl text-right">
+                          <div className="inline-flex items-center gap-2 px-3 py-1 bg-purple-500/30 border border-purple-400/30 rounded-full text-xs font-black text-purple-200">
+                            <Bike size={15} className="text-purple-300" />
+                            <span>كود QR ورابط الدليفري والطلبات الخارجية ({selectedRestaurant.name})</span>
+                          </div>
+
+                          <h3 className="text-2xl font-black text-white leading-snug">
+                            رابط دليفري مباشر بدون طاولة وبدون قيود نطاق
+                          </h3>
+
+                          <p className="text-xs text-purple-200/90 leading-relaxed font-medium">
+                            هذا الرمز والرابط متاح لطلبات التوصيل للمنازل والمكاتب من أي مكان. يُعفي العميل من رسوم خدمة الصالة (0% خدمة)، ويُرسل بيانات العميل للتوصيل مباشرة للويتر.
+                          </p>
+
+                          <div className="pt-2 flex flex-wrap items-center gap-3">
+                            <button
+                              type="button"
+                              onClick={() => downloadQR('delivery')}
+                              className="bg-white text-purple-950 hover:bg-purple-50 px-4 py-2.5 rounded-xl font-black text-xs flex items-center gap-2 shadow-md transition-all active:scale-95 cursor-pointer"
+                            >
+                              <Download size={15} />
+                              <span>تحميل QR الدليفري (PNG)</span>
+                            </button>
+
+                            <button
+                              type="button"
+                              onClick={() => {
+                                navigator.clipboard.writeText(deliveryUrl);
+                                setCopiedDeliveryLink(true);
+                                setTimeout(() => setCopiedDeliveryLink(false), 2500);
+                              }}
+                              className="bg-white/15 hover:bg-white/25 border border-white/20 text-white px-4 py-2.5 rounded-xl font-bold text-xs flex items-center gap-2 transition-all cursor-pointer"
+                            >
+                              {copiedDeliveryLink ? <Check size={15} className="text-green-400" /> : <Copy size={15} />}
+                              <span>{copiedDeliveryLink ? 'تم نسخ الرابط!' : 'نسخ رابط الدليفري'}</span>
+                            </button>
+
+                            <a
+                              href={deliveryUrl}
+                              target="_blank"
+                              rel="noreferrer"
+                              className="text-purple-200 hover:text-white px-3 py-2 text-xs font-bold flex items-center gap-1.5 underline underline-offset-4"
+                            >
+                              <ExternalLink size={13} />
+                              <span>معاينة الرابط</span>
+                            </a>
+                          </div>
+                        </div>
+
+                        {/* QR Display Card */}
+                        <div className="bg-white p-4 rounded-2xl shadow-xl flex flex-col items-center shrink-0 border-2 border-purple-300/30 text-gray-900">
+                          <span className="text-[10px] font-black text-purple-900 uppercase tracking-wider mb-2 flex items-center gap-1">
+                            <Bike size={13} />
+                            <span>QR الدليفري</span>
+                          </span>
+                          <div className="p-2 bg-gray-50 rounded-xl border border-gray-100">
+                            <QRCodeSVG
+                              id="qr-delivery"
+                              value={deliveryUrl}
+                              size={140}
+                              level="H"
+                              includeMargin
+                            />
+                          </div>
+                          <span className="text-[10px] text-gray-500 font-mono font-bold mt-1.5 max-w-[150px] truncate text-center" dir="ltr">
+                            /r/{selectedRestaurant.slug}
+                          </span>
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })()}
 
                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
                   {tables.map(table => (

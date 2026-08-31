@@ -16,9 +16,14 @@ import {
   Trash2,
   RefreshCw,
   Sparkles,
-  Filter
+  Filter,
+  Bike,
+  Phone,
+  MapPin,
+  User,
+  ExternalLink
 } from 'lucide-react';
-import { formatCurrency, cn } from '../lib/utils';
+import { formatCurrency, cn, parseOrderDeliveryInfo, cleanItemNotes } from '../lib/utils';
 
 export default function WaiterDashboard() {
   const { profile, signOut, loading: authLoading } = useAuth();
@@ -631,95 +636,171 @@ export default function WaiterDashboard() {
           ) : (
             <div className="grid gap-6 grid-cols-1 lg:grid-cols-2 xl:grid-cols-3">
               <AnimatePresence mode="popLayout">
-                {filteredOrders.map((order) => (
-                  <motion.div
-                    key={order.id}
-                    layout
-                    initial={{ opacity: 0, scale: 0.95 }}
-                    animate={{ opacity: 1, scale: 1 }}
-                    exit={{ opacity: 0, scale: 0.95 }}
-                    className={cn(
-                      "bg-white rounded-3xl border-2 p-6 shadow-sm flex flex-col h-full text-right",
-                      statusColors[order.status as keyof typeof statusColors]
-                    )}
-                  >
-                    <div className="flex items-center justify-between mb-4">
-                      <div className="flex items-center gap-3">
-                        <div className="bg-white p-2 rounded-xl shadow-sm">
-                          <Timer size={20} className="text-gray-400" />
-                        </div>
-                        <div className="text-right">
-                          <span className="text-sm font-semibold text-gray-400 uppercase">طاولة</span>
-                          <h3 className="text-xl font-black">{order.tables?.table_number || 'N/A'}</h3>
-                        </div>
-                      </div>
-                      <div className="text-left">
-                        <span className="text-xs font-bold block opacity-60">
-                          #{typeof order.id === 'string' && order.id.includes('-') ? order.id.split('-')[0] : order.id}
-                        </span>
-                        <span className="text-xs font-mono">{new Date(order.created_at).toLocaleTimeString('ar-EG', { hour: '2-digit', minute: '2-digit' })}</span>
-                      </div>
-                    </div>
+                {filteredOrders.map((order) => {
+                  const delivery = parseOrderDeliveryInfo(order);
 
-                    <div className="flex-grow space-y-3 mb-6">
-                      {order.order_items?.map((item: any) => (
-                        <div key={item.id} className="flex gap-3 bg-white/50 p-3 rounded-2xl border border-black/5">
-                          <div className="flex-grow">
-                            <div className="flex justify-between items-baseline">
-                              <h4 className="font-bold text-gray-900">{item.products?.name_ar}</h4>
-                              <span className="bg-white px-2 py-0.5 rounded-lg text-sm font-bold shadow-sm">x{item.quantity}</span>
-                            </div>
-                            {item.sugar_level && item.sugar_level !== 'none' && (
-                              <div className="mt-2 flex items-center gap-1.5 bg-orange-50 px-2 py-1 rounded-lg border border-orange-100 self-start">
-                                <span className="w-1.5 h-1.5 rounded-full bg-orange-500 animate-pulse"></span>
-                                <p className="text-[10px] font-black text-orange-700 uppercase tracking-wider">
-                                  سكر {(item.sugar_level === 'low' ? 'خفيف' : item.sugar_level === 'medium' ? 'وسط' : 'زيادة')}
-                                </p>
-                              </div>
-                            )}
-                            {item.notes && (
-                              <p className="text-xs italic text-gray-500 mt-1">"{item.notes}"</p>
-                            )}
+                  return (
+                    <motion.div
+                      key={order.id}
+                      layout
+                      initial={{ opacity: 0, scale: 0.95 }}
+                      animate={{ opacity: 1, scale: 1 }}
+                      exit={{ opacity: 0, scale: 0.95 }}
+                      className={cn(
+                        "bg-white rounded-3xl border-2 p-6 shadow-sm flex flex-col h-full text-right transition-all",
+                        delivery.isDelivery ? "border-purple-300 ring-1 ring-purple-200" : statusColors[order.status as keyof typeof statusColors]
+                      )}
+                    >
+                      {/* Delivery Header Banner */}
+                      {delivery.isDelivery && (
+                        <div className="mb-4 bg-gradient-to-r from-purple-600 to-indigo-600 text-white px-3.5 py-1.5 rounded-2xl flex items-center justify-between shadow-xs">
+                          <div className="flex items-center gap-2">
+                            <Bike size={16} className="shrink-0" />
+                            <span className="font-black text-xs">طلب دليفري (توصيل خارجي)</span>
+                          </div>
+                          <span className="text-[10px] bg-white/20 px-2 py-0.5 rounded-full font-bold">
+                            خارجي
+                          </span>
+                        </div>
+                      )}
+
+                      <div className="flex items-center justify-between mb-4">
+                        <div className="flex items-center gap-3">
+                          <div className={cn("p-2.5 rounded-2xl shadow-xs", delivery.isDelivery ? "bg-purple-100 text-purple-700" : "bg-gray-100 text-gray-600")}>
+                            {delivery.isDelivery ? <Bike size={22} /> : <Timer size={20} className="text-gray-400" />}
+                          </div>
+                          <div className="text-right">
+                            <span className="text-xs font-bold text-gray-400 uppercase">
+                              {delivery.isDelivery ? 'النوع' : 'طاولة'}
+                            </span>
+                            <h3 className="text-xl font-black text-gray-900">
+                              {delivery.isDelivery ? 'دليفري' : (order.tables?.table_number || 'N/A')}
+                            </h3>
                           </div>
                         </div>
-                      ))}
-                    </div>
+                        <div className="text-left">
+                          <span className="text-xs font-bold block opacity-60">
+                            #{typeof order.id === 'string' && order.id.includes('-') ? order.id.split('-')[0] : order.id}
+                          </span>
+                          <span className="text-xs font-mono font-bold text-gray-500">{new Date(order.created_at).toLocaleTimeString('ar-EG', { hour: '2-digit', minute: '2-digit' })}</span>
+                        </div>
+                      </div>
 
-                    <div className="grid grid-cols-2 gap-2">
-                      {order.status === 'new' && (
+                      {/* Delivery Customer Details Box */}
+                      {delivery.isDelivery && (
+                        <div className="bg-purple-50/80 border border-purple-200/90 rounded-2xl p-3.5 space-y-2.5 mb-4 text-xs">
+                          <div className="font-black text-purple-950 flex items-center justify-between">
+                            <span className="flex items-center gap-1.5">
+                              <User size={14} className="text-purple-600" />
+                              <span>بيانات المستلم: {delivery.customerName || 'عميل خارجي'}</span>
+                            </span>
+                          </div>
+
+                          {delivery.phone && (
+                            <div className="flex items-center justify-between bg-white px-2.5 py-1.5 rounded-xl border border-purple-100 shadow-xs">
+                              <div className="flex items-center gap-1.5 text-gray-900 font-mono font-bold text-xs" dir="ltr">
+                                <Phone size={13} className="text-purple-600" />
+                                <span>{delivery.phone}</span>
+                              </div>
+                              <div className="flex items-center gap-1.5">
+                                <a
+                                  href={`tel:${delivery.phone}`}
+                                  className="px-2.5 py-1 bg-green-50 hover:bg-green-100 text-green-700 rounded-lg text-[11px] font-bold transition-all flex items-center gap-1"
+                                  title="اتصال بالعميل"
+                                >
+                                  <span>اتصال</span>
+                                </a>
+                                <a
+                                  href={`https://wa.me/${delivery.phone.replace(/[^0-9]/g, '')}`}
+                                  target="_blank"
+                                  rel="noreferrer"
+                                  className="px-2.5 py-1 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-[11px] font-bold transition-all"
+                                  title="مراسلة على واتساب"
+                                >
+                                  واتساب
+                                </a>
+                              </div>
+                            </div>
+                          )}
+
+                          {delivery.address && (
+                            <div className="flex items-start gap-2 text-gray-800 bg-white/70 p-2 rounded-xl border border-purple-100">
+                              <MapPin size={14} className="text-purple-600 shrink-0 mt-0.5" />
+                              <span className="font-bold leading-tight">{delivery.address}</span>
+                            </div>
+                          )}
+
+                          {delivery.deliveryNotes && (
+                            <div className="text-[11px] text-purple-900 bg-purple-100/60 p-2 rounded-xl font-medium">
+                              📝 ملاحظة: {delivery.deliveryNotes}
+                            </div>
+                          )}
+                        </div>
+                      )}
+
+                      <div className="flex-grow space-y-3 mb-6">
+                        {order.order_items?.map((item: any) => {
+                          const cleanedNote = cleanItemNotes(item.notes);
+                          return (
+                            <div key={item.id} className="flex gap-3 bg-white/70 p-3 rounded-2xl border border-black/5">
+                              <div className="flex-grow">
+                                <div className="flex justify-between items-baseline">
+                                  <h4 className="font-bold text-gray-900">{item.products?.name_ar || item.products?.name}</h4>
+                                  <span className="bg-white px-2 py-0.5 rounded-lg text-sm font-bold shadow-sm">x{item.quantity}</span>
+                                </div>
+                                {item.sugar_level && item.sugar_level !== 'none' && (
+                                  <div className="mt-2 flex items-center gap-1.5 bg-orange-50 px-2 py-1 rounded-lg border border-orange-100 self-start">
+                                    <span className="w-1.5 h-1.5 rounded-full bg-orange-500 animate-pulse"></span>
+                                    <p className="text-[10px] font-black text-orange-700 uppercase tracking-wider">
+                                      سكر {(item.sugar_level === 'low' ? 'خفيف' : item.sugar_level === 'medium' ? 'وسط' : 'زيادة')}
+                                    </p>
+                                  </div>
+                                )}
+                                {cleanedNote && (
+                                  <p className="text-xs italic text-gray-600 mt-1.5 bg-gray-50 p-1.5 rounded-lg">"{cleanedNote}"</p>
+                                )}
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+
+                      <div className="grid grid-cols-2 gap-2">
+                        {order.status === 'new' && (
+                            <button 
+                              onClick={() => updateStatus(order.id, 'preparing')}
+                              className="col-span-2 bg-orange-600 text-white py-3 rounded-xl font-bold flex items-center justify-center gap-2 hover:bg-orange-700 transition-colors shadow-md"
+                            >
+                              <ChefHat size={18} />
+                              بدء التحضير
+                            </button>
+                        )}
+                        {order.status === 'preparing' && (
                           <button 
-                            onClick={() => updateStatus(order.id, 'preparing')}
-                            className="col-span-2 bg-orange-600 text-white py-3 rounded-xl font-bold flex items-center justify-center gap-2 hover:bg-orange-700 transition-colors shadow-md"
+                            onClick={() => updateStatus(order.id, 'delivered')}
+                            className="col-span-2 bg-green-600 text-white py-3 rounded-xl font-bold flex items-center justify-center gap-2 hover:bg-green-700 transition-colors shadow-md"
                           >
-                            <ChefHat size={18} />
-                            بدء التحضير
+                            <CheckCircle size={18} />
+                            {delivery.isDelivery ? 'جاهز / تم التسليم للدليفري' : 'تم التوصيل للطاولة'}
                           </button>
-                      )}
-                      {order.status === 'preparing' && (
-                        <button 
-                          onClick={() => updateStatus(order.id, 'delivered')}
-                          className="col-span-2 bg-green-600 text-white py-3 rounded-xl font-bold flex items-center justify-center gap-2 hover:bg-green-700 transition-colors shadow-md"
-                        >
-                          <CheckCircle size={18} />
-                          تم التوصيل
-                        </button>
-                      )}
-                      {['new', 'preparing'].includes(order.status) && (
-                        <button 
-                          onClick={() => setCancellingOrder(order.id)}
-                          className="col-span-2 mt-2 bg-red-50 text-red-600 py-3 rounded-xl font-bold flex items-center justify-center gap-2 hover:bg-red-100 transition-colors"
-                        >
-                          إلغاء الطلب
-                        </button>
-                      )}
-                      {(order.status === 'delivered' || order.status === 'cancelled') && (
-                         <div className="col-span-2 text-center py-2 font-bold uppercase tracking-widest text-sm opacity-50">
-                           {statusLabels[order.status as keyof typeof statusLabels]}
-                         </div>
-                      )}
-                    </div>
-                  </motion.div>
-                ))}
+                        )}
+                        {['new', 'preparing'].includes(order.status) && (
+                          <button 
+                            onClick={() => setCancellingOrder(order.id)}
+                            className="col-span-2 mt-2 bg-red-50 text-red-600 py-3 rounded-xl font-bold flex items-center justify-center gap-2 hover:bg-red-100 transition-colors"
+                          >
+                            إلغاء الطلب
+                          </button>
+                        )}
+                        {(order.status === 'delivered' || order.status === 'cancelled') && (
+                           <div className="col-span-2 text-center py-2 font-bold uppercase tracking-widest text-sm opacity-50">
+                             {statusLabels[order.status as keyof typeof statusLabels]}
+                           </div>
+                        )}
+                      </div>
+                    </motion.div>
+                  );
+                })}
               </AnimatePresence>
             </div>
           )}
