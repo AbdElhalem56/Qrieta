@@ -24,11 +24,14 @@ import {
   Bike,
   Phone,
   User,
-  Navigation
+  Navigation,
+  Crosshair,
+  ExternalLink
 } from 'lucide-react';
 import { cn, formatCurrency } from '../lib/utils';
 import { getLocalCategoryOptions, syncAllCategoryOptions, resolveProductOptions, calculateProductEffectivePrice, getProductPriceRange } from '../lib/optionsHelper';
 import { calculateDistanceMeters, getCurrentPosition, fetchAllServerGeofences } from '../lib/geoHelper';
+import { DeliveryZone, fetchAllServerDeliveryZones, getLocalDeliveryZones } from '../lib/deliveryHelper';
 import { initMetaPixel, trackViewContent, trackAddToCart, trackPurchase, trackCallWaiter } from '../lib/analytics';
 
 type CartItem = {
@@ -76,6 +79,16 @@ export default function CustomerApp() {
     address: string;
     notes: string;
   }>({ customerName: '', phone: '', address: '', notes: '' });
+  const [deliveryLocation, setDeliveryLocation] = useState<{
+    latitude: number;
+    longitude: number;
+    accuracy: number;
+    mapsUrl: string;
+  } | null>(null);
+  const [isLocatingDelivery, setIsLocatingDelivery] = useState(false);
+  const [deliveryLocationError, setDeliveryLocationError] = useState<string | null>(null);
+  const [deliveryZones, setDeliveryZones] = useState<DeliveryZone[]>([]);
+  const [selectedZoneId, setSelectedZoneId] = useState<string>('');
   const [orderPlaced, setOrderPlaced] = useState(false);
   const [lastOrderId, setLastOrderId] = useState<number | null>(null);
   const [waiterCalled, setWaiterCalled] = useState(false);
@@ -136,6 +149,19 @@ export default function CustomerApp() {
         }
       } catch (e) {
         console.warn('Geofence sync error:', e);
+      }
+
+      // Fetch restaurant delivery zones and fees
+      try {
+        const allZones = await fetchAllServerDeliveryZones();
+        const rZones = allZones[res.id] || res.delivery_zones || getLocalDeliveryZones(res.id) || [];
+        setDeliveryZones(rZones);
+        const activeFirst = rZones.find((z: DeliveryZone) => z.is_active !== false);
+        if (activeFirst) {
+          setSelectedZoneId(activeFirst.id);
+        }
+      } catch (e) {
+        console.warn('Delivery zones sync error:', e);
       }
 
       setRestaurant(res);
@@ -315,7 +341,12 @@ export default function CustomerApp() {
   // Service fee is strictly for dine-in / table orders. For delivery orders, service fee is completely removed (0%)
   const serviceFeePercentage = isDeliveryOrder ? 0 : Number(restaurant?.service_fee_percentage || 0);
   const serviceFeeAmount = subtotal * (serviceFeePercentage / 100);
-  const total = subtotal + serviceFeeAmount;
+
+  // Selected delivery zone & fee calculation
+  const activeDeliveryZones = deliveryZones.filter(z => z.is_active !== false);
+  const selectedZone = activeDeliveryZones.find(z => z.id === selectedZoneId) || (activeDeliveryZones.length > 0 ? activeDeliveryZones[0] : null);
+  const deliveryFee = isDeliveryOrder ? (selectedZone ? Number(selectedZone.fee || 0) : 0) : 0;
+  const total = subtotal + serviceFeeAmount + deliveryFee;
   const currency = (amount: number) => formatCurrency(amount, isRTL ? 'ar-EG' : 'en-US');
 
   const checkGeofence = async (targetRes?: Restaurant): Promise<boolean> => {
@@ -359,6 +390,40 @@ export default function CustomerApp() {
       });
       return false;
     }
+  };
+
+  const handleGetDeliveryLocation = async () => {
+    setIsLocatingDelivery(true);
+    setDeliveryLocationError(null);
+    try {
+      const pos = await getCurrentPosition();
+      const mapsUrl = `https://maps.google.com/?q=${pos.latitude},${pos.longitude}`;
+      setDeliveryLocation({
+        latitude: pos.latitude,
+        longitude: pos.longitude,
+        accuracy: pos.accuracy,
+        mapsUrl
+      });
+      // If address is empty, provide default text so validation passes smoothly
+      if (!deliveryInfo.address.trim()) {
+        setDeliveryInfo(prev => ({
+          ...prev,
+          address: isRTL ? 'موقع محدد عبر الخريطة (GPS) - يرجى كتابة رقم العقار أو الشقة' : 'GPS Location captured - please add building/flat #'
+        }));
+      }
+    } catch (err: any) {
+      console.warn('Delivery location error:', err);
+      setDeliveryLocationError(
+        err?.message || (isRTL ? 'تعذر جلب الموقع الجغرافي. يرجى تفعيل الـ GPS بالمتصفح أو كتابة العنوان يدوياً.' : 'Could not detect location. Please enable GPS or enter address manually.')
+      );
+    } finally {
+      setIsLocatingDelivery(false);
+    }
+  };
+
+  const handleClearDeliveryLocation = () => {
+    setDeliveryLocation(null);
+    setDeliveryLocationError(null);
   };
 
   const placeOrder = async () => {
@@ -425,8 +490,12 @@ export default function CustomerApp() {
       }
 
       if (order) {
+        const zoneInfoStr = selectedZone 
+          ? `المنطقة: ${selectedZone.name} (+${selectedZone.fee} جـ)` 
+          : 'توصيل عام';
+
         const deliveryHeader = isDeliveryOrder
-          ? `[🛵 دليفري | الاسم: ${deliveryInfo.customerName.trim()} | هاتف: ${deliveryInfo.phone.trim()} | العنوان: ${deliveryInfo.address.trim()}${deliveryInfo.notes.trim() ? ` | ملاحظات: ${deliveryInfo.notes.trim()}` : ''}]`
+          ? `[🛵 دليفري | ${zoneInfoStr} | الاسم: ${deliveryInfo.customerName.trim()} | هاتف: ${deliveryInfo.phone.trim()} | العنوان: ${deliveryInfo.address.trim()}${deliveryInfo.notes.trim() ? ` | ملاحظات: ${deliveryInfo.notes.trim()}` : ''}]`
           : '';
 
         const orderItemsList = cart.map((item, itemIdx) => {
@@ -1293,11 +1362,62 @@ export default function CustomerApp() {
               </div>
               {/* Delivery Details Form when isDeliveryOrder is true */}
               {isDeliveryOrder && (
-                <div className="p-6 bg-purple-50/60 border-t border-purple-100 space-y-3.5">
-                  <div className="flex items-center gap-2 text-purple-950 font-black text-sm">
-                    <Bike size={18} className="text-purple-600" />
-                    <span>{isRTL ? 'بيانات التوصيل (دليفري خارجي)' : 'Delivery Information'}</span>
+                <div className="p-6 bg-purple-50/60 border-t border-purple-100 space-y-4">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2 text-purple-950 font-black text-sm">
+                      <Bike size={18} className="text-purple-600" />
+                      <span>{isRTL ? 'بيانات ومكان التوصيل (دليفري)' : 'Delivery & Area Details'}</span>
+                    </div>
+                    {selectedZone && (
+                      <span className="text-[11px] font-black bg-purple-200/80 text-purple-900 px-2.5 py-1 rounded-xl">
+                        {isRTL ? `التوصيل: ${selectedZone.name} (${currency(selectedZone.fee)})` : `Delivery: ${selectedZone.name} (${currency(selectedZone.fee)})`}
+                      </span>
+                    )}
                   </div>
+
+                  {/* Delivery Zones / Areas Selector */}
+                  {activeDeliveryZones.length > 0 && (
+                    <div className="space-y-2">
+                      <label className="block text-[11px] font-black text-purple-900 text-right">
+                        {isRTL ? 'اختر منطقة / مكان التوصيل *' : 'Select Delivery Area / Zone *'}
+                      </label>
+                      <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+                        {activeDeliveryZones.map((zone) => {
+                          const isSelected = (selectedZone?.id === zone.id);
+                          return (
+                            <button
+                              key={zone.id}
+                              type="button"
+                              onClick={() => setSelectedZoneId(zone.id)}
+                              className={cn(
+                                "p-3 rounded-2xl border text-right transition-all flex flex-col justify-between gap-1 shadow-sm active:scale-95 cursor-pointer",
+                                isSelected 
+                                  ? "bg-purple-600 text-white border-purple-600 shadow-md ring-2 ring-purple-300"
+                                  : "bg-white text-gray-800 border-gray-200 hover:border-purple-300 hover:bg-purple-50/50"
+                              )}
+                            >
+                              <div className="flex items-center justify-between w-full">
+                                <span className={cn("text-xs font-black truncate", isSelected ? "text-white" : "text-gray-900")}>
+                                  {zone.name}
+                                </span>
+                                {isSelected && <CheckCircle2 size={14} className="text-white shrink-0" />}
+                              </div>
+                              <div className="flex items-center justify-between text-[11px] font-bold">
+                                <span className={isSelected ? "text-purple-100" : "text-purple-700 font-black"}>
+                                  +{currency(zone.fee)}
+                                </span>
+                                {zone.estimated_time && (
+                                  <span className={cn("text-[10px]", isSelected ? "text-purple-200" : "text-gray-400")}>
+                                    {zone.estimated_time}
+                                  </span>
+                                )}
+                              </div>
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  )}
                   
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                     <div>
@@ -1375,17 +1495,33 @@ export default function CustomerApp() {
                     <span className="font-black text-gray-800">{currency(subtotal)}</span>
                   </div>
 
-                  {/* If delivery, show 0% fee with clear badge */}
+                  {/* If delivery, show delivery zone fee + 0% dine-in fee badge */}
                   {isDeliveryOrder ? (
-                    <div className="flex items-center justify-between text-xs font-bold text-purple-700 bg-purple-50/80 px-3 py-2 rounded-xl border border-purple-100">
-                      <span className="flex items-center gap-1.5">
-                        <Bike size={14} className="text-purple-600 shrink-0" />
-                        <span>{isRTL ? 'رسوم خدمة الصالة (طلب دليفري)' : 'Dine-in Service Fee'}</span>
-                      </span>
-                      <span className="font-black text-purple-700 bg-purple-200/60 px-2 py-0.5 rounded-md text-[11px]">
-                        {isRTL ? 'مجاناً 0% (معفى)' : '0% FREE'}
-                      </span>
-                    </div>
+                    <>
+                      <div className="flex items-center justify-between text-xs font-bold text-purple-700 bg-purple-50/80 px-3 py-2 rounded-xl border border-purple-100">
+                        <span className="flex items-center gap-1.5">
+                          <Bike size={14} className="text-purple-600 shrink-0" />
+                          <span>{isRTL ? 'رسوم خدمة الصالة (معفى للطلبات الخارجية)' : 'Dine-in Service Fee (Exempt)'}</span>
+                        </span>
+                        <span className="font-black text-purple-700 bg-purple-200/60 px-2 py-0.5 rounded-md text-[11px]">
+                          {isRTL ? 'مجاناً 0%' : '0% FREE'}
+                        </span>
+                      </div>
+
+                      {deliveryFee > 0 && (
+                        <div className="flex items-center justify-between text-xs font-bold text-purple-900 bg-purple-100/70 px-3 py-2 rounded-xl border border-purple-200">
+                          <span className="flex items-center gap-1.5">
+                            <Navigation size={14} className="text-purple-700 shrink-0" />
+                            <span>
+                              {isRTL 
+                                ? `سعر توصيل الدليفري (${selectedZone?.name || 'المنطقة المحددة'})` 
+                                : `Delivery Fee (${selectedZone?.name || 'Area'})`}
+                            </span>
+                          </span>
+                          <span className="font-black text-purple-950">+{currency(deliveryFee)}</span>
+                        </div>
+                      )}
+                    </>
                   ) : (
                     serviceFeePercentage > 0 && (
                       <div className="flex items-center justify-between text-xs font-bold text-indigo-700 bg-indigo-50/70 px-3 py-2 rounded-xl">

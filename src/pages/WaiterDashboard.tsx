@@ -692,8 +692,17 @@ export default function WaiterDashboard() {
                           <div className="font-black text-purple-950 flex items-center justify-between">
                             <span className="flex items-center gap-1.5">
                               <User size={14} className="text-purple-600" />
-                              <span>بيانات المستلم: {delivery.customerName || 'عميل خارجي'}</span>
+                              <span>المستلم: {delivery.customerName || 'عميل خارجي'}</span>
                             </span>
+                            {delivery.deliveryZone && (
+                              <span className="bg-purple-600 text-white px-2 py-0.5 rounded-lg text-[10px] font-black flex items-center gap-1">
+                                <Bike size={11} />
+                                <span>{delivery.deliveryZone}</span>
+                                {delivery.deliveryFee && (
+                                  <span>(+{delivery.deliveryFee} جـ)</span>
+                                )}
+                              </span>
+                            )}
                           </div>
 
                           {delivery.phone && (
@@ -726,7 +735,29 @@ export default function WaiterDashboard() {
                           {delivery.address && (
                             <div className="flex items-start gap-2 text-gray-800 bg-white/70 p-2 rounded-xl border border-purple-100">
                               <MapPin size={14} className="text-purple-600 shrink-0 mt-0.5" />
-                              <span className="font-bold leading-tight">{delivery.address}</span>
+                              <div className="flex flex-col flex-grow">
+                                {delivery.deliveryZone && (
+                                  <span className="text-[10px] text-purple-700 font-black">
+                                    المنطقة: {delivery.deliveryZone} {delivery.deliveryFee ? `(توصيل ${delivery.deliveryFee} جـ)` : ''}
+                                  </span>
+                                )}
+                                <span className="font-bold leading-tight">{delivery.address}</span>
+                              </div>
+                            </div>
+                          )}
+
+                          {delivery.locationUrl && (
+                            <div className="pt-1">
+                              <a
+                                href={delivery.locationUrl}
+                                target="_blank"
+                                rel="noreferrer"
+                                className="w-full py-2 px-3 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 text-white rounded-xl text-xs font-black flex items-center justify-center gap-2 shadow-sm active:scale-98 transition-all"
+                              >
+                                <MapPin size={14} className="animate-bounce" />
+                                <span>فتح موقع العميل على خرائط جوجل (GPS)</span>
+                                <ExternalLink size={12} className="opacity-80" />
+                              </a>
                             </div>
                           )}
 

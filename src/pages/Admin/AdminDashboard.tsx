@@ -15,6 +15,12 @@ import {
   resolveProductOptions
 } from '../../lib/optionsHelper';
 import { 
+  DeliveryZone, 
+  fetchAllServerDeliveryZones, 
+  getLocalDeliveryZones, 
+  syncDeliveryZones 
+} from '../../lib/deliveryHelper';
+import { 
   Plus, 
   Trash2, 
   Edit, 
@@ -113,6 +119,14 @@ export default function AdminDashboard() {
   const [copySuccess, setCopySuccess] = useState(false);
   const [copiedDeliveryLink, setCopiedDeliveryLink] = useState(false);
 
+  // Delivery Zones State
+  const [deliveryZones, setDeliveryZones] = useState<DeliveryZone[]>([]);
+  const [newZoneName, setNewZoneName] = useState('');
+  const [newZoneFee, setNewZoneFee] = useState<string>('30');
+  const [newZoneTime, setNewZoneTime] = useState<string>('30-45 دقيقة');
+  const [isSavingDeliveryZones, setIsSavingDeliveryZones] = useState(false);
+  const [deliveryToast, setDeliveryToast] = useState<string | null>(null);
+
   const openAddProductModal = () => {
     const firstCatId = categories[0]?.id || '';
     const initialPrice = 0;
@@ -162,11 +176,95 @@ export default function AdminDashboard() {
         fetchStaff(resId);
         fetchRestaurant(resId);
         fetchTables(resId);
+        fetchDeliveryZones(resId);
       }
     };
 
     initData();
   }, [profile, selectedDate, analyticsMode]);
+
+  const fetchDeliveryZones = async (resId?: string) => {
+    const targetId = resId || profile?.restaurant_id || restaurant?.id;
+    if (!targetId) return;
+    try {
+      const allZones = await fetchAllServerDeliveryZones();
+      if (allZones[targetId] && allZones[targetId].length > 0) {
+        setDeliveryZones(allZones[targetId]);
+      } else {
+        const local = getLocalDeliveryZones(targetId);
+        setDeliveryZones(local);
+      }
+    } catch (e) {
+      console.warn('Error fetching delivery zones:', e);
+      const local = getLocalDeliveryZones(targetId);
+      setDeliveryZones(local);
+    }
+  };
+
+  const handleAddDeliveryZone = (e?: React.FormEvent) => {
+    if (e) e.preventDefault();
+    if (!newZoneName.trim()) {
+      alert('يرجى إدخال اسم المنطقة أو المكان (مثل: بورسعيد، بورفؤاد)');
+      return;
+    }
+    const feeNum = parseFloat(newZoneFee) || 0;
+    const newZone: DeliveryZone = {
+      id: 'dz_' + Date.now() + '_' + Math.random().toString(36).substring(2, 6),
+      name: newZoneName.trim(),
+      fee: feeNum,
+      estimated_time: newZoneTime.trim() || undefined,
+      is_active: true
+    };
+    setDeliveryZones(prev => [...prev, newZone]);
+    setNewZoneName('');
+  };
+
+  const handleAddPresetZone = (name: string, fee: number, time = '30-45 دقيقة') => {
+    if (deliveryZones.some(z => z.name === name)) {
+      alert(`المنطقة "${name}" مضافة بالفعل`);
+      return;
+    }
+    const newZone: DeliveryZone = {
+      id: 'dz_' + Date.now() + '_' + Math.random().toString(36).substring(2, 6),
+      name,
+      fee,
+      estimated_time: time,
+      is_active: true
+    };
+    setDeliveryZones(prev => [...prev, newZone]);
+  };
+
+  const handleRemoveDeliveryZone = (id: string) => {
+    setDeliveryZones(prev => prev.filter(z => z.id !== id));
+  };
+
+  const handleToggleDeliveryZone = (id: string) => {
+    setDeliveryZones(prev => prev.map(z => z.id === id ? { ...z, is_active: !z.is_active } : z));
+  };
+
+  const handleUpdateDeliveryZoneFee = (id: string, feeVal: string) => {
+    const fee = parseFloat(feeVal) || 0;
+    setDeliveryZones(prev => prev.map(z => z.id === id ? { ...z, fee } : z));
+  };
+
+  const handleSaveDeliveryZones = async () => {
+    const targetId = profile?.restaurant_id || restaurant?.id;
+    if (!targetId) {
+      alert('لم يتم تحديد المطعم');
+      return;
+    }
+    setIsSavingDeliveryZones(true);
+    try {
+      await syncDeliveryZones(targetId, deliveryZones);
+      setDeliveryToast('تم حفظ وتحديث أسعار ومناطق التوصيل بنجاح!');
+      setTimeout(() => setDeliveryToast(null), 3500);
+    } catch (err: any) {
+      console.error('Error saving delivery zones:', err);
+      alert('حدث خطأ أثناء حفظ مناطق التوصيل');
+    } finally {
+      setIsSavingDeliveryZones(false);
+    }
+  };
 
   const fetchTables = async (resId?: string) => {
     const targetId = resId || profile?.restaurant_id || restaurant?.id;
@@ -1477,6 +1575,15 @@ export default function AdminDashboard() {
                             <span>{copiedDeliveryLink ? 'تم نسخ الرابط!' : 'نسخ رابط الدليفري'}</span>
                           </button>
 
+                          <button
+                            type="button"
+                            onClick={() => setActiveTab('settings')}
+                            className="bg-purple-500/40 hover:bg-purple-500/60 border border-purple-300/40 text-purple-100 px-4 py-3 rounded-2xl font-bold text-xs md:text-sm flex items-center gap-2 transition-all cursor-pointer"
+                          >
+                            <Settings size={15} />
+                            <span>تعديل مناطق وأسعار التوصيل</span>
+                          </button>
+
                           <a
                             href={deliveryUrl}
                             target="_blank"
@@ -1487,6 +1594,28 @@ export default function AdminDashboard() {
                             <span>معاينة الرابط</span>
                           </a>
                         </div>
+
+                        {/* Active Delivery Zones Pill Preview */}
+                        {deliveryZones.filter(z => z.is_active !== false).length > 0 && (
+                          <div className="pt-3 border-t border-purple-800/60 space-y-2">
+                            <span className="text-[11px] font-bold text-purple-200 block">
+                              مناطق وأسعار التوصيل المحددة للزبائن:
+                            </span>
+                            <div className="flex flex-wrap gap-2">
+                              {deliveryZones.filter(z => z.is_active !== false).map(z => (
+                                <span 
+                                  key={z.id} 
+                                  className="px-2.5 py-1 bg-purple-900/80 border border-purple-700/60 text-purple-100 rounded-xl text-[11px] font-black flex items-center gap-1.5"
+                                >
+                                  <span>{z.name}</span>
+                                  <span className="bg-purple-700/80 px-1.5 py-0.5 rounded-md text-[10px] text-purple-200">
+                                    {z.fee} جـ
+                                  </span>
+                                </span>
+                              ))}
+                            </div>
+                          </div>
+                        )}
                       </div>
 
                       {/* QR Display Card */}
@@ -2225,7 +2354,223 @@ export default function AdminDashboard() {
                 </div>
               </div>
 
-              {/* 4. Save Button */}
+              {/* 4. Delivery Zones & Fees Management Card */}
+              <div className="bg-white p-6 md:p-8 rounded-[36px] border border-gray-100 shadow-xl shadow-gray-200/50 space-y-6">
+                <div className="flex items-center justify-between border-b pb-4">
+                  <div>
+                    <h3 className="text-xl font-black text-gray-900 flex items-center gap-2">
+                      <span>إدارة مناطق وأسعار توصيل الدليفري</span>
+                    </h3>
+                    <p className="text-xs text-gray-500 font-medium mt-1">
+                      حدد الأماكن والمناطق المتاحة وأسعار التوصيل الخاصة بكل منطقة لتظهر للعميل كخيارات عند مسح كود الدليفري
+                    </p>
+                  </div>
+                  <div className="w-12 h-12 bg-purple-50 rounded-2xl flex items-center justify-center text-purple-600 shrink-0">
+                    <Bike size={24} />
+                  </div>
+                </div>
+
+                {deliveryToast && (
+                  <div className="p-4 bg-emerald-50 border border-emerald-200 text-emerald-800 rounded-2xl font-bold text-xs flex items-center gap-2 animate-in fade-in">
+                    <CheckCircle2 size={16} className="text-emerald-600 shrink-0" />
+                    <span>{deliveryToast}</span>
+                  </div>
+                )}
+
+                {/* Quick Presets */}
+                <div className="bg-purple-50/60 p-4 rounded-2xl border border-purple-100 space-y-2.5">
+                  <span className="text-[11px] font-black text-purple-900 block text-right">
+                    إضافة سريعة لمناطق شائعة (بضغطة واحدة):
+                  </span>
+                  <div className="flex flex-wrap gap-2 justify-end">
+                    <button
+                      type="button"
+                      onClick={() => handleAddPresetZone('بورسعيد', 30, '30-45 دقيقة')}
+                      className="px-3.5 py-1.5 bg-white hover:bg-purple-100 text-purple-900 border border-purple-200 rounded-xl text-xs font-black transition-all active:scale-95 shadow-sm"
+                    >
+                      + بورسعيد (30 جـ)
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => handleAddPresetZone('بورفؤاد', 40, '40-50 دقيقة')}
+                      className="px-3.5 py-1.5 bg-white hover:bg-purple-100 text-purple-900 border border-purple-200 rounded-xl text-xs font-black transition-all active:scale-95 shadow-sm"
+                    >
+                      + بورفؤاد (40 جـ)
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => handleAddPresetZone('حي الزهور', 30, '30-40 دقيقة')}
+                      className="px-3.5 py-1.5 bg-white hover:bg-purple-100 text-purple-900 border border-purple-200 rounded-xl text-xs font-black transition-all active:scale-95 shadow-sm"
+                    >
+                      + حي الزهور (30 جـ)
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => handleAddPresetZone('حي الشرق', 25, '20-30 دقيقة')}
+                      className="px-3.5 py-1.5 bg-white hover:bg-purple-100 text-purple-900 border border-purple-200 rounded-xl text-xs font-black transition-all active:scale-95 shadow-sm"
+                    >
+                      + حي الشرق (25 جـ)
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => handleAddPresetZone('حي الضواحي', 35, '35-45 دقيقة')}
+                      className="px-3.5 py-1.5 bg-white hover:bg-purple-100 text-purple-900 border border-purple-200 rounded-xl text-xs font-black transition-all active:scale-95 shadow-sm"
+                    >
+                      + حي الضواحي (35 جـ)
+                    </button>
+                  </div>
+                </div>
+
+                {/* Add New Custom Zone Form */}
+                <form onSubmit={handleAddDeliveryZone} className="bg-gray-50/80 p-4 sm:p-5 rounded-2xl border border-gray-200/80 space-y-3">
+                  <h4 className="text-xs font-black text-gray-800 flex items-center gap-1.5 justify-end">
+                    <span>إضافة منطقة أو مكان مخصص</span>
+                    <Plus size={15} className="text-purple-600" />
+                  </h4>
+                  
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                    <div className="sm:col-span-1">
+                      <label className="block text-[11px] font-bold text-gray-600 mb-1 text-right">اسم المكان / المنطقة *</label>
+                      <input
+                        type="text"
+                        value={newZoneName}
+                        onChange={(e) => setNewZoneName(e.target.value)}
+                        placeholder="مثال: بورسعيد / بورفؤاد"
+                        className="w-full bg-white border border-gray-200 rounded-xl px-3.5 py-2.5 text-xs font-bold text-gray-900 focus:ring-2 ring-purple-500 outline-none text-right shadow-sm"
+                        required
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-[11px] font-bold text-gray-600 mb-1 text-right">سعر التوصيل (جنيه) *</label>
+                      <input
+                        type="number"
+                        min="0"
+                        step="1"
+                        value={newZoneFee}
+                        onChange={(e) => setNewZoneFee(e.target.value)}
+                        placeholder="مثال: 30"
+                        className="w-full bg-white border border-gray-200 rounded-xl px-3.5 py-2.5 text-xs font-bold text-gray-900 focus:ring-2 ring-purple-500 outline-none text-right shadow-sm"
+                        required
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-[11px] font-bold text-gray-600 mb-1 text-right">وقت التوصيل التقديري (اختياري)</label>
+                      <input
+                        type="text"
+                        value={newZoneTime}
+                        onChange={(e) => setNewZoneTime(e.target.value)}
+                        placeholder="مثال: 30-45 دقيقة"
+                        className="w-full bg-white border border-gray-200 rounded-xl px-3.5 py-2.5 text-xs font-bold text-gray-900 focus:ring-2 ring-purple-500 outline-none text-right shadow-sm"
+                      />
+                    </div>
+                  </div>
+
+                  <div className="flex justify-end pt-1">
+                    <button
+                      type="submit"
+                      className="px-5 py-2.5 bg-purple-600 hover:bg-purple-700 text-white rounded-xl font-black text-xs flex items-center gap-1.5 shadow-md active:scale-95 transition-all cursor-pointer"
+                    >
+                      <Plus size={15} />
+                      <span>إضافة المنطقة للقائمة</span>
+                    </button>
+                  </div>
+                </form>
+
+                {/* List of Configured Zones */}
+                <div className="space-y-3">
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs font-black text-gray-700">
+                      قائمة المناطق والأسعار المعتمدة ({deliveryZones.length})
+                    </span>
+                    <span className="text-[11px] font-bold text-gray-400">
+                      تظهر للعميل في شاشة الدليفري
+                    </span>
+                  </div>
+
+                  {deliveryZones.length === 0 ? (
+                    <div className="text-center py-8 bg-gray-50/60 rounded-2xl border border-dashed border-gray-200 text-gray-400 font-bold text-xs">
+                      لا توجد مناطق توصيل مضافة حتى الآن. يمكنك استخدام الإضافة السريعة أعلاه أو كتابة منطقة مخصصة.
+                    </div>
+                  ) : (
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                      {deliveryZones.map((zone) => (
+                        <div
+                          key={zone.id}
+                          className={cn(
+                            "p-3.5 rounded-2xl border transition-all flex items-center justify-between gap-3 shadow-sm",
+                            zone.is_active !== false 
+                              ? "bg-white border-purple-100 hover:border-purple-300" 
+                              : "bg-gray-50 border-gray-200 opacity-60"
+                          )}
+                        >
+                          <div className="flex items-center gap-2">
+                            <button
+                              type="button"
+                              onClick={() => handleRemoveDeliveryZone(zone.id)}
+                              className="p-1.5 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors cursor-pointer"
+                              title="حذف المنطقة"
+                            >
+                              <Trash2 size={15} />
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => handleToggleDeliveryZone(zone.id)}
+                              className={cn(
+                                "px-2 py-1 rounded-lg text-[10px] font-black transition-all cursor-pointer",
+                                zone.is_active !== false 
+                                  ? "bg-emerald-100 text-emerald-800" 
+                                  : "bg-gray-200 text-gray-600"
+                              )}
+                            >
+                              {zone.is_active !== false ? 'مفعلة' : 'معطلة'}
+                            </button>
+                          </div>
+
+                          <div className="flex items-center gap-2 text-right">
+                            <div className="flex flex-col items-end">
+                              <span className="font-black text-xs text-gray-900">{zone.name}</span>
+                              {zone.estimated_time && (
+                                <span className="text-[10px] font-medium text-gray-400">{zone.estimated_time}</span>
+                              )}
+                            </div>
+
+                            <div className="flex items-center gap-1 bg-purple-50 px-2.5 py-1 rounded-xl border border-purple-100">
+                              <input
+                                type="number"
+                                min="0"
+                                value={zone.fee}
+                                onChange={(e) => handleUpdateDeliveryZoneFee(zone.id, e.target.value)}
+                                className="w-12 bg-transparent text-center font-black text-xs text-purple-900 outline-none border-b border-purple-300 focus:border-purple-600"
+                              />
+                              <span className="text-[11px] font-black text-purple-700">جـ</span>
+                            </div>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+
+                  <div className="pt-2">
+                    <button
+                      type="button"
+                      onClick={handleSaveDeliveryZones}
+                      disabled={isSavingDeliveryZones}
+                      className="w-full bg-purple-700 hover:bg-purple-800 text-white py-3.5 rounded-2xl font-black text-sm flex items-center justify-center gap-2 shadow-lg shadow-purple-600/20 active:scale-98 transition-all disabled:opacity-60 cursor-pointer"
+                    >
+                      {isSavingDeliveryZones ? (
+                        <div className="w-4 h-4 border-2 border-white/20 border-t-white rounded-full animate-spin" />
+                      ) : (
+                        <>
+                          <Save size={16} />
+                          <span>حفظ وتطبيق أسعار ومناطق التوصيل</span>
+                        </>
+                      )}
+                    </button>
+                  </div>
+                </div>
+              </div>
+
+              {/* 5. Save Button */}
               <div className="pt-2">
                 <button
                   onClick={updateRestaurantColors}

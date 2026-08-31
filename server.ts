@@ -508,6 +508,68 @@ async function startServer() {
     res.status(200).json({ geofences: restaurantGeofencesStore });
   });
 
+  // Persistent restaurant delivery zones store
+  const deliveryZonesFilePath = path.join(process.cwd(), "restaurant-delivery-zones.json");
+  let restaurantDeliveryZonesStore: Record<string, any> = {};
+
+  try {
+    if (fs.existsSync(deliveryZonesFilePath)) {
+      const dData = fs.readFileSync(deliveryZonesFilePath, "utf-8");
+      restaurantDeliveryZonesStore = JSON.parse(dData || "{}");
+    }
+  } catch (e) {
+    console.warn("Could not read restaurant-delivery-zones.json:", e);
+  }
+
+  const persistDeliveryZones = () => {
+    try {
+      fs.writeFileSync(deliveryZonesFilePath, JSON.stringify(restaurantDeliveryZonesStore, null, 2), "utf-8");
+    } catch (e) {
+      console.warn("Could not write restaurant-delivery-zones.json:", e);
+    }
+  };
+
+  // Save Restaurant Delivery Zones API
+  app.post("/api/restaurants/save-delivery-zones", async (req, res) => {
+    const { restaurant_id, delivery_zones } = req.body;
+    if (!restaurant_id) {
+      return res.status(400).json({ error: "معرف المطعم مطلوب." });
+    }
+
+    try {
+      restaurantDeliveryZonesStore[restaurant_id] = delivery_zones || [];
+      persistDeliveryZones();
+
+      const supabaseUrl = process.env.VITE_SUPABASE_URL || process.env.SUPABASE_URL;
+      const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+      const anonKey = process.env.VITE_SUPABASE_ANON_KEY || process.env.SUPABASE_ANON_KEY;
+
+      if (supabaseUrl && delivery_zones) {
+        const client = serviceRoleKey
+          ? createClient(supabaseUrl, serviceRoleKey)
+          : createClient(supabaseUrl, anonKey || "");
+
+        try {
+          await client.from("restaurants").update({
+            delivery_zones: delivery_zones
+          }).eq("id", restaurant_id);
+        } catch (dbErr) {
+          // File store is the primary reliable store
+        }
+      }
+
+      res.status(200).json({ success: true, message: "تم حفظ مناطق ورسوم التوصيل بنجاح", delivery_zones });
+    } catch (err: any) {
+      console.error("Save restaurant delivery zones error:", err);
+      res.status(500).json({ error: err.message || "فشل في حفظ مناطق التوصيل" });
+    }
+  });
+
+  // Get All Restaurant Delivery Zones API
+  app.get("/api/restaurants/delivery-zones", (req, res) => {
+    res.status(200).json({ delivery_zones: restaurantDeliveryZonesStore });
+  });
+
   // Vite integration
   if (process.env.NODE_ENV !== "production") {
     const vite = await createViteServer({
