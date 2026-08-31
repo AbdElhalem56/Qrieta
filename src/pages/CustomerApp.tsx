@@ -77,8 +77,19 @@ export default function CustomerApp() {
     customerName: string;
     phone: string;
     address: string;
+    buildingNumber: string;
+    floor: string;
+    apartmentNumber: string;
     notes: string;
-  }>({ customerName: '', phone: '', address: '', notes: '' });
+  }>({
+    customerName: '',
+    phone: '',
+    address: '',
+    buildingNumber: '',
+    floor: '',
+    apartmentNumber: '',
+    notes: ''
+  });
   const [deliveryLocation, setDeliveryLocation] = useState<{
     latitude: number;
     longitude: number;
@@ -446,7 +457,7 @@ export default function CustomerApp() {
 
     if (isDeliveryOrder) {
       if (!deliveryInfo.customerName.trim()) {
-        alert(isRTL ? '⚠️ يرجى كتابة اسم المستلم لإتمام طلب التوصيل.' : 'Please enter customer name for delivery.');
+        alert(isRTL ? '⚠️ يرجى كتابة اسمك لإتمام طلب التوصيل.' : 'Please enter your name for delivery.');
         return;
       }
       if (!deliveryInfo.phone.trim() || deliveryInfo.phone.trim().length < 6) {
@@ -454,7 +465,7 @@ export default function CustomerApp() {
         return;
       }
       if (!deliveryInfo.address.trim()) {
-        alert(isRTL ? '⚠️ يرجى كتابة عنوان التوصيل بالتفصيل (الشارع، العمارة، رقم الشقة).' : 'Please enter detailed delivery address.');
+        alert(isRTL ? '⚠️ يرجى كتابة العنوان (المنطقة والشارع).' : 'Please enter delivery address.');
         return;
       }
     } else {
@@ -509,8 +520,17 @@ export default function CustomerApp() {
           ? `المنطقة: ${selectedZone.name} (+${selectedZone.fee} جـ)` 
           : 'توصيل عام';
 
+        let fullAddressDetails = deliveryInfo.address.trim();
+        const buildingParts = [];
+        if (deliveryInfo.buildingNumber.trim()) buildingParts.push(`عمارة: ${deliveryInfo.buildingNumber.trim()}`);
+        if (deliveryInfo.floor.trim()) buildingParts.push(`طابق: ${deliveryInfo.floor.trim()}`);
+        if (deliveryInfo.apartmentNumber.trim()) buildingParts.push(`شقة: ${deliveryInfo.apartmentNumber.trim()}`);
+        if (buildingParts.length > 0) {
+          fullAddressDetails = fullAddressDetails ? `${fullAddressDetails} (${buildingParts.join(' - ')})` : buildingParts.join(' - ');
+        }
+
         const deliveryHeader = isDeliveryOrder
-          ? `[🛵 دليفري | ${zoneInfoStr} | الاسم: ${deliveryInfo.customerName.trim()} | هاتف: ${deliveryInfo.phone.trim()} | العنوان: ${deliveryInfo.address.trim()}${deliveryLocation ? ` | لوكيشن: ${deliveryLocation.mapsUrl}` : ''}${deliveryInfo.notes.trim() ? ` | ملاحظات: ${deliveryInfo.notes.trim()}` : ''}]`
+          ? `[🛵 دليفري | ${zoneInfoStr} | الاسم: ${deliveryInfo.customerName.trim()} | هاتف: ${deliveryInfo.phone.trim()} | العنوان: ${fullAddressDetails}${deliveryLocation ? ` | لوكيشن: ${deliveryLocation.mapsUrl}` : ''}${deliveryInfo.notes.trim() ? ` | ملاحظات: ${deliveryInfo.notes.trim()}` : ''}]`
           : '';
 
         const orderItemsList = cart.map((item, itemIdx) => {
@@ -1338,21 +1358,21 @@ export default function CustomerApp() {
                       )}
                       
                       <div className={cn("flex-grow", isRTL ? "text-right" : "text-left")}>
-                        <div className="flex items-start justify-between mb-1">
-                          <span className="font-black text-base md:text-lg leading-tight">{isRTL ? item.product.name_ar : item.product.name_en}</span>
+                        <div className="flex items-start justify-between mb-1.5">
+                          <span className="font-black text-lg md:text-xl leading-snug">{isRTL ? item.product.name_ar : item.product.name_en}</span>
                           <div className={isRTL ? "text-right" : "text-left"}>
-                            <p className="font-black text-base md:text-lg" style={{ color: primaryColor }}>{currency(item.product.price * item.quantity)}</p>
+                            <p className="font-black text-lg md:text-xl" style={{ color: primaryColor }}>{currency(item.product.price * item.quantity)}</p>
                           </div>
                         </div>
                         
-                        <div className="flex flex-wrap gap-1.5 mt-1 justify-start mb-2.5">
+                        <div className="flex flex-wrap gap-1.5 mt-1.5 justify-start mb-3">
                           {item.selectedOptionLabels && item.selectedOptionLabels.map((lbl, lIdx) => (
                             <span 
                               key={lIdx}
-                              className="px-2 py-0.5 rounded-lg text-[10px] font-black border"
+                              className="px-2.5 py-1 rounded-xl text-xs font-black border shadow-2xs"
                               style={{ 
-                                backgroundColor: `${primaryColor}10`, 
-                                borderColor: `${primaryColor}30`,
+                                backgroundColor: `${primaryColor}12`, 
+                                borderColor: `${primaryColor}35`,
                                 color: primaryColor 
                               }}
                             >
@@ -1360,12 +1380,12 @@ export default function CustomerApp() {
                             </span>
                           ))}
                           {item.sugar !== 'none' && !item.selectedOptionLabels?.some(l => l.optionName.includes('سكر')) && (
-                            <span className="bg-gray-100 text-gray-700 px-2 py-0.5 rounded-lg text-[10px] font-black">
+                            <span className="bg-gray-100 text-gray-800 px-2.5 py-1 rounded-xl text-xs font-black">
                               {isRTL ? `سكر ${item.sugar === 'low' ? 'خفيف' : item.sugar === 'medium' ? 'وسط' : 'زيادة'}` : `${item.sugar} sugar`}
                             </span>
                           )}
                           {item.notes && (
-                            <span className="bg-gray-100 text-gray-500 px-2 py-0.5 rounded-lg text-[10px] font-medium italic max-w-[160px] truncate">
+                            <span className="bg-gray-100 text-gray-600 px-2.5 py-1 rounded-xl text-xs font-semibold italic max-w-[200px] truncate">
                               "{item.notes}"
                             </span>
                           )}
@@ -1621,7 +1641,7 @@ export default function CustomerApp() {
                               type="text"
                               value={deliveryInfo.customerName}
                               onChange={(e) => setDeliveryInfo(prev => ({ ...prev, customerName: e.target.value }))}
-                              placeholder={isRTL ? "اكتب اسمك الكريم" : "Enter your full name"}
+                              placeholder={isRTL ? "اكتب اسمك هنا" : "Enter your name here"}
                               className={cn(
                                 "w-full bg-white border-2 border-gray-300 hover:border-gray-400 focus:border-transparent rounded-2xl py-3 text-sm font-bold text-gray-900 placeholder:text-gray-400 placeholder:font-medium focus:outline-none focus:ring-2 shadow-xs transition-all",
                                 isRTL ? "pr-10 pl-3.5" : "pl-10 pr-3.5"
@@ -1660,21 +1680,22 @@ export default function CustomerApp() {
                         </div>
                       </div>
 
+                      {/* 1. Delivery Address (Street / Area) */}
                       <div className="space-y-1.5">
                         <label className="block text-xs font-black text-gray-900 text-right">
-                          {isRTL ? 'عنوان التوصيل بالتفصيل' : 'Delivery Address'} <span className="text-red-500">*</span>
+                          {isRTL ? 'عنوان التوصيل' : 'Delivery Address'} <span className="text-red-500">*</span>
                         </label>
                         <div className="relative">
-                          <div className={cn("absolute top-3.5 flex items-center pointer-events-none text-gray-500", isRTL ? "right-3.5" : "left-3.5")}>
+                          <div className={cn("absolute inset-y-0 flex items-center pointer-events-none text-gray-500", isRTL ? "right-3.5" : "left-3.5")}>
                             <MapPin size={16} />
                           </div>
-                          <textarea
-                            rows={2}
+                          <input
+                            type="text"
                             value={deliveryInfo.address}
                             onChange={(e) => setDeliveryInfo(prev => ({ ...prev, address: e.target.value }))}
-                            placeholder={isRTL ? "المنطقة، الشارع، رقم العمارة، الدور، رقم الشقة..." : "Area, Street, Building number, Floor, Apartment number..."}
+                            placeholder={isRTL ? "اسم المنطقة، الشارع الرئيسي، علامة مميزة..." : "Area, Street name, landmark..."}
                             className={cn(
-                              "w-full bg-white border-2 border-gray-300 hover:border-gray-400 focus:border-transparent rounded-2xl py-3 text-sm font-bold text-gray-900 placeholder:text-gray-400 placeholder:font-medium focus:outline-none focus:ring-2 shadow-xs transition-all resize-none",
+                              "w-full bg-white border-2 border-gray-300 hover:border-gray-400 focus:border-transparent rounded-2xl py-3 text-sm font-bold text-gray-900 placeholder:text-gray-400 placeholder:font-medium focus:outline-none focus:ring-2 shadow-xs transition-all",
                               isRTL ? "pr-10 pl-3.5" : "pl-10 pr-3.5"
                             )}
                             style={{ 
@@ -1685,6 +1706,58 @@ export default function CustomerApp() {
                         </div>
                       </div>
 
+                      {/* 2. Building Number, Floor, Apartment Number in a 3-column row */}
+                      <div className="grid grid-cols-3 gap-2.5">
+                        <div className="space-y-1.5">
+                          <label className="block text-xs font-black text-gray-900 text-right truncate">
+                            {isRTL ? 'رقم العمارة' : 'Building #'}
+                          </label>
+                          <input
+                            type="text"
+                            value={deliveryInfo.buildingNumber}
+                            onChange={(e) => setDeliveryInfo(prev => ({ ...prev, buildingNumber: e.target.value }))}
+                            placeholder={isRTL ? "عمارة 12" : "Bldg 12"}
+                            className="w-full bg-white border-2 border-gray-300 hover:border-gray-400 focus:border-transparent rounded-2xl py-3 px-3 text-center text-sm font-bold text-gray-900 placeholder:text-gray-400 placeholder:font-medium focus:outline-none focus:ring-2 shadow-xs transition-all"
+                            style={{ 
+                              '--tw-ring-color': primaryColor 
+                            } as React.CSSProperties}
+                          />
+                        </div>
+
+                        <div className="space-y-1.5">
+                          <label className="block text-xs font-black text-gray-900 text-right truncate">
+                            {isRTL ? 'الطابق / الدور' : 'Floor'}
+                          </label>
+                          <input
+                            type="text"
+                            value={deliveryInfo.floor}
+                            onChange={(e) => setDeliveryInfo(prev => ({ ...prev, floor: e.target.value }))}
+                            placeholder={isRTL ? "الدور 3" : "Fl 3"}
+                            className="w-full bg-white border-2 border-gray-300 hover:border-gray-400 focus:border-transparent rounded-2xl py-3 px-3 text-center text-sm font-bold text-gray-900 placeholder:text-gray-400 placeholder:font-medium focus:outline-none focus:ring-2 shadow-xs transition-all"
+                            style={{ 
+                              '--tw-ring-color': primaryColor 
+                            } as React.CSSProperties}
+                          />
+                        </div>
+
+                        <div className="space-y-1.5">
+                          <label className="block text-xs font-black text-gray-900 text-right truncate">
+                            {isRTL ? 'رقم الشقة' : 'Apartment #'}
+                          </label>
+                          <input
+                            type="text"
+                            value={deliveryInfo.apartmentNumber}
+                            onChange={(e) => setDeliveryInfo(prev => ({ ...prev, apartmentNumber: e.target.value }))}
+                            placeholder={isRTL ? "شقة 6" : "Apt 6"}
+                            className="w-full bg-white border-2 border-gray-300 hover:border-gray-400 focus:border-transparent rounded-2xl py-3 px-3 text-center text-sm font-bold text-gray-900 placeholder:text-gray-400 placeholder:font-medium focus:outline-none focus:ring-2 shadow-xs transition-all"
+                            style={{ 
+                              '--tw-ring-color': primaryColor 
+                            } as React.CSSProperties}
+                          />
+                        </div>
+                      </div>
+
+                      {/* 3. Additional Delivery Notes */}
                       <div className="space-y-1.5">
                         <label className="block text-xs font-bold text-gray-700 text-right">
                           {isRTL ? 'ملاحظات إضافية للتوصيل (اختياري)' : 'Delivery Notes (Optional)'}
