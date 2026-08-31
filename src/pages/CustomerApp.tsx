@@ -786,18 +786,25 @@ export default function CustomerApp() {
             <button 
               type="button"
               onClick={() => setIsCartOpen(true)}
-              className="flex-1 h-14 rounded-[18px] bg-gradient-to-r from-purple-50 to-indigo-50 hover:from-purple-100 hover:to-indigo-100 border border-purple-200/80 px-3.5 flex items-center justify-between transition-all active:scale-98 cursor-pointer shadow-xs"
+              className="flex-1 h-14 rounded-[18px] border px-3.5 flex items-center justify-between transition-all active:scale-98 cursor-pointer shadow-xs"
+              style={{
+                backgroundColor: `${primaryColor}0D`,
+                borderColor: `${primaryColor}30`,
+              }}
             >
               <div className={cn("flex flex-col leading-[1.2]", isRTL ? "items-end text-right" : "items-start text-left")}>
-                <span className="text-[12px] font-black text-purple-900 flex items-center gap-1">
-                  <Bike size={14} className="text-purple-600 inline shrink-0" />
+                <span className="text-[12px] font-black flex items-center gap-1.5" style={{ color: primaryColor }}>
+                  <Bike size={15} className="inline shrink-0" />
                   {isRTL ? 'طلب دليفري وتوصيل' : 'Delivery Mode'}
                 </span>
-                <span className="text-[10px] font-bold text-purple-700">
-                  {selectedZone ? `${selectedZone.name} (+${selectedZone.fee} جـ)` : (isRTL ? '0% رسوم خدمة صالة' : '0% Service Fee')}
+                <span className="text-[10px] font-bold text-gray-600">
+                  {selectedZone ? `${selectedZone.name} (+${selectedZone.fee} جـ)` : (isRTL ? 'اختر منطقة التوصيل' : 'Select Delivery Area')}
                 </span>
               </div>
-              <span className="text-[10px] font-black bg-purple-600 text-white px-2.5 py-1 rounded-xl shadow-xs">
+              <span 
+                className="text-[10px] font-black text-white px-2.5 py-1 rounded-xl shadow-xs"
+                style={{ backgroundColor: primaryColor }}
+              >
                 {selectedZone ? selectedZone.name : (isRTL ? 'اختر المنطقة' : 'Select Area')}
               </span>
             </button>
@@ -1387,19 +1394,20 @@ export default function CustomerApp() {
 
                 {/* Order Mode Switcher (Dine-in vs Delivery) - Single Icon Only */}
                 <div className="p-4 md:p-5 bg-gray-50/90">
-                  <div className="flex bg-gray-200/80 p-1 rounded-2xl border border-gray-200/60 shadow-xs">
+                  <div className="flex bg-gray-200/80 p-1.5 rounded-2xl border border-gray-200/60 shadow-xs">
                     <button
                       type="button"
                       onClick={() => setOrderType('delivery')}
                       className={cn(
                         "flex-1 py-2.5 px-3 rounded-xl text-xs font-black flex items-center justify-center gap-2 transition-all cursor-pointer",
                         isDeliveryOrder
-                          ? "bg-purple-600 text-white shadow-md shadow-purple-600/30"
+                          ? "text-white shadow-md"
                           : "text-gray-700 hover:text-gray-900 hover:bg-white/50"
                       )}
+                      style={isDeliveryOrder ? { backgroundColor: primaryColor, boxShadow: `0 4px 14px ${primaryColor}40` } : {}}
                     >
                       <Bike size={17} className="shrink-0" />
-                      <span>{isRTL ? 'توصيل دليفري (0% خدمة)' : 'Delivery (0% Fee)'}</span>
+                      <span>{isRTL ? 'توصيل دليفري' : 'Delivery'}</span>
                     </button>
                     <button
                       type="button"
@@ -1419,14 +1427,32 @@ export default function CustomerApp() {
 
                 {/* Delivery Details Form when isDeliveryOrder is true */}
                 {isDeliveryOrder && (
-                  <div className="p-6 md:p-8 bg-purple-50/50 space-y-4">
+                  <div 
+                    className="p-6 md:p-8 space-y-5 border-t"
+                    style={{ 
+                      backgroundColor: `${primaryColor}06`,
+                      borderColor: `${primaryColor}15`
+                    }}
+                  >
                     <div className="flex items-center justify-between">
-                      <div className="flex items-center gap-2 text-purple-950 font-black text-sm">
-                        <Bike size={18} className="text-purple-600" />
+                      <div className="flex items-center gap-2 font-black text-sm text-gray-900">
+                        <div 
+                          className="w-8 h-8 rounded-xl flex items-center justify-center text-white shadow-xs"
+                          style={{ backgroundColor: primaryColor }}
+                        >
+                          <Bike size={16} />
+                        </div>
                         <span>{isRTL ? 'بيانات ومكان التوصيل (دليفري)' : 'Delivery & Area Details'}</span>
                       </div>
                       {selectedZone && (
-                        <span className="text-[11px] font-black bg-purple-200/80 text-purple-900 px-2.5 py-1 rounded-xl">
+                        <span 
+                          className="text-[11px] font-black px-3 py-1 rounded-xl border"
+                          style={{ 
+                            backgroundColor: `${primaryColor}15`, 
+                            color: primaryColor,
+                            borderColor: `${primaryColor}30`
+                          }}
+                        >
                           {isRTL ? `التوصيل: ${selectedZone.name} (${currency(selectedZone.fee)})` : `Delivery: ${selectedZone.name} (${currency(selectedZone.fee)})`}
                         </span>
                       )}
@@ -1435,10 +1461,10 @@ export default function CustomerApp() {
                     {/* Delivery Zones / Areas Selector */}
                     {activeDeliveryZones.length > 0 && (
                       <div className="space-y-2">
-                        <label className="block text-[11px] font-black text-purple-900 text-right">
+                        <label className="block text-xs font-black text-gray-900 text-right">
                           {isRTL ? 'اختر منطقة / مكان التوصيل *' : 'Select Delivery Area / Zone *'}
                         </label>
-                        <div className="grid grid-cols-2 sm:grid-cols-2 gap-2">
+                        <div className="grid grid-cols-2 sm:grid-cols-2 gap-2.5">
                           {activeDeliveryZones.map((zone) => {
                             const isSelected = (selectedZone?.id === zone.id);
                             return (
@@ -1447,24 +1473,36 @@ export default function CustomerApp() {
                                 type="button"
                                 onClick={() => setSelectedZoneId(zone.id)}
                                 className={cn(
-                                  "p-3 rounded-2xl border text-right transition-all flex flex-col justify-between gap-1 shadow-sm active:scale-95 cursor-pointer",
+                                  "p-3.5 rounded-2xl border text-right transition-all flex flex-col justify-between gap-1.5 shadow-xs active:scale-95 cursor-pointer",
                                   isSelected 
-                                    ? "bg-purple-600 text-white border-purple-600 shadow-md ring-2 ring-purple-300"
-                                    : "bg-white text-gray-800 border-gray-200 hover:border-purple-300 hover:bg-purple-50/50"
+                                    ? "text-white shadow-md ring-2 ring-offset-1"
+                                    : "bg-white text-gray-800 border-gray-200 hover:border-gray-300 hover:bg-gray-50/80"
                                 )}
+                                style={isSelected ? { 
+                                  backgroundColor: primaryColor, 
+                                  borderColor: primaryColor,
+                                  boxShadow: `0 4px 14px ${primaryColor}35`
+                                } : {}}
                               >
                                 <div className="flex items-center justify-between w-full">
                                   <span className={cn("text-xs font-black truncate", isSelected ? "text-white" : "text-gray-900")}>
                                     {zone.name}
                                   </span>
-                                  {isSelected && <CheckCircle2 size={14} className="text-white shrink-0" />}
+                                  {isSelected ? (
+                                    <CheckCircle2 size={15} className="text-white shrink-0" />
+                                  ) : (
+                                    <div className="w-3.5 h-3.5 rounded-full border border-gray-300 shrink-0" />
+                                  )}
                                 </div>
                                 <div className="flex items-center justify-between text-[11px] font-bold">
-                                  <span className={isSelected ? "text-purple-100" : "text-purple-700 font-black"}>
+                                  <span 
+                                    className="font-black"
+                                    style={{ color: isSelected ? '#ffffff' : primaryColor }}
+                                  >
                                     +{currency(zone.fee)}
                                   </span>
                                   {zone.estimated_time && (
-                                    <span className={cn("text-[10px]", isSelected ? "text-purple-200" : "text-gray-400")}>
+                                    <span className={cn("text-[10px]", isSelected ? "text-white/80" : "text-gray-400")}>
                                       {zone.estimated_time}
                                     </span>
                                   )}
@@ -1478,7 +1516,7 @@ export default function CustomerApp() {
 
                     {/* GPS Auto Location Detection (Optional) */}
                     <div className="space-y-1.5 pt-1">
-                      <label className="block text-[11px] font-bold text-gray-700 text-right">
+                      <label className="block text-xs font-bold text-gray-800 text-right">
                         {isRTL ? 'تحديد اللوكيشن تلقائياً بالـ GPS (اختياري):' : 'Auto GPS Location (Optional):'}
                       </label>
 
@@ -1487,31 +1525,40 @@ export default function CustomerApp() {
                           type="button"
                           onClick={handleGetDeliveryLocation}
                           disabled={isLocatingDelivery}
-                          className="w-full py-3 px-4 bg-gradient-to-r from-blue-50 to-indigo-50 hover:from-blue-100 hover:to-indigo-100 border-2 border-dashed border-blue-300 hover:border-blue-400 text-blue-900 rounded-2xl text-xs font-black flex items-center justify-between shadow-xs active:scale-98 transition-all cursor-pointer"
+                          className="w-full py-3.5 px-4 bg-white hover:bg-gray-50 border-2 border-dashed rounded-2xl text-xs font-black flex items-center justify-between shadow-xs active:scale-98 transition-all cursor-pointer"
+                          style={{
+                            borderColor: `${primaryColor}50`,
+                          }}
                         >
-                          <div className="flex items-center gap-2.5">
-                            <div className="w-8 h-8 rounded-xl bg-blue-600 text-white flex items-center justify-center shrink-0 shadow-sm">
+                          <div className="flex items-center gap-3">
+                            <div 
+                              className="w-9 h-9 rounded-xl text-white flex items-center justify-center shrink-0 shadow-sm"
+                              style={{ backgroundColor: primaryColor }}
+                            >
                               {isLocatingDelivery ? (
                                 <div className="w-4 h-4 border-2 border-white/40 border-t-white rounded-full animate-spin" />
                               ) : (
-                                <Crosshair size={16} className="animate-pulse" />
+                                <Crosshair size={18} className="animate-pulse" />
                               )}
                             </div>
                             <div className="text-right">
-                              <span className="block font-black text-blue-950 text-xs">
+                              <span className="block font-black text-gray-900 text-xs">
                                 {isRTL ? '📍 تحديد موقعي الحالي تلقائياً بالـ GPS' : '📍 Detect Current GPS Location'}
                               </span>
-                              <span className="block text-[10px] text-blue-700 font-medium">
+                              <span className="block text-[10px] text-gray-500 font-medium mt-0.5">
                                 {isRTL ? 'ضغطة واحدة لمشاركة رابط الخريطة مع الدليفري' : 'Share live Google Maps link with courier'}
                               </span>
                             </div>
                           </div>
-                          <span className="text-[11px] bg-blue-600 hover:bg-blue-700 text-white font-bold px-3 py-1.5 rounded-xl shrink-0 shadow-sm">
+                          <span 
+                            className="text-[11px] text-white font-bold px-3 py-1.5 rounded-xl shrink-0 shadow-xs"
+                            style={{ backgroundColor: primaryColor }}
+                          >
                             {isLocatingDelivery ? (isRTL ? 'جارِ التحديد...' : 'Locating...') : (isRTL ? 'تحديد الموقع' : 'Detect GPS')}
                           </span>
                         </button>
                       ) : (
-                        <div className="p-3 bg-emerald-50 border border-emerald-300 rounded-2xl space-y-2 animate-in fade-in">
+                        <div className="p-3.5 bg-emerald-50 border border-emerald-300 rounded-2xl space-y-2.5 animate-in fade-in">
                           <div className="flex items-center justify-between">
                             <div className="flex items-center gap-2 text-emerald-950 font-black text-xs">
                               <CheckCircle2 size={16} className="text-emerald-600 shrink-0" />
@@ -1533,7 +1580,8 @@ export default function CustomerApp() {
                               href={deliveryLocation.mapsUrl}
                               target="_blank"
                               rel="noreferrer"
-                              className="text-blue-600 hover:text-blue-800 font-bold text-xs flex items-center gap-1 bg-blue-50 px-2 py-1 rounded-lg border border-blue-200"
+                              className="text-white font-bold text-xs flex items-center gap-1.5 px-3 py-1 rounded-xl shadow-xs"
+                              style={{ backgroundColor: primaryColor }}
                             >
                               <span>{isRTL ? 'معاينة على الخريطة' : 'Preview Map'}</span>
                               <ExternalLink size={12} />
@@ -1556,70 +1604,100 @@ export default function CustomerApp() {
                       )}
                     </div>
                     
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                      <div>
-                        <label className="block text-[11px] font-bold text-gray-600 mb-1">
-                          {isRTL ? 'الاسم بالكامل *' : 'Full Name *'}
+                    {/* Clear, High-Contrast Delivery Customer Inputs */}
+                    <div className="space-y-3 pt-1">
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-3.5">
+                        <div className="space-y-1.5">
+                          <label className="block text-xs font-black text-gray-900 text-right">
+                            {isRTL ? 'الاسم بالكامل' : 'Full Name'} <span className="text-red-500">*</span>
+                          </label>
+                          <div className="relative">
+                            <div className={cn("absolute inset-y-0 flex items-center pointer-events-none text-gray-500", isRTL ? "right-3.5" : "left-3.5")}>
+                              <User size={16} />
+                            </div>
+                            <input
+                              type="text"
+                              value={deliveryInfo.customerName}
+                              onChange={(e) => setDeliveryInfo(prev => ({ ...prev, customerName: e.target.value }))}
+                              placeholder={isRTL ? "اكتب اسمك الكريم" : "Enter your full name"}
+                              className={cn(
+                                "w-full bg-white border-2 border-gray-300 hover:border-gray-400 focus:border-transparent rounded-2xl py-3 text-sm font-bold text-gray-900 placeholder:text-gray-400 placeholder:font-medium focus:outline-none focus:ring-2 shadow-xs transition-all",
+                                isRTL ? "pr-10 pl-3.5" : "pl-10 pr-3.5"
+                              )}
+                              style={{ 
+                                '--tw-ring-color': primaryColor 
+                              } as React.CSSProperties}
+                              required
+                            />
+                          </div>
+                        </div>
+
+                        <div className="space-y-1.5">
+                          <label className="block text-xs font-black text-gray-900 text-right">
+                            {isRTL ? 'رقم الهاتف / الواتساب' : 'Phone / WhatsApp'} <span className="text-red-500">*</span>
+                          </label>
+                          <div className="relative">
+                            <div className={cn("absolute inset-y-0 flex items-center pointer-events-none text-gray-500", isRTL ? "right-3.5" : "left-3.5")}>
+                              <Phone size={16} />
+                            </div>
+                            <input
+                              type="tel"
+                              value={deliveryInfo.phone}
+                              onChange={(e) => setDeliveryInfo(prev => ({ ...prev, phone: e.target.value }))}
+                              placeholder={isRTL ? "مثال: 01012345678" : "e.g. 01012345678"}
+                              className={cn(
+                                "w-full bg-white border-2 border-gray-300 hover:border-gray-400 focus:border-transparent rounded-2xl py-3 text-sm font-bold text-gray-900 placeholder:text-gray-400 placeholder:font-medium focus:outline-none focus:ring-2 shadow-xs transition-all",
+                                isRTL ? "pr-10 pl-3.5" : "pl-10 pr-3.5"
+                              )}
+                              style={{ 
+                                '--tw-ring-color': primaryColor 
+                              } as React.CSSProperties}
+                              required
+                            />
+                          </div>
+                        </div>
+                      </div>
+
+                      <div className="space-y-1.5">
+                        <label className="block text-xs font-black text-gray-900 text-right">
+                          {isRTL ? 'عنوان التوصيل بالتفصيل' : 'Delivery Address'} <span className="text-red-500">*</span>
                         </label>
                         <div className="relative">
-                          <User size={15} className={cn("absolute top-3 text-gray-400", isRTL ? "right-3" : "left-3")} />
-                          <input
-                            type="text"
-                            value={deliveryInfo.customerName}
-                            onChange={(e) => setDeliveryInfo(prev => ({ ...prev, customerName: e.target.value }))}
-                            placeholder={isRTL ? "مثال: أحمد محمد" : "e.g. John Doe"}
-                            className={cn("w-full bg-white border border-gray-200 rounded-xl py-2.5 text-xs font-bold text-gray-900 focus:outline-none focus:ring-2 focus:ring-purple-500 focus:border-transparent", isRTL ? "pr-9 pl-3" : "pl-9 pr-3")}
+                          <div className={cn("absolute top-3.5 flex items-center pointer-events-none text-gray-500", isRTL ? "right-3.5" : "left-3.5")}>
+                            <MapPin size={16} />
+                          </div>
+                          <textarea
+                            rows={2}
+                            value={deliveryInfo.address}
+                            onChange={(e) => setDeliveryInfo(prev => ({ ...prev, address: e.target.value }))}
+                            placeholder={isRTL ? "المنطقة، الشارع، رقم العمارة، الدور، رقم الشقة..." : "Area, Street, Building number, Floor, Apartment number..."}
+                            className={cn(
+                              "w-full bg-white border-2 border-gray-300 hover:border-gray-400 focus:border-transparent rounded-2xl py-3 text-sm font-bold text-gray-900 placeholder:text-gray-400 placeholder:font-medium focus:outline-none focus:ring-2 shadow-xs transition-all resize-none",
+                              isRTL ? "pr-10 pl-3.5" : "pl-10 pr-3.5"
+                            )}
+                            style={{ 
+                              '--tw-ring-color': primaryColor 
+                            } as React.CSSProperties}
                             required
                           />
                         </div>
                       </div>
 
-                      <div>
-                        <label className="block text-[11px] font-bold text-gray-600 mb-1">
-                          {isRTL ? 'رقم الهاتف / الواتساب *' : 'Phone / WhatsApp *'}
+                      <div className="space-y-1.5">
+                        <label className="block text-xs font-bold text-gray-700 text-right">
+                          {isRTL ? 'ملاحظات إضافية للتوصيل (اختياري)' : 'Delivery Notes (Optional)'}
                         </label>
-                        <div className="relative">
-                          <Phone size={15} className={cn("absolute top-3 text-gray-400", isRTL ? "right-3" : "left-3")} />
-                          <input
-                            type="tel"
-                            value={deliveryInfo.phone}
-                            onChange={(e) => setDeliveryInfo(prev => ({ ...prev, phone: e.target.value }))}
-                            placeholder={isRTL ? "مثال: 01012345678" : "e.g. 01012345678"}
-                            className={cn("w-full bg-white border border-gray-200 rounded-xl py-2.5 text-xs font-bold text-gray-900 focus:outline-none focus:ring-2 focus:ring-purple-500 focus:border-transparent", isRTL ? "pr-9 pl-3" : "pl-9 pr-3")}
-                            required
-                          />
-                        </div>
-                      </div>
-                    </div>
-
-                    <div>
-                      <label className="block text-[11px] font-bold text-gray-600 mb-1">
-                        {isRTL ? 'عنوان التوصيل بالتفصيل *' : 'Delivery Address *'}
-                      </label>
-                      <div className="relative">
-                        <MapPin size={15} className={cn("absolute top-3 text-gray-400", isRTL ? "right-3" : "left-3")} />
                         <input
                           type="text"
-                          value={deliveryInfo.address}
-                          onChange={(e) => setDeliveryInfo(prev => ({ ...prev, address: e.target.value }))}
-                          placeholder={isRTL ? "المنطقة، الشارع، رقم المبنى، رقم الشقة" : "Area, Street, Building, Flat #"}
-                          className={cn("w-full bg-white border border-gray-200 rounded-xl py-2.5 text-xs font-bold text-gray-900 focus:outline-none focus:ring-2 focus:ring-purple-500 focus:border-transparent", isRTL ? "pr-9 pl-3" : "pl-9 pr-3")}
-                          required
+                          value={deliveryInfo.notes}
+                          onChange={(e) => setDeliveryInfo(prev => ({ ...prev, notes: e.target.value }))}
+                          placeholder={isRTL ? "علامة مميزة، وقت معين، أو رن الجرس..." : "Landmarks, specific delivery timing, etc."}
+                          className="w-full bg-white border-2 border-gray-300 hover:border-gray-400 focus:border-transparent rounded-2xl py-3 px-4 text-sm font-bold text-gray-900 placeholder:text-gray-400 placeholder:font-medium focus:outline-none focus:ring-2 shadow-xs transition-all"
+                          style={{ 
+                            '--tw-ring-color': primaryColor 
+                          } as React.CSSProperties}
                         />
                       </div>
-                    </div>
-
-                    <div>
-                      <label className="block text-[11px] font-bold text-gray-600 mb-1">
-                        {isRTL ? 'ملاحظات إضافية للتوصيل (اختياري)' : 'Delivery Notes (Optional)'}
-                      </label>
-                      <input
-                        type="text"
-                        value={deliveryInfo.notes}
-                        onChange={(e) => setDeliveryInfo(prev => ({ ...prev, notes: e.target.value }))}
-                        placeholder={isRTL ? "علامة مميزة، وقت معين، أو رن الجرس" : "Landmarks, specific timing, etc."}
-                        className="w-full bg-white border border-gray-200 rounded-xl py-2.5 px-3 text-xs font-bold text-gray-900 focus:outline-none focus:ring-2 focus:ring-purple-500 focus:border-transparent"
-                      />
                     </div>
                   </div>
                 )}
@@ -1631,36 +1709,60 @@ export default function CustomerApp() {
                     <span className="font-black text-gray-800">{currency(subtotal)}</span>
                   </div>
 
-                  {/* If delivery, show delivery zone fee + 0% dine-in fee badge */}
+                  {/* If delivery, show delivery zone fee + dine-in fee exempt badge */}
                   {isDeliveryOrder ? (
                     <>
-                      <div className="flex items-center justify-between text-xs font-bold text-purple-700 bg-purple-50/80 px-3 py-2 rounded-xl border border-purple-100">
+                      <div 
+                        className="flex items-center justify-between text-xs font-bold px-3.5 py-2.5 rounded-xl border"
+                        style={{
+                          backgroundColor: `${primaryColor}0C`,
+                          borderColor: `${primaryColor}25`,
+                          color: primaryColor
+                        }}
+                      >
                         <span className="flex items-center gap-1.5">
-                          <Bike size={14} className="text-purple-600 shrink-0" />
+                          <Bike size={15} className="shrink-0" />
                           <span>{isRTL ? 'رسوم خدمة الصالة (معفى للطلبات الخارجية)' : 'Dine-in Service Fee (Exempt)'}</span>
                         </span>
-                        <span className="font-black text-purple-700 bg-purple-200/60 px-2 py-0.5 rounded-md text-[11px]">
+                        <span 
+                          className="font-black text-white px-2.5 py-0.5 rounded-md text-[11px]"
+                          style={{ backgroundColor: primaryColor }}
+                        >
                           {isRTL ? 'مجاناً 0%' : '0% FREE'}
                         </span>
                       </div>
 
                       {deliveryFee > 0 && (
-                        <div className="flex items-center justify-between text-xs font-bold text-purple-900 bg-purple-100/70 px-3 py-2 rounded-xl border border-purple-200">
+                        <div 
+                          className="flex items-center justify-between text-xs font-bold px-3.5 py-2.5 rounded-xl border"
+                          style={{
+                            backgroundColor: `${primaryColor}14`,
+                            borderColor: `${primaryColor}30`,
+                            color: primaryColor
+                          }}
+                        >
                           <span className="flex items-center gap-1.5">
-                            <Navigation size={14} className="text-purple-700 shrink-0" />
+                            <Navigation size={15} className="shrink-0" />
                             <span>
                               {isRTL 
                                 ? `سعر توصيل الدليفري (${selectedZone?.name || 'المنطقة المحددة'})` 
                                 : `Delivery Fee (${selectedZone?.name || 'Area'})`}
                             </span>
                           </span>
-                          <span className="font-black text-purple-950">+{currency(deliveryFee)}</span>
+                          <span className="font-black text-gray-900">+{currency(deliveryFee)}</span>
                         </div>
                       )}
                     </>
                   ) : (
                     serviceFeePercentage > 0 && (
-                      <div className="flex items-center justify-between text-xs font-bold text-indigo-700 bg-indigo-50/70 px-3 py-2 rounded-xl">
+                      <div 
+                        className="flex items-center justify-between text-xs font-bold px-3.5 py-2.5 rounded-xl border"
+                        style={{
+                          backgroundColor: `${primaryColor}0C`,
+                          borderColor: `${primaryColor}25`,
+                          color: primaryColor
+                        }}
+                      >
                         <span className="flex items-center gap-1">
                           <span>{isRTL ? `قيمة الخدمة والضريبة المضافة (${serviceFeePercentage}%)` : `Service Fee & VAT (${serviceFeePercentage}%)`}</span>
                         </span>
