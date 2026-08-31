@@ -166,21 +166,26 @@ export default function CustomerApp() {
       // Merge server geofences if present
       try {
         const geofences = await fetchAllServerGeofences();
-        if (geofences[res.id]) {
-          res.geofence_enabled = geofences[res.id].geofence_enabled ?? res.geofence_enabled;
-          res.latitude = geofences[res.id].latitude ?? res.latitude;
-          res.longitude = geofences[res.id].longitude ?? res.longitude;
-          res.geofence_radius_meters = geofences[res.id].geofence_radius_meters ?? res.geofence_radius_meters;
-          res.service_fee_percentage = geofences[res.id].service_fee_percentage !== undefined 
-            ? geofences[res.id].service_fee_percentage 
+        const g = geofences[res.id];
+        if (g) {
+          res.geofence_enabled = g.geofence_enabled === true;
+          res.latitude = g.latitude !== undefined ? g.latitude : res.latitude;
+          res.longitude = g.longitude !== undefined ? g.longitude : res.longitude;
+          res.geofence_radius_meters = g.geofence_radius_meters ?? res.geofence_radius_meters;
+          res.service_fee_percentage = g.service_fee_percentage !== undefined 
+            ? g.service_fee_percentage 
             : (res.service_fee_percentage !== undefined ? res.service_fee_percentage : 0);
-          res.is_prepaid = geofences[res.id].is_prepaid !== undefined
-            ? geofences[res.id].is_prepaid
+          res.is_prepaid = g.is_prepaid !== undefined
+            ? g.is_prepaid
             : (res.is_prepaid !== undefined ? res.is_prepaid : (res.payment_model === 'prepaid'));
-          res.payment_model = geofences[res.id].payment_model || res.payment_model || (res.is_prepaid ? 'prepaid' : 'postpaid');
+          res.payment_model = g.payment_model || res.payment_model || (res.is_prepaid ? 'prepaid' : 'postpaid');
+        } else {
+          // If no custom geofence is configured, default geofence_enabled to false
+          res.geofence_enabled = res.geofence_enabled === true;
         }
       } catch (e) {
         console.warn('Geofence sync error:', e);
+        res.geofence_enabled = res.geofence_enabled === true;
       }
 
       // Fetch restaurant delivery zones and fees
