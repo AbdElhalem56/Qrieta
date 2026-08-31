@@ -101,6 +101,14 @@ export default function CustomerApp() {
   const isDeliveryOrder = orderType === 'delivery' || !tableId;
 
   useEffect(() => {
+    // Default to Arabic on initial customer load unless user explicitly set language
+    const currentStored = localStorage.getItem('i18nextLng');
+    if (!currentStored || currentStored === 'en' || currentStored.startsWith('en-')) {
+      i18n.changeLanguage('ar');
+    }
+  }, []);
+
+  useEffect(() => {
     fetchData();
     document.dir = isRTL ? 'rtl' : 'ltr';
   }, [restaurantSlug, isRTL]);
@@ -1283,275 +1291,318 @@ export default function CustomerApp() {
               animate={{ y: 0 }}
               exit={{ y: '100%' }}
               transition={{ type: 'spring', damping: 30, stiffness: 300 }}
-              className="fixed inset-x-0 bottom-0 bg-white rounded-t-[48px] z-[120] max-h-[92vh] overflow-hidden flex flex-col shadow-2xl"
+              className="fixed inset-x-0 bottom-0 bg-white rounded-t-[36px] md:rounded-t-[44px] z-[120] max-h-[92vh] md:max-h-[90vh] flex flex-col shadow-2xl overflow-hidden"
             >
-              <div className="p-8 border-b border-gray-100 flex items-center justify-between">
+              {/* Header (Fixed) */}
+              <div className="px-6 py-5 md:px-8 md:py-6 border-b border-gray-100 flex items-center justify-between shrink-0 bg-white z-10">
                 <div className="flex items-center gap-3">
-                  <div className="p-3 bg-gray-100 rounded-2xl" style={{ color: primaryColor }}>
-                    <ShoppingBag size={24} />
+                  <div className="p-2.5 bg-gray-100 rounded-2xl" style={{ color: primaryColor }}>
+                    <ShoppingBag size={22} />
                   </div>
-                  <h2 className="text-2xl font-black tracking-tight">{isRTL ? 'سلتك' : 'Your Order'}</h2>
+                  <h2 className="text-xl md:text-2xl font-black tracking-tight">{isRTL ? 'سلتك' : 'Your Order'}</h2>
                 </div>
-                <button onClick={() => setIsCartOpen(false)} className="p-3 bg-gray-50 text-gray-900 rounded-2xl">
-                  <X size={24} />
+                <button 
+                  onClick={() => setIsCartOpen(false)} 
+                  className="p-2.5 bg-gray-100 hover:bg-gray-200 text-gray-800 rounded-2xl transition-colors cursor-pointer"
+                >
+                  <X size={20} />
                 </button>
               </div>
               
-              <div className="flex-grow overflow-y-auto p-8 space-y-6">
-                {cart.map((item, idx) => (
-                  <motion.div 
-                    layout
-                    initial={{ x: 20, opacity: 0 }}
-                    animate={{ x: 0, opacity: 1 }}
-                    transition={{ delay: idx * 0.1 }}
-                    key={idx} 
-                    className="flex gap-6 items-center"
-                  >
-                    {item.product.image_url && (
-                      <div className="w-24 h-24 rounded-3xl overflow-hidden flex-shrink-0 shadow-sm border border-gray-100">
-                        <img src={item.product.image_url} alt="" className="w-full h-full object-cover" />
-                      </div>
-                    )}
-                    
-                    <div className={cn("flex-grow", isRTL ? "text-right" : "text-left")}>
-                      <div className="flex items-start justify-between mb-1">
-                        <span className="font-black text-lg leading-tight">{isRTL ? item.product.name_ar : item.product.name_en}</span>
-                        <div className={isRTL ? "text-right" : "text-left"}>
-                          <p className="font-black text-lg" style={{ color: primaryColor }}>{currency(item.product.price * item.quantity)}</p>
+              {/* Scrollable Body (Contains Cart Items + Mode Selector + Delivery Form + Price Breakdown) */}
+              <div className="flex-1 overflow-y-auto min-h-0 overscroll-contain divide-y divide-gray-100">
+                {/* Cart Items List */}
+                <div className="p-6 md:p-8 space-y-6">
+                  {cart.map((item, idx) => (
+                    <motion.div 
+                      layout
+                      initial={{ x: 20, opacity: 0 }}
+                      animate={{ x: 0, opacity: 1 }}
+                      transition={{ delay: idx * 0.05 }}
+                      key={idx} 
+                      className="flex gap-4 md:gap-6 items-center"
+                    >
+                      {item.product.image_url && (
+                        <div className="w-20 h-20 md:w-24 md:h-24 rounded-2xl md:rounded-3xl overflow-hidden flex-shrink-0 shadow-sm border border-gray-100">
+                          <img src={item.product.image_url} alt="" className="w-full h-full object-cover" />
                         </div>
-                      </div>
+                      )}
                       
-                      <div className="flex flex-wrap gap-1.5 mt-1 justify-start mb-3">
-                        {item.selectedOptionLabels && item.selectedOptionLabels.map((lbl, lIdx) => (
-                          <span 
-                            key={lIdx}
-                            className="px-2.5 py-0.5 rounded-lg text-[10px] font-black border"
-                            style={{ 
-                              backgroundColor: `${primaryColor}10`, 
-                              borderColor: `${primaryColor}30`,
-                              color: primaryColor 
-                            }}
-                          >
-                            {lbl.choiceName}
-                          </span>
-                        ))}
-                        {item.sugar !== 'none' && !item.selectedOptionLabels?.some(l => l.optionName.includes('سكر')) && (
-                          <span className="bg-gray-100 text-gray-700 px-2.5 py-0.5 rounded-lg text-[10px] font-black">
-                            {isRTL ? `سكر ${item.sugar === 'low' ? 'خفيف' : item.sugar === 'medium' ? 'وسط' : 'زيادة'}` : `${item.sugar} sugar`}
-                          </span>
-                        )}
-                        {item.notes && (
-                          <span className="bg-gray-100 text-gray-500 px-2.5 py-0.5 rounded-lg text-[10px] font-medium italic max-w-[160px] truncate">
-                            "{item.notes}"
-                          </span>
-                        )}
-                      </div>
-
-                      <div className="flex items-center justify-end gap-3">
-                        <div className="flex items-center bg-gray-100 p-1 rounded-2xl">
-                          <button 
-                            onClick={(e) => updateQuantity(e, idx, -1)} 
-                            className="w-10 h-10 flex items-center justify-center bg-white rounded-[14px] shadow-sm text-gray-400 hover:text-red-500 transition-all active:scale-95"
-                          >
-                            <Minus size={16} strokeWidth={3} />
-                          </button>
-                          <span className="px-4 font-black w-10 text-center text-lg">{item.quantity}</span>
-                          <button 
-                            onClick={(e) => updateQuantity(e, idx, 1)} 
-                            className="w-10 h-10 flex items-center justify-center bg-white rounded-[14px] shadow-sm text-gray-900 transition-all active:scale-95"
-                            style={{ color: primaryColor }}
-                          >
-                            <Plus size={16} strokeWidth={3} />
-                          </button>
+                      <div className={cn("flex-grow", isRTL ? "text-right" : "text-left")}>
+                        <div className="flex items-start justify-between mb-1">
+                          <span className="font-black text-base md:text-lg leading-tight">{isRTL ? item.product.name_ar : item.product.name_en}</span>
+                          <div className={isRTL ? "text-right" : "text-left"}>
+                            <p className="font-black text-base md:text-lg" style={{ color: primaryColor }}>{currency(item.product.price * item.quantity)}</p>
+                          </div>
                         </div>
-                      </div>
-                    </div>
-                  </motion.div>
-                ))}
-              </div>
-              {/* Order Mode Switcher (Dine-in vs Delivery) */}
-              <div className="p-4 bg-gray-100/80 border-t border-gray-200">
-                <div className="flex bg-white p-1 rounded-2xl border border-gray-200 shadow-xs">
-                  <button
-                    type="button"
-                    onClick={() => setOrderType('delivery')}
-                    className={cn(
-                      "flex-1 py-2.5 px-3 rounded-xl text-xs font-black flex items-center justify-center gap-1.5 transition-all cursor-pointer",
-                      isDeliveryOrder
-                        ? "bg-purple-600 text-white shadow-md shadow-purple-600/30"
-                        : "text-gray-600 hover:text-gray-900 hover:bg-gray-50"
-                    )}
-                  >
-                    <Bike size={16} />
-                    <span>{isRTL ? '🛵 توصيل دليفري (0% خدمة)' : '🛵 Delivery (0% Fee)'}</span>
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setOrderType('dine_in')}
-                    className={cn(
-                      "flex-1 py-2.5 px-3 rounded-xl text-xs font-black flex items-center justify-center gap-1.5 transition-all cursor-pointer",
-                      !isDeliveryOrder
-                        ? "bg-gray-900 text-white shadow-md shadow-gray-900/30"
-                        : "text-gray-600 hover:text-gray-900 hover:bg-gray-50"
-                    )}
-                  >
-                    <UtensilsCrossed size={16} />
-                    <span>{isRTL ? '🍽️ داخل الصالة (طاولة)' : '🍽️ Dine-in (Table)'}</span>
-                  </button>
-                </div>
-              </div>
-
-              {/* Delivery Details Form when isDeliveryOrder is true */}
-              {isDeliveryOrder && (
-                <div className="p-6 bg-purple-50/60 border-t border-purple-100 space-y-4">
-                  <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-2 text-purple-950 font-black text-sm">
-                      <Bike size={18} className="text-purple-600" />
-                      <span>{isRTL ? 'بيانات ومكان التوصيل (دليفري)' : 'Delivery & Area Details'}</span>
-                    </div>
-                    {selectedZone && (
-                      <span className="text-[11px] font-black bg-purple-200/80 text-purple-900 px-2.5 py-1 rounded-xl">
-                        {isRTL ? `التوصيل: ${selectedZone.name} (${currency(selectedZone.fee)})` : `Delivery: ${selectedZone.name} (${currency(selectedZone.fee)})`}
-                      </span>
-                    )}
-                  </div>
-
-                  {/* Delivery Zones / Areas Selector */}
-                  {activeDeliveryZones.length > 0 && (
-                    <div className="space-y-2">
-                      <label className="block text-[11px] font-black text-purple-900 text-right">
-                        {isRTL ? 'اختر منطقة / مكان التوصيل *' : 'Select Delivery Area / Zone *'}
-                      </label>
-                      <div className="grid grid-cols-2 sm:grid-cols-2 gap-2">
-                        {activeDeliveryZones.map((zone) => {
-                          const isSelected不易 = (selectedZone?.id === zone.id);
-                          return (
-                            <button
-                              key={zone.id}
-                              type="button"
-                              onClick={() => setSelectedZoneId(zone.id)}
-                              className={cn(
-                                "p-3 rounded-2xl border text-right transition-all flex flex-col justify-between gap-1 shadow-sm active:scale-95 cursor-pointer",
-                                isSelected不易 
-                                  ? "bg-purple-600 text-white border-purple-600 shadow-md ring-2 ring-purple-300"
-                                  : "bg-white text-gray-800 border-gray-200 hover:border-purple-300 hover:bg-purple-50/50"
-                              )}
+                        
+                        <div className="flex flex-wrap gap-1.5 mt-1 justify-start mb-2.5">
+                          {item.selectedOptionLabels && item.selectedOptionLabels.map((lbl, lIdx) => (
+                            <span 
+                              key={lIdx}
+                              className="px-2 py-0.5 rounded-lg text-[10px] font-black border"
+                              style={{ 
+                                backgroundColor: `${primaryColor}10`, 
+                                borderColor: `${primaryColor}30`,
+                                color: primaryColor 
+                              }}
                             >
-                              <div className="flex items-center justify-between w-full">
-                                <span className={cn("text-xs font-black truncate", isSelected不易 ? "text-white" : "text-gray-900")}>
-                                  {zone.name}
-                                </span>
-                                {isSelected不易 && <CheckCircle2 size={14} className="text-white shrink-0" />}
-                              </div>
-                              <div className="flex items-center justify-between text-[11px] font-bold">
-                                <span className={isSelected不易 ? "text-purple-100" : "text-purple-700 font-black"}>
-                                  +{currency(zone.fee)}
-                                </span>
-                                {zone.estimated_time && (
-                                  <span className={cn("text-[10px]", isSelected不易 ? "text-purple-200" : "text-gray-400")}>
-                                    {zone.estimated_time}
-                                  </span>
-                                )}
-                              </div>
+                              {lbl.choiceName}
+                            </span>
+                          ))}
+                          {item.sugar !== 'none' && !item.selectedOptionLabels?.some(l => l.optionName.includes('سكر')) && (
+                            <span className="bg-gray-100 text-gray-700 px-2 py-0.5 rounded-lg text-[10px] font-black">
+                              {isRTL ? `سكر ${item.sugar === 'low' ? 'خفيف' : item.sugar === 'medium' ? 'وسط' : 'زيادة'}` : `${item.sugar} sugar`}
+                            </span>
+                          )}
+                          {item.notes && (
+                            <span className="bg-gray-100 text-gray-500 px-2 py-0.5 rounded-lg text-[10px] font-medium italic max-w-[160px] truncate">
+                              "{item.notes}"
+                            </span>
+                          )}
+                        </div>
+
+                        <div className="flex items-center justify-end gap-3">
+                          <div className="flex items-center bg-gray-100 p-1 rounded-2xl">
+                            <button 
+                              onClick={(e) => updateQuantity(e, idx, -1)} 
+                              className="w-8 h-8 md:w-9 md:h-9 flex items-center justify-center bg-white rounded-xl shadow-sm text-gray-400 hover:text-red-500 transition-all active:scale-95 cursor-pointer"
+                            >
+                              <Minus size={14} strokeWidth={3} />
                             </button>
-                          );
-                        })}
+                            <span className="px-3 font-black w-8 text-center text-sm md:text-base">{item.quantity}</span>
+                            <button 
+                              onClick={(e) => updateQuantity(e, idx, 1)} 
+                              className="w-8 h-8 md:w-9 md:h-9 flex items-center justify-center bg-white rounded-xl shadow-sm transition-all active:scale-95 cursor-pointer"
+                              style={{ color: primaryColor }}
+                            >
+                              <Plus size={14} strokeWidth={3} />
+                            </button>
+                          </div>
+                        </div>
                       </div>
-                    </div>
-                  )}
+                    </motion.div>
+                  ))}
+                </div>
 
-                  {/* GPS Auto Location Detection (Optional) */}
-                  <div className="space-y-1.5 pt-1">
-                    <label className="block text-[11px] font-bold text-gray-700 text-right">
-                      {isRTL ? 'تحديد اللوكيشن تلقائياً بالـ GPS (اختياري):' : 'Auto GPS Location (Optional):'}
-                    </label>
+                {/* Order Mode Switcher (Dine-in vs Delivery) - Single Icon Only */}
+                <div className="p-4 md:p-5 bg-gray-50/90">
+                  <div className="flex bg-gray-200/80 p-1 rounded-2xl border border-gray-200/60 shadow-xs">
+                    <button
+                      type="button"
+                      onClick={() => setOrderType('delivery')}
+                      className={cn(
+                        "flex-1 py-2.5 px-3 rounded-xl text-xs font-black flex items-center justify-center gap-2 transition-all cursor-pointer",
+                        isDeliveryOrder
+                          ? "bg-purple-600 text-white shadow-md shadow-purple-600/30"
+                          : "text-gray-700 hover:text-gray-900 hover:bg-white/50"
+                      )}
+                    >
+                      <Bike size={17} className="shrink-0" />
+                      <span>{isRTL ? 'توصيل دليفري (0% خدمة)' : 'Delivery (0% Fee)'}</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setOrderType('dine_in')}
+                      className={cn(
+                        "flex-1 py-2.5 px-3 rounded-xl text-xs font-black flex items-center justify-center gap-2 transition-all cursor-pointer",
+                        !isDeliveryOrder
+                          ? "bg-gray-900 text-white shadow-md shadow-gray-900/30"
+                          : "text-gray-700 hover:text-gray-900 hover:bg-white/50"
+                      )}
+                    >
+                      <UtensilsCrossed size={17} className="shrink-0" />
+                      <span>{isRTL ? 'داخل الصالة (طاولة)' : 'Dine-in (Table)'}</span>
+                    </button>
+                  </div>
+                </div>
 
-                    {!deliveryLocation ? (
-                      <button
-                        type="button"
-                        onClick={handleGetDeliveryLocation}
-                        disabled={isLocatingDelivery}
-                        className="w-full py-3 px-4 bg-gradient-to-r from-blue-50 to-indigo-50 hover:from-blue-100 hover:to-indigo-100 border-2 border-dashed border-blue-300 hover:border-blue-400 text-blue-900 rounded-2xl text-xs font-black flex items-center justify-between shadow-xs active:scale-98 transition-all cursor-pointer"
-                      >
-                        <div className="flex items-center gap-2.5">
-                          <div className="w-8 h-8 rounded-xl bg-blue-600 text-white flex items-center justify-center shrink-0 shadow-sm">
-                            {isLocatingDelivery ? (
-                              <div className="w-4 h-4 border-2 border-white/40 border-t-white rounded-full animate-spin" />
-                            ) : (
-                              <Crosshair size={16} className="animate-pulse" />
-                            )}
-                          </div>
-                          <div className="text-right">
-                            <span className="block font-black text-blue-950 text-xs">
-                              {isRTL ? '📍 تحديد موقعي الحالي تلقائياً بالـ GPS' : '📍 Detect Current GPS Location'}
-                            </span>
-                            <span className="block text-[10px] text-blue-700 font-medium">
-                              {isRTL ? 'ضغطة واحدة لمشاركة رابط الخريطة مع الدليفري' : 'Share live Google Maps link with courier'}
-                            </span>
-                          </div>
-                        </div>
-                        <span className="text-[11px] bg-blue-600 hover:bg-blue-700 text-white font-bold px-3 py-1.5 rounded-xl shrink-0 shadow-sm">
-                          {isLocatingDelivery ? (isRTL ? 'جارِ التحديد...' : 'Locating...') : (isRTL ? 'تحديد الموقع' : 'Detect GPS')}
+                {/* Delivery Details Form when isDeliveryOrder is true */}
+                {isDeliveryOrder && (
+                  <div className="p-6 md:p-8 bg-purple-50/50 space-y-4">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-2 text-purple-950 font-black text-sm">
+                        <Bike size={18} className="text-purple-600" />
+                        <span>{isRTL ? 'بيانات ومكان التوصيل (دليفري)' : 'Delivery & Area Details'}</span>
+                      </div>
+                      {selectedZone && (
+                        <span className="text-[11px] font-black bg-purple-200/80 text-purple-900 px-2.5 py-1 rounded-xl">
+                          {isRTL ? `التوصيل: ${selectedZone.name} (${currency(selectedZone.fee)})` : `Delivery: ${selectedZone.name} (${currency(selectedZone.fee)})`}
                         </span>
-                      </button>
-                    ) : (
-                      <div className="p-3 bg-emerald-50 border border-emerald-300 rounded-2xl space-y-2 animate-in fade-in">
-                        <div className="flex items-center justify-between">
-                          <div className="flex items-center gap-2 text-emerald-950 font-black text-xs">
-                            <CheckCircle2 size={16} className="text-emerald-600 shrink-0" />
-                            <span>{isRTL ? '✓ تم حفظ موقعك الجغرافي (GPS) بنجاح' : '✓ GPS Location saved'}</span>
-                          </div>
-                          <button
-                            type="button"
-                            onClick={handleClearDeliveryLocation}
-                            className="text-[10px] text-red-600 hover:text-red-800 font-bold bg-white px-2.5 py-1 rounded-lg border border-red-200 shadow-xs cursor-pointer"
-                          >
-                            {isRTL ? 'إلغاء الموقع' : 'Remove'}
-                          </button>
-                        </div>
-                        <div className="flex items-center justify-between bg-white p-2.5 rounded-xl border border-emerald-200">
-                          <span className="text-gray-700 font-mono text-[11px] font-bold">
-                            📍 {deliveryLocation.latitude.toFixed(5)}, {deliveryLocation.longitude.toFixed(5)}
-                          </span>
-                          <a
-                            href={deliveryLocation.mapsUrl}
-                            target="_blank"
-                            rel="noreferrer"
-                            className="text-blue-600 hover:text-blue-800 font-bold text-xs flex items-center gap-1 bg-blue-50 px-2 py-1 rounded-lg border border-blue-200"
-                          >
-                            <span>{isRTL ? 'معاينة على الخريطة' : 'Preview Map'}</span>
-                            <ExternalLink size={12} />
-                          </a>
+                      )}
+                    </div>
+
+                    {/* Delivery Zones / Areas Selector */}
+                    {activeDeliveryZones.length > 0 && (
+                      <div className="space-y-2">
+                        <label className="block text-[11px] font-black text-purple-900 text-right">
+                          {isRTL ? 'اختر منطقة / مكان التوصيل *' : 'Select Delivery Area / Zone *'}
+                        </label>
+                        <div className="grid grid-cols-2 sm:grid-cols-2 gap-2">
+                          {activeDeliveryZones.map((zone) => {
+                            const isSelected = (selectedZone?.id === zone.id);
+                            return (
+                              <button
+                                key={zone.id}
+                                type="button"
+                                onClick={() => setSelectedZoneId(zone.id)}
+                                className={cn(
+                                  "p-3 rounded-2xl border text-right transition-all flex flex-col justify-between gap-1 shadow-sm active:scale-95 cursor-pointer",
+                                  isSelected 
+                                    ? "bg-purple-600 text-white border-purple-600 shadow-md ring-2 ring-purple-300"
+                                    : "bg-white text-gray-800 border-gray-200 hover:border-purple-300 hover:bg-purple-50/50"
+                                )}
+                              >
+                                <div className="flex items-center justify-between w-full">
+                                  <span className={cn("text-xs font-black truncate", isSelected ? "text-white" : "text-gray-900")}>
+                                    {zone.name}
+                                  </span>
+                                  {isSelected && <CheckCircle2 size={14} className="text-white shrink-0" />}
+                                </div>
+                                <div className="flex items-center justify-between text-[11px] font-bold">
+                                  <span className={isSelected ? "text-purple-100" : "text-purple-700 font-black"}>
+                                    +{currency(zone.fee)}
+                                  </span>
+                                  {zone.estimated_time && (
+                                    <span className={cn("text-[10px]", isSelected ? "text-purple-200" : "text-gray-400")}>
+                                      {zone.estimated_time}
+                                    </span>
+                                  )}
+                                </div>
+                              </button>
+                            );
+                          })}
                         </div>
                       </div>
                     )}
 
-                    {deliveryLocationError && (
-                      <div className="p-2.5 bg-amber-50 border border-amber-200 text-amber-900 text-[11px] rounded-xl font-medium text-right flex items-center justify-between gap-2">
-                        <span>⚠️ {deliveryLocationError}</span>
+                    {/* GPS Auto Location Detection (Optional) */}
+                    <div className="space-y-1.5 pt-1">
+                      <label className="block text-[11px] font-bold text-gray-700 text-right">
+                        {isRTL ? 'تحديد اللوكيشن تلقائياً بالـ GPS (اختياري):' : 'Auto GPS Location (Optional):'}
+                      </label>
+
+                      {!deliveryLocation ? (
                         <button
                           type="button"
                           onClick={handleGetDeliveryLocation}
-                          className="text-[10px] bg-amber-200/80 px-2 py-0.5 rounded-md font-bold text-amber-900 shrink-0 cursor-pointer"
+                          disabled={isLocatingDelivery}
+                          className="w-full py-3 px-4 bg-gradient-to-r from-blue-50 to-indigo-50 hover:from-blue-100 hover:to-indigo-100 border-2 border-dashed border-blue-300 hover:border-blue-400 text-blue-900 rounded-2xl text-xs font-black flex items-center justify-between shadow-xs active:scale-98 transition-all cursor-pointer"
                         >
-                          إعادة المحاولة
+                          <div className="flex items-center gap-2.5">
+                            <div className="w-8 h-8 rounded-xl bg-blue-600 text-white flex items-center justify-center shrink-0 shadow-sm">
+                              {isLocatingDelivery ? (
+                                <div className="w-4 h-4 border-2 border-white/40 border-t-white rounded-full animate-spin" />
+                              ) : (
+                                <Crosshair size={16} className="animate-pulse" />
+                              )}
+                            </div>
+                            <div className="text-right">
+                              <span className="block font-black text-blue-950 text-xs">
+                                {isRTL ? '📍 تحديد موقعي الحالي تلقائياً بالـ GPS' : '📍 Detect Current GPS Location'}
+                              </span>
+                              <span className="block text-[10px] text-blue-700 font-medium">
+                                {isRTL ? 'ضغطة واحدة لمشاركة رابط الخريطة مع الدليفري' : 'Share live Google Maps link with courier'}
+                              </span>
+                            </div>
+                          </div>
+                          <span className="text-[11px] bg-blue-600 hover:bg-blue-700 text-white font-bold px-3 py-1.5 rounded-xl shrink-0 shadow-sm">
+                            {isLocatingDelivery ? (isRTL ? 'جارِ التحديد...' : 'Locating...') : (isRTL ? 'تحديد الموقع' : 'Detect GPS')}
+                          </span>
                         </button>
+                      ) : (
+                        <div className="p-3 bg-emerald-50 border border-emerald-300 rounded-2xl space-y-2 animate-in fade-in">
+                          <div className="flex items-center justify-between">
+                            <div className="flex items-center gap-2 text-emerald-950 font-black text-xs">
+                              <CheckCircle2 size={16} className="text-emerald-600 shrink-0" />
+                              <span>{isRTL ? '✓ تم حفظ موقعك الجغرافي (GPS) بنجاح' : '✓ GPS Location saved'}</span>
+                            </div>
+                            <button
+                              type="button"
+                              onClick={handleClearDeliveryLocation}
+                              className="text-[10px] text-red-600 hover:text-red-800 font-bold bg-white px-2.5 py-1 rounded-lg border border-red-200 shadow-xs cursor-pointer"
+                            >
+                              {isRTL ? 'إلغاء الموقع' : 'Remove'}
+                            </button>
+                          </div>
+                          <div className="flex items-center justify-between bg-white p-2.5 rounded-xl border border-emerald-200">
+                            <span className="text-gray-700 font-mono text-[11px] font-bold">
+                              📍 {deliveryLocation.latitude.toFixed(5)}, {deliveryLocation.longitude.toFixed(5)}
+                            </span>
+                            <a
+                              href={deliveryLocation.mapsUrl}
+                              target="_blank"
+                              rel="noreferrer"
+                              className="text-blue-600 hover:text-blue-800 font-bold text-xs flex items-center gap-1 bg-blue-50 px-2 py-1 rounded-lg border border-blue-200"
+                            >
+                              <span>{isRTL ? 'معاينة على الخريطة' : 'Preview Map'}</span>
+                              <ExternalLink size={12} />
+                            </a>
+                          </div>
+                        </div>
+                      )}
+
+                      {deliveryLocationError && (
+                        <div className="p-2.5 bg-amber-50 border border-amber-200 text-amber-900 text-[11px] rounded-xl font-medium text-right flex items-center justify-between gap-2">
+                          <span>⚠️ {deliveryLocationError}</span>
+                          <button
+                            type="button"
+                            onClick={handleGetDeliveryLocation}
+                            className="text-[10px] bg-amber-200/80 px-2 py-0.5 rounded-md font-bold text-amber-900 shrink-0 cursor-pointer"
+                          >
+                            إعادة المحاولة
+                          </button>
+                        </div>
+                      )}
+                    </div>
+                    
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                      <div>
+                        <label className="block text-[11px] font-bold text-gray-600 mb-1">
+                          {isRTL ? 'الاسم بالكامل *' : 'Full Name *'}
+                        </label>
+                        <div className="relative">
+                          <User size={15} className={cn("absolute top-3 text-gray-400", isRTL ? "right-3" : "left-3")} />
+                          <input
+                            type="text"
+                            value={deliveryInfo.customerName}
+                            onChange={(e) => setDeliveryInfo(prev => ({ ...prev, customerName: e.target.value }))}
+                            placeholder={isRTL ? "مثال: أحمد محمد" : "e.g. John Doe"}
+                            className={cn("w-full bg-white border border-gray-200 rounded-xl py-2.5 text-xs font-bold text-gray-900 focus:outline-none focus:ring-2 focus:ring-purple-500 focus:border-transparent", isRTL ? "pr-9 pl-3" : "pl-9 pr-3")}
+                            required
+                          />
+                        </div>
                       </div>
-                    )}
-                  </div>
-                  
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+
+                      <div>
+                        <label className="block text-[11px] font-bold text-gray-600 mb-1">
+                          {isRTL ? 'رقم الهاتف / الواتساب *' : 'Phone / WhatsApp *'}
+                        </label>
+                        <div className="relative">
+                          <Phone size={15} className={cn("absolute top-3 text-gray-400", isRTL ? "right-3" : "left-3")} />
+                          <input
+                            type="tel"
+                            value={deliveryInfo.phone}
+                            onChange={(e) => setDeliveryInfo(prev => ({ ...prev, phone: e.target.value }))}
+                            placeholder={isRTL ? "مثال: 01012345678" : "e.g. 01012345678"}
+                            className={cn("w-full bg-white border border-gray-200 rounded-xl py-2.5 text-xs font-bold text-gray-900 focus:outline-none focus:ring-2 focus:ring-purple-500 focus:border-transparent", isRTL ? "pr-9 pl-3" : "pl-9 pr-3")}
+                            required
+                          />
+                        </div>
+                      </div>
+                    </div>
+
                     <div>
                       <label className="block text-[11px] font-bold text-gray-600 mb-1">
-                        {isRTL ? 'الاسم بالكامل *' : 'Full Name *'}
+                        {isRTL ? 'عنوان التوصيل بالتفصيل *' : 'Delivery Address *'}
                       </label>
                       <div className="relative">
-                        <User size={15} className={cn("absolute top-3 text-gray-400", isRTL ? "right-3" : "left-3")} />
+                        <MapPin size={15} className={cn("absolute top-3 text-gray-400", isRTL ? "right-3" : "left-3")} />
                         <input
                           type="text"
-                          value={deliveryInfo.customerName}
-                          onChange={(e) => setDeliveryInfo(prev => ({ ...prev, customerName: e.target.value }))}
-                          placeholder={isRTL ? "مثال: أحمد محمد" : "e.g. John Doe"}
+                          value={deliveryInfo.address}
+                          onChange={(e) => setDeliveryInfo(prev => ({ ...prev, address: e.target.value }))}
+                          placeholder={isRTL ? "المنطقة، الشارع، رقم المبنى، رقم الشقة" : "Area, Street, Building, Flat #"}
                           className={cn("w-full bg-white border border-gray-200 rounded-xl py-2.5 text-xs font-bold text-gray-900 focus:outline-none focus:ring-2 focus:ring-purple-500 focus:border-transparent", isRTL ? "pr-9 pl-3" : "pl-9 pr-3")}
                           required
                         />
@@ -1560,57 +1611,21 @@ export default function CustomerApp() {
 
                     <div>
                       <label className="block text-[11px] font-bold text-gray-600 mb-1">
-                        {isRTL ? 'رقم الهاتف / الواتساب *' : 'Phone / WhatsApp *'}
+                        {isRTL ? 'ملاحظات إضافية للتوصيل (اختياري)' : 'Delivery Notes (Optional)'}
                       </label>
-                      <div className="relative">
-                        <Phone size={15} className={cn("absolute top-3 text-gray-400", isRTL ? "right-3" : "left-3")} />
-                        <input
-                          type="tel"
-                          value={deliveryInfo.phone}
-                          onChange={(e) => setDeliveryInfo(prev => ({ ...prev, phone: e.target.value }))}
-                          placeholder={isRTL ? "مثال: 01012345678" : "e.g. 01012345678"}
-                          className={cn("w-full bg-white border border-gray-200 rounded-xl py-2.5 text-xs font-bold text-gray-900 focus:outline-none focus:ring-2 focus:ring-purple-500 focus:border-transparent", isRTL ? "pr-9 pl-3" : "pl-9 pr-3")}
-                          required
-                        />
-                      </div>
-                    </div>
-                  </div>
-
-                  <div>
-                    <label className="block text-[11px] font-bold text-gray-600 mb-1">
-                      {isRTL ? 'عنوان التوصيل بالتفصيل *' : 'Delivery Address *'}
-                    </label>
-                    <div className="relative">
-                      <MapPin size={15} className={cn("absolute top-3 text-gray-400", isRTL ? "right-3" : "left-3")} />
                       <input
                         type="text"
-                        value={deliveryInfo.address}
-                        onChange={(e) => setDeliveryInfo(prev => ({ ...prev, address: e.target.value }))}
-                        placeholder={isRTL ? "المنطقة، الشارع، رقم المبنى، رقم الشقة" : "Area, Street, Building, Flat #"}
-                        className={cn("w-full bg-white border border-gray-200 rounded-xl py-2.5 text-xs font-bold text-gray-900 focus:outline-none focus:ring-2 focus:ring-purple-500 focus:border-transparent", isRTL ? "pr-9 pl-3" : "pl-9 pr-3")}
-                        required
+                        value={deliveryInfo.notes}
+                        onChange={(e) => setDeliveryInfo(prev => ({ ...prev, notes: e.target.value }))}
+                        placeholder={isRTL ? "علامة مميزة، وقت معين، أو رن الجرس" : "Landmarks, specific timing, etc."}
+                        className="w-full bg-white border border-gray-200 rounded-xl py-2.5 px-3 text-xs font-bold text-gray-900 focus:outline-none focus:ring-2 focus:ring-purple-500 focus:border-transparent"
                       />
                     </div>
                   </div>
+                )}
 
-                  <div>
-                    <label className="block text-[11px] font-bold text-gray-600 mb-1">
-                      {isRTL ? 'ملاحظات إضافية للتوصيل (اختياري)' : 'Delivery Notes (Optional)'}
-                    </label>
-                    <input
-                      type="text"
-                      value={deliveryInfo.notes}
-                      onChange={(e) => setDeliveryInfo(prev => ({ ...prev, notes: e.target.value }))}
-                      placeholder={isRTL ? "علامة مميزة، وقت معين، أو رن الجرس" : "Landmarks, specific timing, etc."}
-                      className="w-full bg-white border border-gray-200 rounded-xl py-2.5 px-3 text-xs font-bold text-gray-900 focus:outline-none focus:ring-2 focus:ring-purple-500 focus:border-transparent"
-                    />
-                  </div>
-                </div>
-              )}
- 
-              <div className="p-8 bg-gray-50 border-t border-gray-100 space-y-4">
                 {/* Price Breakdown */}
-                <div className="space-y-2 pb-2 border-b border-gray-200/60">
+                <div className="p-6 md:p-8 bg-gray-50/80 space-y-3">
                   <div className="flex items-center justify-between text-xs font-bold text-gray-500">
                     <span>{isRTL ? 'مجموع الأصناف' : 'Subtotal'}</span>
                     <span className="font-black text-gray-800">{currency(subtotal)}</span>
@@ -1654,26 +1669,27 @@ export default function CustomerApp() {
                     )
                   )}
                 </div>
+              </div>
 
-                <div className="flex items-center justify-between">
-                  <div className={cn("flex flex-col", isRTL ? "text-right" : "text-left")}>
-                    <span className="text-gray-400 font-black uppercase text-[10px] tracking-widest">{isRTL ? 'الإجمالي النهائي' : 'Grand Total'}</span>
-                    <span className="text-3xl font-black" style={{ color: primaryColor }}>{currency(total)}</span>
-                  </div>
+              {/* Bottom Sticky Action Bar (Total & Checkout Button) */}
+              <div className="p-4 md:p-6 bg-white border-t border-gray-100 shadow-[0_-8px_20px_rgba(0,0,0,0.06)] shrink-0 space-y-3 z-10">
+                <div className="flex items-center justify-between px-2">
+                  <span className="text-gray-400 font-black uppercase text-[11px] tracking-widest">{isRTL ? 'الإجمالي النهائي' : 'Grand Total'}</span>
+                  <span className="text-2xl md:text-3xl font-black" style={{ color: primaryColor }}>{currency(total)}</span>
                 </div>
                 
                 <button
                   onClick={placeOrder}
                   disabled={loading}
-                  className="w-full text-white py-6 rounded-[28px] font-black text-xl shadow-2xl hover:opacity-90 active:scale-[0.98] transition-all flex items-center justify-center gap-4"
-                  style={{ backgroundColor: primaryColor, boxShadow: `0 20px 40px -10px ${primaryColor}60` }}
+                  className="w-full text-white py-4 md:py-5 rounded-[22px] md:rounded-[28px] font-black text-lg md:text-xl shadow-xl hover:opacity-90 active:scale-[0.98] transition-all flex items-center justify-center gap-3 cursor-pointer"
+                  style={{ backgroundColor: primaryColor, boxShadow: `0 12px 30px -8px ${primaryColor}60` }}
                 >
                   {loading ? (
                     <div className="w-6 h-6 border-4 border-white/30 border-t-white rounded-full animate-spin" />
                   ) : (
                     <>
                       <span>{isDeliveryOrder ? (isRTL ? 'تأكيد وإرسال طلب التوصيل' : 'Submit Delivery Order') : (isRTL ? 'إرسال الطلب' : 'Complete Order')}</span>
-                      <CheckCircle2 size={24} />
+                      <CheckCircle2 size={22} />
                     </>
                   )}
                 </button>
