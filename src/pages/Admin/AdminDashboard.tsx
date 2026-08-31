@@ -945,9 +945,9 @@ export default function AdminDashboard() {
       <div className="md:hidden bg-white border-b px-4 py-3 flex items-center justify-between sticky top-0 z-40">
         <div className="flex items-center gap-2">
           <div className="w-8 h-8 rounded-lg overflow-hidden flex items-center justify-center border border-gray-100 bg-white">
-            <img src={qretaLogo} alt="Qreta Logo" className="w-full h-full object-contain" referrerPolicy="no-referrer" />
+            <img src={qretaLogo} alt="Qrieta Logo" className="w-full h-full object-contain" referrerPolicy="no-referrer" />
           </div>
-          <span className="font-bold text-lg italic tracking-tighter">Qreta</span>
+          <span className="font-bold text-lg italic tracking-tighter">Qrieta</span>
         </div>
         <button 
           onClick={() => setIsMobileMenuOpen(!isMobileMenuOpen)}
@@ -964,9 +964,9 @@ export default function AdminDashboard() {
       )}>
         <div className="hidden md:flex items-center gap-3 mb-10 px-2">
           <div className="w-12 h-12 rounded-xl overflow-hidden flex items-center justify-center border border-gray-100 bg-white shadow-sm">
-            <img src={qretaLogo} alt="Qreta Logo" className="w-full h-full object-contain" referrerPolicy="no-referrer" />
+            <img src={qretaLogo} alt="Qrieta Logo" className="w-full h-full object-contain" referrerPolicy="no-referrer" />
           </div>
-          <span className="font-black text-xl italic tracking-tighter">Qreta</span>
+          <span className="font-black text-xl italic tracking-tighter">Qrieta</span>
         </div>
 
         <nav className="flex-grow space-y-2 mt-4 md:mt-0">
@@ -2183,7 +2183,7 @@ export default function AdminDashboard() {
                     <div>
                       <div className="inline-flex items-center gap-2 px-3 py-1 bg-white/10 rounded-full text-xs font-bold text-orange-400 mb-3">
                         <ShieldCheck size={14} />
-                        <span>الدعم الفني المباشر لـ Qreta</span>
+                        <span>الدعم الفني المباشر لـ Qrieta</span>
                       </div>
                       <h4 className="text-2xl md:text-3xl font-black tracking-tight text-white mb-2">
                         م/ محمد عبدالحليم

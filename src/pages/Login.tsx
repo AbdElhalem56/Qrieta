@@ -233,12 +233,12 @@ export default function Login() {
           <div className="w-28 h-28 mb-3 flex items-center justify-center p-1 rounded-2xl bg-white shadow-sm border border-gray-100 overflow-hidden">
             <img 
               src={qretaLogo} 
-              alt="Qreta Logo" 
+              alt="Qrieta Logo" 
               className="w-full h-full object-contain"
               referrerPolicy="no-referrer"
             />
           </div>
-          <h1 className="text-2xl font-black text-gray-900 font-sans tracking-tight">Qreta Staff</h1>
+          <h1 className="text-2xl font-black text-gray-900 font-sans tracking-tight">Qrieta Staff</h1>
           <p className="text-gray-500 text-xs font-medium mt-1">SaaS for Restaurants & Cafes</p>
         </div>
 
@@ -439,7 +439,7 @@ export default function Login() {
           </form>
         )}
       </motion.div>
-      <p className="mt-8 text-gray-400 text-xs">© 2026 Qreta SaaS</p>
+      <p className="mt-8 text-gray-400 text-xs">© 2026 Qrieta SaaS</p>
     </div>
   );
 }

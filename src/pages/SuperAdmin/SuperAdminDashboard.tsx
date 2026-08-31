@@ -636,7 +636,7 @@ export default function SuperAdminDashboard() {
           <div className="w-10 h-10 bg-gray-900 rounded-xl flex items-center justify-center text-white">
             <Settings size={20} />
           </div>
-          <h1 className="text-xl font-black italic">Qreta HQ</h1>
+          <h1 className="text-xl font-black italic">Qrieta HQ</h1>
         </div>
         <div className="flex items-center gap-2">
           <button 
@@ -671,7 +671,7 @@ export default function SuperAdminDashboard() {
             <div className="w-10 h-10 bg-gray-900 rounded-xl flex items-center justify-center text-white">
               <Settings size={20} />
             </div>
-            <h1 className="text-xl font-black italic">Qreta HQ</h1>
+            <h1 className="text-xl font-black italic">Qrieta HQ</h1>
           </div>
           
           <nav className="p-4 space-y-2 w-full mt-4 md:mt-0">

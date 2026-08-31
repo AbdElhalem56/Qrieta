@@ -571,7 +571,7 @@ export default function CustomerApp() {
             }
           </p>
           <div className="mt-8 pt-8 border-t">
-            <p className="text-xs text-gray-400 font-black uppercase tracking-tighter">Qreta System</p>
+            <p className="text-xs text-gray-400 font-black uppercase tracking-tighter">Qrieta System</p>
           </div>
         </div>
       </div>
