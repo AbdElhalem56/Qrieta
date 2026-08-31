@@ -1,0 +1,10 @@
+{
+  "name": "Qreta",
+  "description": "Multi-tenant restaurant management and QR ordering system with real-time waiter dashboard, Arabic/English support, and administrative controls.",
+  "requestFramePermissions": [
+    "geolocation"
+  ],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}
