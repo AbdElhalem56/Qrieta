@@ -39,7 +39,10 @@ import {
   Bike,
   Copy,
   Check,
-  CreditCard
+  CreditCard,
+  MonitorCheck,
+  Calculator,
+  FileText
 } from 'lucide-react';
 import { QRCodeSVG } from 'qrcode.react';
 import { 
@@ -257,6 +260,13 @@ export default function SuperAdminDashboard() {
               ? g.is_prepaid
               : (r.is_prepaid !== undefined ? r.is_prepaid : (r.payment_model === 'prepaid')),
             payment_model: g?.payment_model || r.payment_model || (g?.is_prepaid || r.is_prepaid ? 'prepaid' : 'postpaid'),
+            pos_enabled: g?.pos_enabled !== undefined ? g.pos_enabled : (r.pos_enabled ?? true),
+            tax_number: g?.tax_number || r.tax_number || '',
+            commercial_registration: g?.commercial_registration || r.commercial_registration || '',
+            tax_rate: g?.tax_rate !== undefined ? g.tax_rate : (r.tax_rate ?? 14),
+            invoice_prefix: g?.invoice_prefix || r.invoice_prefix || 'INV',
+            address: g?.address || r.address || '',
+            phone: g?.phone || r.phone || '',
             ...(g ? {
               geofence_enabled: g.geofence_enabled ?? r.geofence_enabled,
               latitude: g.latitude ?? r.latitude,
@@ -493,7 +503,14 @@ export default function SuperAdminDashboard() {
         geofence_radius_meters: editingRes.geofence_radius_meters ? Number(editingRes.geofence_radius_meters) : 100,
         service_fee_percentage: serviceFee,
         is_prepaid: isPrepaid,
-        payment_model: (isPrepaid ? 'prepaid' : 'postpaid') as 'prepaid' | 'postpaid'
+        payment_model: (isPrepaid ? 'prepaid' : 'postpaid') as 'prepaid' | 'postpaid',
+        pos_enabled: editingRes.pos_enabled !== undefined ? !!editingRes.pos_enabled : true,
+        tax_number: editingRes.tax_number ? String(editingRes.tax_number).trim() : '',
+        commercial_registration: editingRes.commercial_registration ? String(editingRes.commercial_registration).trim() : '',
+        tax_rate: editingRes.tax_rate !== undefined && editingRes.tax_rate !== null ? Number(editingRes.tax_rate) : 14,
+        invoice_prefix: editingRes.invoice_prefix ? String(editingRes.invoice_prefix).trim() : 'INV',
+        address: editingRes.address ? String(editingRes.address).trim() : '',
+        phone: editingRes.phone ? String(editingRes.phone).trim() : '',
       };
 
       // Guaranteed pure standard Supabase columns that always exist
@@ -854,7 +871,7 @@ export default function SuperAdminDashboard() {
                         </div>
                         <div>
                           <h3 className="text-xl font-bold text-gray-900">{res.name}</h3>
-                          <div className="flex items-center gap-2 mt-1">
+                          <div className="flex flex-wrap items-center gap-1.5 mt-1.5">
                             <p className="text-xs font-mono text-gray-400">slug: {res.slug}</p>
                             {res.is_prepaid || res.payment_model === 'prepaid' ? (
                               <span className="bg-emerald-100 text-emerald-800 text-[10px] font-black px-2 py-0.5 rounded-md inline-flex items-center gap-1">
@@ -863,6 +880,15 @@ export default function SuperAdminDashboard() {
                             ) : (
                               <span className="bg-gray-100 text-gray-600 text-[10px] font-bold px-2 py-0.5 rounded-md inline-flex items-center gap-1">
                                 غير مسبق الدفع
+                              </span>
+                            )}
+                            {res.pos_enabled !== false ? (
+                              <span className="bg-blue-100 text-blue-800 text-[10px] font-black px-2 py-0.5 rounded-md inline-flex items-center gap-1" title="نظام الكاشير مفعل">
+                                <MonitorCheck size={10} /> كاشير POS مفعل
+                              </span>
+                            ) : (
+                              <span className="bg-amber-50 text-amber-700 text-[10px] font-medium px-2 py-0.5 rounded-md inline-flex items-center gap-1">
+                                الكاشير معطل
                               </span>
                             )}
                           </div>
@@ -931,7 +957,19 @@ export default function SuperAdminDashboard() {
                          <Users size={18} />
                          <span>Staff: {profiles.filter(p => p.restaurant_id === res.id).length}</span>
                        </div>
-                       <div className="flex items-center gap-3">
+                       <div className="flex flex-wrap items-center gap-2">
+                         {res.pos_enabled !== false && (
+                           <a
+                             href={`/pos?restaurant_id=${res.id}&restaurant_slug=${res.slug}`}
+                             target="_blank"
+                             rel="noreferrer"
+                             className="flex items-center gap-1 text-white bg-blue-600 hover:bg-blue-700 px-3 py-1.5 rounded-xl transition-all text-xs font-black shadow-sm"
+                             title="فتح شاشة الكاشير ونقاط البيع والفواتير الضريبية"
+                           >
+                             <MonitorCheck size={14} />
+                             <span>شاشة الكاشير POS</span>
+                           </a>
+                         )}
                          <a 
                            href={`/r/${res.slug}`} 
                            target="_blank" 
@@ -2275,6 +2313,145 @@ export default function SuperAdminDashboard() {
                             </div>
                           )}
                         </motion.div>
+                      )}
+                    </div>
+
+                    {/* Egyptian Tax Authority & POS System Configuration Section */}
+                    <div className="col-span-2 bg-gradient-to-br from-slate-900 to-gray-950 text-white rounded-3xl p-5 md:p-6 space-y-5 text-right shadow-xl border border-gray-800">
+                      <div className="flex items-center justify-between gap-3 border-b border-gray-800 pb-4">
+                        <div className="flex items-center gap-3">
+                          <div className="w-10 h-10 rounded-2xl bg-blue-600 text-white flex items-center justify-center shadow-lg shrink-0">
+                            <MonitorCheck size={22} />
+                          </div>
+                          <div>
+                            <div className="flex items-center gap-2">
+                              <h4 className="font-black text-white text-sm md:text-base">نظام الكاشير ونقاط البيع المتكامل (Cloud POS)</h4>
+                              <span className="bg-blue-500/20 border border-blue-400/40 text-blue-300 text-[10px] font-black px-2 py-0.5 rounded-full">
+                                ميزة مخصصة للمطاعم
+                              </span>
+                            </div>
+                            <p className="text-xs text-gray-400 font-medium mt-0.5">
+                              تمكين الكاشير لإصدار فواتير حرارية وطباعة إيصالات معتمدة من مصلحة الضرائب المصرية
+                            </p>
+                          </div>
+                        </div>
+
+                        {/* POS Enabled Toggle Switch */}
+                        <div className="flex items-center gap-2 bg-gray-800/80 px-3 py-1.5 rounded-2xl border border-gray-700">
+                          <span className="text-xs font-bold text-gray-300">
+                            {editingRes?.pos_enabled !== false ? 'مفعل' : 'معطل'}
+                          </span>
+                          <label className="relative inline-flex items-center cursor-pointer">
+                            <input 
+                              type="checkbox" 
+                              className="sr-only peer"
+                              checked={editingRes?.pos_enabled !== false}
+                              onChange={e => setEditingRes({ ...editingRes, pos_enabled: e.target.checked })}
+                            />
+                            <div className="w-11 h-6 bg-gray-700 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-blue-600"></div>
+                          </label>
+                        </div>
+                      </div>
+
+                      {/* Tax Settings Fields */}
+                      {editingRes?.pos_enabled !== false && (
+                        <div className="space-y-4 pt-1">
+                          <div className="flex items-center gap-2 text-xs font-black text-amber-400">
+                            <FileText size={16} />
+                            <span>بيانات الفاتورة الضريبية المصرية (Egyptian Tax Authority - ETA):</span>
+                          </div>
+
+                          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                            <div>
+                              <label className="text-[11px] font-bold text-gray-300 mb-1.5 block">
+                                الرقم الضريبي / رقم التسجيل الضريبي (9 أرقام):
+                              </label>
+                              <input 
+                                type="text"
+                                placeholder="مثال: 543-892-101"
+                                className="w-full bg-gray-800/90 border border-gray-700 px-4 py-2.5 rounded-xl outline-none font-mono text-sm text-white focus:border-blue-500 transition-colors"
+                                value={editingRes?.tax_number || ''}
+                                onChange={e => setEditingRes({ ...editingRes, tax_number: e.target.value })}
+                              />
+                              <span className="text-[10px] text-gray-400 mt-1 block">يطبع في ترويسة الفاتورة ويضمن بالـ QR الضريبي المعتمد</span>
+                            </div>
+
+                            <div>
+                              <label className="text-[11px] font-bold text-gray-300 mb-1.5 block">
+                                رقم السجل التجاري:
+                              </label>
+                              <input 
+                                type="text"
+                                placeholder="مثال: 148920"
+                                className="w-full bg-gray-800/90 border border-gray-700 px-4 py-2.5 rounded-xl outline-none font-mono text-sm text-white focus:border-blue-500 transition-colors"
+                                value={editingRes?.commercial_registration || ''}
+                                onChange={e => setEditingRes({ ...editingRes, commercial_registration: e.target.value })}
+                              />
+                            </div>
+
+                            <div>
+                              <label className="text-[11px] font-bold text-gray-300 mb-1.5 block">
+                                نسبة ضريبة القيمة المضافة الافتراضية (% VAT):
+                              </label>
+                              <div className="relative flex items-center">
+                                <input 
+                                  type="number"
+                                  min="0"
+                                  max="50"
+                                  step="0.5"
+                                  placeholder="14"
+                                  className="w-full bg-gray-800/90 border border-gray-700 px-4 py-2.5 rounded-xl outline-none font-mono text-sm text-white focus:border-blue-500 transition-colors pl-8 text-left"
+                                  dir="ltr"
+                                  value={editingRes?.tax_rate ?? 14}
+                                  onChange={e => setEditingRes({ ...editingRes, tax_rate: e.target.value === '' ? 0 : parseFloat(e.target.value) })}
+                                />
+                                <span className="absolute left-3 text-gray-400 font-bold text-sm pointer-events-none">%</span>
+                              </div>
+                              <span className="text-[10px] text-gray-400 mt-1 block">النسبة القانونية في مصر 14%</span>
+                            </div>
+
+                            <div>
+                              <label className="text-[11px] font-bold text-gray-300 mb-1.5 block">
+                                بادئة أرقام الفواتير (Prefix):
+                              </label>
+                              <input 
+                                type="text"
+                                placeholder="مثال: INV أو EGY"
+                                className="w-full bg-gray-800/90 border border-gray-700 px-4 py-2.5 rounded-xl outline-none font-mono text-sm text-white focus:border-blue-500 transition-colors text-left"
+                                dir="ltr"
+                                value={editingRes?.invoice_prefix || 'INV'}
+                                onChange={e => setEditingRes({ ...editingRes, invoice_prefix: e.target.value })}
+                              />
+                              <span className="text-[10px] text-gray-400 mt-1 block">مثال للشكل: INV-20260901-0001</span>
+                            </div>
+
+                            <div>
+                              <label className="text-[11px] font-bold text-gray-300 mb-1.5 block">
+                                عنوان الفرع المطبوع على الفاتورة:
+                              </label>
+                              <input 
+                                type="text"
+                                placeholder="مثال: القاهرة - المعادي - شارع 9"
+                                className="w-full bg-gray-800/90 border border-gray-700 px-4 py-2.5 rounded-xl outline-none text-sm text-white focus:border-blue-500 transition-colors"
+                                value={editingRes?.address || ''}
+                                onChange={e => setEditingRes({ ...editingRes, address: e.target.value })}
+                              />
+                            </div>
+
+                            <div>
+                              <label className="text-[11px] font-bold text-gray-300 mb-1.5 block">
+                                رقم هاتف المطعم للفواتير:
+                              </label>
+                              <input 
+                                type="text"
+                                placeholder="مثال: 01012345678"
+                                className="w-full bg-gray-800/90 border border-gray-700 px-4 py-2.5 rounded-xl outline-none font-mono text-sm text-white focus:border-blue-500 transition-colors"
+                                value={editingRes?.phone || ''}
+                                onChange={e => setEditingRes({ ...editingRes, phone: e.target.value })}
+                              />
+                            </div>
+                          </div>
+                        </div>
                       )}
                     </div>
                   </div>

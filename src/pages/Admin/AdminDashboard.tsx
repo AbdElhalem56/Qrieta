@@ -63,7 +63,8 @@ import {
   Download,
   ExternalLink,
   Target,
-  Bike
+  Bike,
+  MonitorCheck
 } from 'lucide-react';
 import { QRCodeSVG } from 'qrcode.react';
 import { 
@@ -1108,6 +1109,19 @@ export default function AdminDashboard() {
         </div>
 
         <nav className="flex-grow space-y-2 mt-4 md:mt-0">
+          <a
+            href={restaurant?.id ? `/pos?restaurant_id=${restaurant.id}&restaurant_slug=${restaurant.slug}` : '/pos'}
+            target="_blank"
+            rel="noreferrer"
+            className="w-full flex items-center justify-between px-4 py-3 rounded-xl transition-all text-right bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 text-white font-black shadow-md shadow-blue-500/20 mb-3 group"
+          >
+            <div className="flex items-center gap-3">
+              <MonitorCheck size={20} className="text-blue-200" />
+              <span>شاشة الكاشير (POS)</span>
+            </div>
+            <ExternalLink size={14} className="opacity-70 group-hover:opacity-100 transition-opacity" />
+          </a>
+
           <button 
             onClick={() => { setActiveTab('categories'); setIsMobileMenuOpen(false); }}
             className={cn("w-full flex items-center gap-3 px-4 py-3 rounded-xl transition-all text-right", activeTab === 'categories' ? "bg-orange-500 text-white font-bold shadow-lg" : "text-gray-500 hover:bg-gray-100")}

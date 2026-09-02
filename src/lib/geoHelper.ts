@@ -8,6 +8,14 @@ export interface RestaurantGeofence {
   service_fee_percentage?: number;
   is_prepaid?: boolean;
   payment_model?: 'prepaid' | 'postpaid';
+  // POS & Egyptian Tax Authority Settings
+  pos_enabled?: boolean;
+  tax_number?: string; // الرقم الضريبي / رقم التسجيل الضريبي (9 أرقام)
+  commercial_registration?: string; // السجل التجاري
+  tax_rate?: number; // نسبة ضريبة القيمة المضافة الافتراضية 14%
+  invoice_prefix?: string; // بادئة الفاتورة مثل INV- أو EGY-
+  address?: string; // عنوان الفرع/المطعم
+  phone?: string; // هاتف المطعم
 }
 
 // Calculate distance in meters between two GPS coordinates using Haversine formula

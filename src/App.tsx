@@ -10,6 +10,7 @@ import AdminDashboard from './pages/Admin/AdminDashboard';
 import SuperAdminDashboard from './pages/SuperAdmin/SuperAdminDashboard';
 import Login from './pages/Login';
 import Register from './pages/Register';
+import CashierPOS from './pages/POS/CashierPOS';
 
 function isSubdomainHost(): boolean {
   if (typeof window === 'undefined') return false;
@@ -59,6 +60,10 @@ export default function App() {
           {/* Auth */}
           <Route path="/login" element={<Login />} />
           <Route path="/register" element={<Register />} />
+
+          {/* POS & Cashier Application */}
+          <Route path="/pos" element={<CashierPOS />} />
+          <Route path="/pos/:restaurantSlug" element={<CashierPOS />} />
 
           {/* Waiter Dashboard */}
           <Route path="/waiter" element={
