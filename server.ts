@@ -582,6 +582,13 @@ async function startServer() {
         if (sequence <= 0) sequence = 1;
         dailySequenceStore[storeKey] = sequence;
         persistDailySequences();
+      } else if (action === 'sync' && req.body.current_number) {
+        const num = parseInt(req.body.current_number, 10) || 0;
+        if (num > sequence) {
+          sequence = num;
+          dailySequenceStore[storeKey] = sequence;
+          persistDailySequences();
+        }
       } else {
         if (sequence <= 0) {
           sequence = dbCount > 0 ? dbCount : 1;
@@ -599,6 +606,258 @@ async function startServer() {
     } catch (err: any) {
       console.error("Daily sequence API error:", err);
       res.status(500).json({ error: err.message || "فشل في جلب رقم الطلب اليومي" });
+    }
+  });
+
+  // Persistent Live Orders Store (supports Customer App & POS synchronization)
+  const liveOrdersFilePath = path.join(process.cwd(), "live-orders.json");
+  let liveOrdersStore: Record<string, any[]> = {}; // restaurant_id -> orders[]
+
+  try {
+    if (fs.existsSync(liveOrdersFilePath)) {
+      const oData = fs.readFileSync(liveOrdersFilePath, "utf-8");
+      liveOrdersStore = JSON.parse(oData || "{}");
+    }
+  } catch (e) {
+    console.warn("Could not read live-orders.json:", e);
+  }
+
+  const persistLiveOrders = () => {
+    try {
+      fs.writeFileSync(liveOrdersFilePath, JSON.stringify(liveOrdersStore, null, 2), "utf-8");
+    } catch (e) {
+      console.warn("Could not write live-orders.json:", e);
+    }
+  };
+
+  // POST /api/orders/live - Add or update live order
+  app.post("/api/orders/live", (req, res) => {
+    const orderData = req.body;
+    const restaurantId = orderData.restaurant_id;
+    if (!restaurantId) {
+      return res.status(400).json({ error: "معرف المطعم مطلوب." });
+    }
+
+    try {
+      if (!liveOrdersStore[restaurantId]) {
+        liveOrdersStore[restaurantId] = [];
+      }
+
+      const existingIndex = liveOrdersStore[restaurantId].findIndex(
+        (o: any) => String(o.id) === String(orderData.id)
+      );
+
+      const orderRecord = {
+        ...orderData,
+        updated_at: new Date().toISOString(),
+      };
+
+      if (existingIndex >= 0) {
+        liveOrdersStore[restaurantId][existingIndex] = {
+          ...liveOrdersStore[restaurantId][existingIndex],
+          ...orderRecord,
+        };
+      } else {
+        liveOrdersStore[restaurantId].unshift(orderRecord);
+      }
+
+      // Keep recent 200 orders per restaurant
+      if (liveOrdersStore[restaurantId].length > 200) {
+        liveOrdersStore[restaurantId] = liveOrdersStore[restaurantId].slice(0, 200);
+      }
+
+      persistLiveOrders();
+      res.status(200).json({ success: true, order: orderRecord });
+    } catch (err: any) {
+      console.error("Live order save error:", err);
+      res.status(500).json({ error: err.message || "فشل في حفظ الطلب المباشر" });
+    }
+  });
+
+  // GET /api/orders/live - Get live orders for a restaurant
+  app.get("/api/orders/live", (req, res) => {
+    const restaurantId = req.query.restaurant_id as string;
+    if (!restaurantId) {
+      return res.status(400).json({ error: "معرف المطعم مطلوب." });
+    }
+
+    const orders = liveOrdersStore[restaurantId] || [];
+    res.status(200).json({ success: true, orders });
+  });
+
+  // PATCH /api/orders/live/:id/status - Update status of an order
+  app.patch("/api/orders/live/:id/status", (req, res) => {
+    const orderId = req.params.id;
+    const { restaurant_id, status, payment_status } = req.body;
+    if (!restaurant_id) {
+      return res.status(400).json({ error: "معرف المطعم مطلوب." });
+    }
+
+    try {
+      const orders = liveOrdersStore[restaurant_id] || [];
+      const order = orders.find((o: any) => String(o.id) === String(orderId));
+      if (!order) {
+        return res.status(404).json({ error: "الطلب غير موجود" });
+      }
+
+      if (status) order.status = status;
+      if (payment_status) order.payment_status = payment_status;
+      order.updated_at = new Date().toISOString();
+
+      persistLiveOrders();
+      res.status(200).json({ success: true, order });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message || "فشل في تحديث حالة الطلب" });
+    }
+  });
+
+  // Persistent Inventory Store (Stock, Movements, Audits, Shift Logs)
+  const inventoryFilePath = path.join(process.cwd(), "inventory-store.json");
+  let inventoryStore: Record<string, {
+    stock: Record<string, number>;
+    minAlerts: Record<string, number>;
+    movements: any[];
+    shiftLogs: any[];
+    audits: any[];
+  }> = {};
+
+  try {
+    if (fs.existsSync(inventoryFilePath)) {
+      const invData = fs.readFileSync(inventoryFilePath, "utf-8");
+      inventoryStore = JSON.parse(invData || "{}");
+    }
+  } catch (e) {
+    console.warn("Could not read inventory-store.json:", e);
+  }
+
+  const persistInventory = () => {
+    try {
+      fs.writeFileSync(inventoryFilePath, JSON.stringify(inventoryStore, null, 2), "utf-8");
+    } catch (e) {
+      console.warn("Could not write inventory-store.json:", e);
+    }
+  };
+
+  // GET /api/inventory - Get restaurant inventory, movements and alerts
+  app.get("/api/inventory", (req, res) => {
+    const restaurantId = req.query.restaurant_id as string;
+    if (!restaurantId) {
+      return res.status(400).json({ error: "معرف المطعم مطلوب." });
+    }
+
+    const data = inventoryStore[restaurantId] || {
+      stock: {},
+      minAlerts: {},
+      movements: [],
+      shiftLogs: [],
+      audits: []
+    };
+
+    res.status(200).json({ success: true, ...data });
+  });
+
+  // POST /api/inventory/update - Adjust stock (Stock In, Waste, Sale, Manual)
+  app.post("/api/inventory/update", (req, res) => {
+    const { restaurant_id, productId, productName, newStock, delta, type, reason, performedBy, minAlert } = req.body;
+    if (!restaurant_id) {
+      return res.status(400).json({ error: "معرف المطعم مطلوب." });
+    }
+
+    try {
+      if (!inventoryStore[restaurant_id]) {
+        inventoryStore[restaurant_id] = {
+          stock: {},
+          minAlerts: {},
+          movements: [],
+          shiftLogs: [],
+          audits: []
+        };
+      }
+
+      const restInv = inventoryStore[restaurant_id];
+      const prevStock = restInv.stock[productId] ?? 20;
+      let finalStock = prevStock;
+
+      if (typeof newStock === 'number') {
+        finalStock = newStock;
+      } else if (typeof delta === 'number') {
+        finalStock = Math.max(0, prevStock + delta);
+      }
+
+      if (productId) {
+        restInv.stock[productId] = finalStock;
+      }
+
+      if (minAlert !== undefined && productId) {
+        restInv.minAlerts[productId] = minAlert;
+      }
+
+      if (productId && (type || reason)) {
+        const movement = {
+          id: `mov-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+          productId,
+          productName: productName || productId,
+          type: type || 'adjustment', // 'stock_in' | 'waste' | 'sale' | 'audit' | 'adjustment'
+          quantity: delta !== undefined ? Math.abs(delta) : Math.abs(finalStock - prevStock),
+          prevStock,
+          newStock: finalStock,
+          reason: reason || '',
+          performedBy: performedBy || 'المدير',
+          timestamp: new Date().toISOString()
+        };
+        restInv.movements.unshift(movement);
+        if (restInv.movements.length > 500) {
+          restInv.movements = restInv.movements.slice(0, 500);
+        }
+      }
+
+      persistInventory();
+      res.status(200).json({
+        success: true,
+        productId,
+        currentStock: finalStock,
+        movements: restInv.movements.slice(0, 20)
+      });
+    } catch (err: any) {
+      console.error("Inventory update error:", err);
+      res.status(500).json({ error: err.message || "فشل في تحديث المخزون" });
+    }
+  });
+
+  // POST /api/inventory/shift-log - Record shift events for Admin cash drawer monitor
+  app.post("/api/inventory/shift-log", (req, res) => {
+    const { restaurant_id, shiftRecord } = req.body;
+    if (!restaurant_id || !shiftRecord) {
+      return res.status(400).json({ error: "البيانات غير مكتملة." });
+    }
+
+    try {
+      if (!inventoryStore[restaurant_id]) {
+        inventoryStore[restaurant_id] = {
+          stock: {},
+          minAlerts: {},
+          movements: [],
+          shiftLogs: [],
+          audits: []
+        };
+      }
+
+      const restInv = inventoryStore[restaurant_id];
+      const existingIdx = restInv.shiftLogs.findIndex((s: any) => s.id === shiftRecord.id);
+      if (existingIdx >= 0) {
+        restInv.shiftLogs[existingIdx] = shiftRecord;
+      } else {
+        restInv.shiftLogs.unshift(shiftRecord);
+      }
+
+      if (restInv.shiftLogs.length > 100) {
+        restInv.shiftLogs = restInv.shiftLogs.slice(0, 100);
+      }
+
+      persistInventory();
+      res.status(200).json({ success: true, message: "تم تسجيل حركة الشيفت بنجاح" });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message || "فشل في تسجيل حركة الشيفت" });
     }
   });
 

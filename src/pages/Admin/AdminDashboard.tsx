@@ -21,6 +21,8 @@ import {
   syncDeliveryZones 
 } from '../../lib/deliveryHelper';
 import { getStoredCashierPin, setStoredCashierPin } from '../../lib/posOfflineStore';
+import { InventoryAuditTab } from '../../components/Admin/InventoryAuditTab';
+import { fetchLiveOrders, updateLiveOrderStatus, LiveOrder } from '../../lib/ordersService';
 import { 
   Plus, 
   Trash2, 
@@ -67,7 +69,11 @@ import {
   Bike,
   MonitorCheck,
   Lock,
-  Key
+  Key,
+  Boxes,
+  Smartphone,
+  Store,
+  RefreshCw
 } from 'lucide-react';
 import { QRCodeSVG } from 'qrcode.react';
 import { 
@@ -102,8 +108,13 @@ export default function AdminDashboard() {
   const [totalRevenue, setTotalRevenue] = useState(0);
   const [tables, setTables] = useState<any[]>([]);
   const [isLoadingTables, setIsLoadingTables] = useState(false);
-  const [activeTab, setActiveTab] = useState<'categories' | 'menu' | 'tables_qr' | 'orders' | 'staff' | 'analytics' | 'settings' | 'support'>('categories');
+  const [activeTab, setActiveTab] = useState<'categories' | 'menu' | 'tables_qr' | 'orders' | 'staff' | 'analytics' | 'settings' | 'support' | 'inventory'>('categories');
   const [phoneCopied, setPhoneCopied] = useState(false);
+  
+  // Real-time live orders from both Cashier POS and Customer App
+  const [adminLiveOrders, setAdminLiveOrders] = useState<LiveOrder[]>([]);
+  const [ordersSourceFilter, setOrdersSourceFilter] = useState<'all' | 'customer_app' | 'cashier_pos' | 'delivery' | 'dine_in'>('all');
+  const [isUpdatingOrderStatus, setIsUpdatingOrderStatus] = useState<string | null>(null);
   const [newCat, setNewCat] = useState({ en: '', ar: '' });
   const [newCatOptions, setNewCatOptions] = useState<CategoryOption[]>([]);
   const [editingCategoryOptions, setEditingCategoryOptions] = useState<CategoryOption[]>([]);
@@ -142,6 +153,39 @@ export default function AdminDashboard() {
       setCashierPinInput(pin || '1234');
     }
   }, [restaurant?.id]);
+
+  // Live orders poller for Admin Dashboard (syncs POS + Customer App orders in real time)
+  useEffect(() => {
+    if (!restaurant?.id) return;
+    let isMounted = true;
+    const loadLive = async () => {
+      try {
+        const live = await fetchLiveOrders(restaurant.id);
+        if (isMounted) setAdminLiveOrders(live);
+      } catch (e) {
+        console.error('Error fetching admin live orders:', e);
+      }
+    };
+    loadLive();
+    const timer = setInterval(loadLive, 4000);
+    return () => {
+      isMounted = false;
+      clearInterval(timer);
+    };
+  }, [restaurant?.id]);
+
+  const handleAdminUpdateOrderStatus = async (orderId: string | number, newStatus: LiveOrder['status']) => {
+    if (!restaurant?.id) return;
+    setIsUpdatingOrderStatus(String(orderId));
+    try {
+      await updateLiveOrderStatus(orderId, restaurant.id, newStatus);
+      setAdminLiveOrders(prev => prev.map(o => String(o.id) === String(orderId) ? { ...o, status: newStatus } : o));
+    } catch (e) {
+      console.error('Error updating live order status from admin:', e);
+    } finally {
+      setIsUpdatingOrderStatus(null);
+    }
+  };
 
   const handleSaveCashierPin = (e?: React.FormEvent) => {
     if (e) e.preventDefault();
@@ -1177,6 +1221,18 @@ export default function AdminDashboard() {
           >
             <History size={20} />
             <span>سجل الطلبات</span>
+            {adminLiveOrders.filter(o => o.status === 'new').length > 0 && (
+              <span className="w-5 h-5 rounded-full bg-rose-500 text-white font-mono font-bold text-[10px] flex items-center justify-center mr-auto animate-pulse">
+                {adminLiveOrders.filter(o => o.status === 'new').length}
+              </span>
+            )}
+          </button>
+          <button 
+            onClick={() => { setActiveTab('inventory'); setIsMobileMenuOpen(false); }}
+            className={cn("w-full flex items-center gap-3 px-4 py-3 rounded-xl transition-all text-right", activeTab === 'inventory' ? "bg-orange-500 text-white font-bold shadow-lg" : "text-gray-500 hover:bg-gray-100")}
+          >
+            <Boxes size={20} />
+            <span>المخزون والجرد</span>
           </button>
           <button 
             onClick={() => { setActiveTab('staff'); setIsMobileMenuOpen(false); }}
@@ -1228,7 +1284,8 @@ export default function AdminDashboard() {
                activeTab === 'categories' ? 'التصنيفات' : 
                activeTab === 'tables_qr' ? 'رموز QR للطاولات' :
                activeTab === 'staff' ? 'الموظفين' : 
-               activeTab === 'orders' ? 'سجل الطلبات' : 
+               activeTab === 'orders' ? 'سجل الطلبات الحية والتاريخية' : 
+               activeTab === 'inventory' ? 'إدارة المخزون وتكلفة المواد' :
                activeTab === 'settings' ? 'إعدادات المطعم' : 
                activeTab === 'support' ? 'مشاكل متعلقة بالسيستم' : 'التحليلات'}
             </h2>
@@ -1404,8 +1461,293 @@ export default function AdminDashboard() {
 
           {/* Orders View */}
           {activeTab === 'orders' && (
-            <div className="grid gap-6">
+            <div className="grid gap-8">
+              {/* 🟢 Real-time Live Orders Control Center (POS + Customer App) */}
+              <div className="bg-white rounded-[32px] p-6 md:p-8 border border-gray-100 shadow-xl space-y-6">
+                <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 border-b pb-5">
+                  <div className="flex items-center gap-3">
+                    <div className="w-12 h-12 rounded-2xl bg-gradient-to-br from-orange-500 to-amber-500 text-white flex items-center justify-center shadow-lg shadow-orange-500/25">
+                      <History size={24} />
+                    </div>
+                    <div>
+                      <div className="flex items-center gap-2">
+                        <h3 className="text-xl font-black text-gray-900">سجل وبث الطلبات الحية</h3>
+                        <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-emerald-50 text-emerald-700 border border-emerald-200 text-[11px] font-bold">
+                          <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
+                          <span>بث لحظي مباشر</span>
+                        </span>
+                      </div>
+                      <p className="text-xs text-gray-500 font-medium mt-0.5">
+                        متابعة فورية لجميع الطلبات الصادرة من كاشير الفرع وتطبيق الزبائن بالترقيم التسلسلي اليومي
+                      </p>
+                    </div>
+                  </div>
+
+                  <button
+                    onClick={() => {
+                      if (restaurant?.id) {
+                        fetchLiveOrders(restaurant.id).then(setAdminLiveOrders);
+                      }
+                    }}
+                    className="px-3.5 py-2 bg-gray-50 hover:bg-gray-100 text-gray-700 rounded-xl border border-gray-200 text-xs font-bold flex items-center gap-1.5 transition-colors cursor-pointer"
+                  >
+                    <RefreshCw size={14} className={isUpdatingOrderStatus ? "animate-spin" : ""} />
+                    <span>تحديث فوري</span>
+                  </button>
+                </div>
+
+                {/* 📊 Live KPI Metrics */}
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                  <div className="bg-purple-50/70 border border-purple-100 p-4 rounded-2xl text-right">
+                    <div className="flex items-center justify-between text-purple-600 mb-1">
+                      <span className="text-xs font-black">تطبيق الزبائن</span>
+                      <Smartphone size={16} />
+                    </div>
+                    <p className="text-2xl font-black text-purple-900 font-mono">
+                      {adminLiveOrders.filter(o => o.source === 'customer_app').length}
+                    </p>
+                    <span className="text-[10px] text-purple-600/80 font-bold">طلبات أونلاين</span>
+                  </div>
+
+                  <div className="bg-amber-50/70 border border-amber-100 p-4 rounded-2xl text-right">
+                    <div className="flex items-center justify-between text-amber-600 mb-1">
+                      <span className="text-xs font-black">كاشير الفرع (POS)</span>
+                      <Store size={16} />
+                    </div>
+                    <p className="text-2xl font-black text-amber-900 font-mono">
+                      {adminLiveOrders.filter(o => o.source === 'cashier_pos').length}
+                    </p>
+                    <span className="text-[10px] text-amber-600/80 font-bold">فواتير الكاشير</span>
+                  </div>
+
+                  <div className="bg-emerald-50/70 border border-emerald-100 p-4 rounded-2xl text-right">
+                    <div className="flex items-center justify-between text-emerald-600 mb-1">
+                      <span className="text-xs font-black">طلبات دليفري</span>
+                      <Bike size={16} />
+                    </div>
+                    <p className="text-2xl font-black text-emerald-900 font-mono">
+                      {adminLiveOrders.filter(o => o.order_type === 'delivery').length}
+                    </p>
+                    <span className="text-[10px] text-emerald-600/80 font-bold">توصيل منزلي</span>
+                  </div>
+
+                  <div className="bg-blue-50/70 border border-blue-100 p-4 rounded-2xl text-right">
+                    <div className="flex items-center justify-between text-blue-600 mb-1">
+                      <span className="text-xs font-black">طلبات الصالة</span>
+                      <Coffee size={16} />
+                    </div>
+                    <p className="text-2xl font-black text-blue-900 font-mono">
+                      {adminLiveOrders.filter(o => o.order_type === 'dine_in').length}
+                    </p>
+                    <span className="text-[10px] text-blue-600/80 font-bold">طاولات الصالة</span>
+                  </div>
+                </div>
+
+                {/* 🔍 Source & Type Filter Tabs */}
+                <div className="flex flex-wrap items-center gap-2 pt-2 border-t border-gray-100">
+                  <span className="text-xs font-black text-gray-500 ml-2">تصفية العرض:</span>
+                  {[
+                    { id: 'all', label: `الكل (${adminLiveOrders.length})` },
+                    { id: 'customer_app', label: `📱 تطبيق الزبائن (${adminLiveOrders.filter(o => o.source === 'customer_app').length})` },
+                    { id: 'cashier_pos', label: `🏬 كاشير الفرع (${adminLiveOrders.filter(o => o.source === 'cashier_pos').length})` },
+                    { id: 'delivery', label: `🛵 دليفري (${adminLiveOrders.filter(o => o.order_type === 'delivery').length})` },
+                    { id: 'dine_in', label: `🍽️ صالة (${adminLiveOrders.filter(o => o.order_type === 'dine_in').length})` },
+                  ].map(tab => (
+                    <button
+                      key={tab.id}
+                      onClick={() => setOrdersSourceFilter(tab.id as any)}
+                      className={cn(
+                        "px-3.5 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer",
+                        ordersSourceFilter === tab.id
+                          ? "bg-gray-900 text-white shadow-sm"
+                          : "bg-gray-100 hover:bg-gray-200 text-gray-600"
+                      )}
+                    >
+                      {tab.label}
+                    </button>
+                  ))}
+                </div>
+
+                {/* 📋 Live Orders Stream List */}
+                <div className="space-y-3">
+                  {(() => {
+                    const filtered = adminLiveOrders.filter(order => {
+                      if (ordersSourceFilter === 'customer_app') return order.source === 'customer_app';
+                      if (ordersSourceFilter === 'cashier_pos') return order.source === 'cashier_pos';
+                      if (ordersSourceFilter === 'delivery') return order.order_type === 'delivery';
+                      if (ordersSourceFilter === 'dine_in') return order.order_type === 'dine_in';
+                      return true;
+                    });
+
+                    if (filtered.length === 0) {
+                      return (
+                        <div className="text-center py-12 bg-gray-50 rounded-2xl border border-dashed border-gray-200 space-y-2">
+                          <History size={32} className="text-gray-300 mx-auto" />
+                          <p className="text-sm font-bold text-gray-500">لا توجد طلبات جارية مطابقة للتصفية حالياً</p>
+                          <p className="text-xs text-gray-400">أي طلب يتم إرساله من تطبيق الزبون أو الكاشير سيظهر هنا فوراً بالترتيب والتسلسل</p>
+                        </div>
+                      );
+                    }
+
+                    return (
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        {filtered.map(order => (
+                          <div
+                            key={String(order.id)}
+                            className={cn(
+                              "p-4 rounded-2xl border transition-all text-right space-y-3 bg-white shadow-sm hover:shadow-md",
+                              order.status === 'new' ? "border-amber-300 ring-2 ring-amber-100" :
+                              order.status === 'preparing' ? "border-blue-200" :
+                              order.status === 'completed' ? "border-emerald-200 opacity-90" : "border-gray-200 opacity-60"
+                            )}
+                          >
+                            {/* Order Header: Sequential Number & Source Badge */}
+                            <div className="flex items-center justify-between border-b pb-2.5">
+                              <div className="flex items-center gap-2">
+                                <span className="text-base font-black font-mono px-2.5 py-0.5 rounded-lg bg-gray-900 text-white shadow-sm">
+                                  #{order.daily_order_number || (typeof order.id === 'string' && order.id.includes('-') ? order.id.split('-')[0] : order.id)}
+                                </span>
+                                {order.source === 'customer_app' ? (
+                                  <span className="px-2 py-0.5 rounded-full bg-purple-100 text-purple-700 border border-purple-200 text-[10px] font-black inline-flex items-center gap-1">
+                                    <Smartphone size={11} />
+                                    <span>تطبيق الزبائن</span>
+                                  </span>
+                                ) : (
+                                  <span className="px-2 py-0.5 rounded-full bg-amber-100 text-amber-800 border border-amber-200 text-[10px] font-black inline-flex items-center gap-1">
+                                    <Store size={11} />
+                                    <span>كاشير الفرع</span>
+                                  </span>
+                                )}
+                              </div>
+
+                              <div className="flex items-center gap-1.5">
+                                {order.order_type === 'delivery' ? (
+                                  <span className="px-2 py-0.5 rounded-lg bg-emerald-50 text-emerald-700 border border-emerald-200 text-[10px] font-black inline-flex items-center gap-1">
+                                    <Bike size={11} />
+                                    <span>دليفري</span>
+                                  </span>
+                                ) : order.order_type === 'dine_in' ? (
+                                  <span className="px-2 py-0.5 rounded-lg bg-blue-50 text-blue-700 border border-blue-200 text-[10px] font-black inline-flex items-center gap-1">
+                                    <Coffee size={11} />
+                                    <span>طاولة {order.table_number || 'صالة'}</span>
+                                  </span>
+                                ) : (
+                                  <span className="px-2 py-0.5 rounded-lg bg-slate-100 text-slate-700 text-[10px] font-black">
+                                    🥡 سفري (تيك أواي)
+                                  </span>
+                                )}
+
+                                <span className="text-[10px] font-mono text-gray-400">
+                                  {new Date(order.created_at).toLocaleTimeString('ar-EG', { hour: '2-digit', minute: '2-digit' })}
+                                </span>
+                              </div>
+                            </div>
+
+                            {/* Customer / Delivery Info if available */}
+                            {(order.customer_name || order.customer_phone || order.delivery_address) && (
+                              <div className="text-xs bg-gray-50 p-2.5 rounded-xl border border-gray-100 space-y-1">
+                                {order.customer_name && (
+                                  <div className="font-bold text-gray-800 flex items-center justify-between">
+                                    <span>العميل: {order.customer_name}</span>
+                                    {order.customer_phone && (
+                                      <a href={`tel:${order.customer_phone}`} className="font-mono text-blue-600 hover:underline">
+                                        {order.customer_phone}
+                                      </a>
+                                    )}
+                                  </div>
+                                )}
+                                {order.delivery_address && (
+                                  <p className="text-[11px] text-gray-600 line-clamp-1">
+                                    📍 العنوان: {order.delivery_address}
+                                  </p>
+                                )}
+                              </div>
+                            )}
+
+                            {/* Order Items List */}
+                            <div className="space-y-1 py-1">
+                              {order.items?.map((it, idx) => (
+                                <div key={idx} className="flex items-center justify-between text-xs py-0.5">
+                                  <span className="font-bold text-gray-800">
+                                    <span className="text-orange-600 font-mono font-black ml-1">{it.quantity}x</span>
+                                    {it.product_name}
+                                  </span>
+                                  <span className="font-mono font-bold text-gray-700">
+                                    {formatCurrency(it.unit_price * it.quantity)}
+                                  </span>
+                                </div>
+                              ))}
+                            </div>
+
+                            {/* Order Footer & Actions */}
+                            <div className="flex items-center justify-between pt-2 border-t border-gray-100">
+                              <div>
+                                <span className="text-[10px] text-gray-400 block font-bold">الإجمالي</span>
+                                <span className="text-sm font-black text-gray-900 font-mono">
+                                  {formatCurrency(order.total_price)}
+                                </span>
+                              </div>
+
+                              <div className="flex items-center gap-1.5">
+                                <span className={cn(
+                                  "px-2.5 py-1 rounded-full text-[10px] font-black",
+                                  order.status === 'new' ? "bg-amber-100 text-amber-800 animate-pulse" :
+                                  order.status === 'preparing' ? "bg-blue-100 text-blue-800" :
+                                  order.status === 'completed' ? "bg-emerald-100 text-emerald-800" : "bg-gray-100 text-gray-600"
+                                )}>
+                                  {order.status === 'new' ? 'جديد' :
+                                   order.status === 'preparing' ? 'جاري التحضير' :
+                                   order.status === 'completed' ? 'تم التسليم' : 'ملغي'}
+                                </span>
+
+                                {order.status === 'new' && (
+                                  <button
+                                    onClick={() => handleAdminUpdateOrderStatus(order.id, 'preparing')}
+                                    disabled={isUpdatingOrderStatus === String(order.id)}
+                                    className="px-2.5 py-1 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-[11px] font-bold transition-all shadow-sm cursor-pointer"
+                                  >
+                                    بدء التحضير
+                                  </button>
+                                )}
+
+                                {order.status === 'preparing' && (
+                                  <button
+                                    onClick={() => handleAdminUpdateOrderStatus(order.id, 'completed')}
+                                    disabled={isUpdatingOrderStatus === String(order.id)}
+                                    className="px-2.5 py-1 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-[11px] font-bold transition-all shadow-sm cursor-pointer"
+                                  >
+                                    تسليم الطلب
+                                  </button>
+                                )}
+
+                                {order.status !== 'cancelled' && order.status !== 'completed' && (
+                                  <button
+                                    onClick={() => {
+                                      if (confirm('هل أنت متأكد من إلغاء هذا الطلب؟')) {
+                                        handleAdminUpdateOrderStatus(order.id, 'cancelled');
+                                      }
+                                    }}
+                                    className="px-2 py-1 bg-gray-100 hover:bg-rose-50 hover:text-rose-600 text-gray-500 rounded-lg text-[10px] font-bold transition-all cursor-pointer"
+                                    title="إلغاء الطلب"
+                                  >
+                                    إلغاء
+                                  </button>
+                                )}
+                              </div>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    );
+                  })()}
+                </div>
+              </div>
+
+              {/* 📜 Historical Orders Archive Table */}
               <div className="bg-white p-6 rounded-3xl border shadow-sm flex flex-col md:flex-row items-center justify-between gap-4">
+                <div className="flex items-center gap-2">
+                  <h4 className="font-black text-gray-900 text-base">الأرشيف التاريخي للطلبات المفوترة</h4>
+                </div>
                 <div className="flex gap-2 bg-gray-100 p-1 rounded-2xl w-full md:w-auto">
                   <button 
                     onClick={() => setAnalyticsMode('daily')}
@@ -2907,6 +3249,18 @@ export default function AdminDashboard() {
                   </div>
                 </div>
               </div>
+            </div>
+          )}
+
+          {/* Inventory & Stock Management View */}
+          {activeTab === 'inventory' && restaurant && (
+            <div className="animate-in fade-in slide-in-from-bottom-4 duration-500">
+              <InventoryAuditTab 
+                restaurantId={restaurant.id}
+                restaurantName={restaurant.name}
+                products={products}
+                categories={categories}
+              />
             </div>
           )}
         </div>

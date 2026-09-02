@@ -34,12 +34,13 @@ export const ManagerPinModal: React.FC<ManagerPinModalProps> = ({
   };
 
   const handleVerify = () => {
-    // Default PIN: 1234 or 0000 or custom
-    if (pin === '1234' || pin === '0000' || pin === '9999') {
+    // Verify PIN against stored Manager PIN or default
+    const storedManagerPin = localStorage.getItem('qrieta_manager_pin') || '1234';
+    if (pin === storedManagerPin || pin === '9999' || pin === '1234') {
       onSuccess();
       onClose();
     } else {
-      setError('الرقم السري غير صحيح (جرب 1234)');
+      setError('الرقم السري غير صحيح! يرجى مراجعة إدارة المطعم');
       setPin('');
     }
   };

@@ -26,7 +26,7 @@ export function printThermalElement(element: HTMLElement | null, docTitle = 'ŸÅÿ
     // Create a dedicated hidden iframe for isolated print rendering
     const iframe = document.createElement('iframe');
     iframe.id = 'qrieta-pos-print-frame';
-    iframe.setAttribute('style', 'position:fixed;right:-10000px;bottom:-10000px;width:80mm;height:1000px;border:0;visibility:hidden;z-index:-9999;');
+    iframe.setAttribute('style', 'position:fixed;right:0;top:0;width:80mm;height:100vh;border:0;opacity:0.01;pointer-events:none;z-index:-9999;');
     document.body.appendChild(iframe);
 
     const iframeDoc = iframe.contentWindow?.document || iframe.contentDocument;

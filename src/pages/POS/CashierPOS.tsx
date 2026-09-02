@@ -82,8 +82,27 @@ import {
   RotateCcw,
   Check,
   Eye,
-  AlertTriangle
+  AlertTriangle,
+  Bell,
+  Volume2,
+  VolumeX,
+  ChevronLeft,
+  Boxes
 } from 'lucide-react';
+import { 
+  getNextDailyOrderNumber, 
+  syncDailyOrderSequence, 
+  registerLiveOrder, 
+  fetchLiveOrders, 
+  updateLiveOrderStatus, 
+  playNewOrderAlertSound, 
+  LiveOrder 
+} from '../../lib/ordersService';
+import { 
+  fetchRestaurantInventory, 
+  updateProductStock, 
+  logShiftAuditRecord 
+} from '../../lib/inventoryService';
 
 export const CashierPOS: React.FC = () => {
   const [searchParams] = useSearchParams();
@@ -104,8 +123,14 @@ export const CashierPOS: React.FC = () => {
   // Real-time Stock Inventory Store
   const [stockMap, setStockMap] = useState<Record<string, number>>({});
 
-  // Navigation Tabs
-  const [activeTab, setActiveTab] = useState<'pos' | 'orders' | 'shift' | 'tables' | 'inventory'>('pos');
+  // Navigation Tabs (Including Customer Orders workspace)
+  const [activeTab, setActiveTab] = useState<'pos' | 'orders' | 'shift' | 'tables' | 'inventory' | 'customer_orders'>('pos');
+  const [customerLiveOrders, setCustomerLiveOrders] = useState<LiveOrder[]>([]);
+  const [customerFilter, setCustomerFilter] = useState<'all' | 'new' | 'dine_in' | 'delivery' | 'completed'>('all');
+  const [hasUnviewedCustomerAlert, setHasUnviewedCustomerAlert] = useState<boolean>(false);
+  const [isSoundMuted, setIsSoundMuted] = useState<boolean>(false);
+  const lastAlertedOrderIdRef = useRef<string | number | null>(null);
+
   const [selectedCategory, setSelectedCategory] = useState<string>('all');
   const [searchQuery, setSearchQuery] = useState<string>('');
 
@@ -412,6 +437,137 @@ export const CashierPOS: React.FC = () => {
       setOfflineQueue(getOfflineOrdersQueue(restaurantId));
     }
     setIsSyncing(false);
+  };
+
+  // Customer Live Orders Polling & Real-time Alerts
+  useEffect(() => {
+    if (!selectedRestaurant?.id) return;
+    let isMounted = true;
+
+    const pollOrders = async () => {
+      try {
+        const list = await fetchLiveOrders(selectedRestaurant.id);
+        if (!isMounted) return;
+        const customerOnly = list.filter(o => o.source === 'customer_app');
+        setCustomerLiveOrders(customerOnly);
+
+        const unhandledNew = customerOnly.filter(o => o.status === 'new');
+        if (unhandledNew.length > 0) {
+          const newest = unhandledNew[0];
+          if (lastAlertedOrderIdRef.current !== newest.id) {
+            lastAlertedOrderIdRef.current = newest.id;
+            setHasUnviewedCustomerAlert(true);
+            if (!isSoundMuted) {
+              playNewOrderAlertSound();
+            }
+          }
+        }
+      } catch (e) {
+        console.warn('Customer orders polling error:', e);
+      }
+    };
+
+    pollOrders();
+    const interval = setInterval(pollOrders, 4000);
+    return () => {
+      isMounted = false;
+      clearInterval(interval);
+    };
+  }, [selectedRestaurant?.id, isSoundMuted]);
+
+  // Derived unhandled customer orders count
+  const unhandledCustomerOrdersCount = useMemo(() => {
+    return customerLiveOrders.filter(o => o.status === 'new').length;
+  }, [customerLiveOrders]);
+
+  const latestCustomerOrder = useMemo(() => {
+    return customerLiveOrders.find(o => o.status === 'new') || customerLiveOrders[0] || null;
+  }, [customerLiveOrders]);
+
+  // Customer Order Handlers
+  const handleAcceptCustomerOrder = async (order: LiveOrder) => {
+    if (!selectedRestaurant) return;
+    await updateLiveOrderStatus(order.id, selectedRestaurant.id, 'preparing');
+    setCustomerLiveOrders(prev => prev.map(o => o.id === order.id ? { ...o, status: 'preparing' } : o));
+    
+    // Auto prompt to print KOT
+    handlePrintCustomerKOT(order);
+  };
+
+  const handlePrintCustomerKOT = (order: LiveOrder) => {
+    handleLoadCustomerOrderToCart(order);
+    setIsKOTModalOpen(true);
+  };
+
+  const handleLoadCustomerOrderToCart = (order: LiveOrder) => {
+    const loadedCartItems: POSCartItem[] = order.items.map(it => {
+      const matchedProduct = products.find(p => p.id === it.id);
+      const matchedCat = categories.find(c => c.id === matchedProduct?.category_id);
+      const station = getStationForCategory(matchedCat?.name_ar || matchedCat?.name_en);
+
+      return {
+        id: `cust-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+        menuItemId: it.id || '',
+        name: it.name,
+        price: it.price,
+        quantity: it.quantity,
+        notes: it.notes || '',
+        options: (it.options as any) || [],
+        station
+      };
+    });
+
+    setCart(loadedCartItems);
+    setCustomOrderNumber(String(order.daily_order_number));
+
+    if (order.order_type === 'dine_in') {
+      setOrderType('dine_in');
+      if (order.table_id) {
+        const t = tables.find(tbl => tbl.id === order.table_id);
+        if (t) setSelectedTable(t);
+      } else if (order.table_number) {
+        const t = tables.find(tbl => String(tbl.table_number) === String(order.table_number));
+        if (t) setSelectedTable(t);
+      }
+    } else if (order.order_type === 'delivery') {
+      setOrderType('delivery');
+      if (order.customer_name) setCustomerName(order.customer_name);
+      if (order.customer_phone) setCustomerPhone(order.customer_phone);
+      if (order.delivery_address) setCustomerAddress(order.delivery_address);
+    }
+    if (order.notes) {
+      setOrderNotes(order.notes);
+    }
+
+    setActiveTab('pos');
+  };
+
+  const handleCompleteCustomerOrder = async (order: LiveOrder) => {
+    if (!selectedRestaurant) return;
+    await updateLiveOrderStatus(order.id, selectedRestaurant.id, 'completed', 'paid');
+    setCustomerLiveOrders(prev => prev.map(o => o.id === order.id ? { ...o, status: 'completed', payment_status: 'paid' } : o));
+  };
+
+  const handleCancelCustomerOrder = async (order: LiveOrder) => {
+    if (!selectedRestaurant) return;
+    if (!confirm(`هل أنت متأكد من إلغاء طلب الزبون #${order.daily_order_number}؟`)) return;
+
+    await updateLiveOrderStatus(order.id, selectedRestaurant.id, 'cancelled');
+    setCustomerLiveOrders(prev => prev.map(o => o.id === order.id ? { ...o, status: 'cancelled' } : o));
+
+    // Restore stock for cancelled items
+    order.items.forEach(it => {
+      if (it.id) {
+        updateProductStock(selectedRestaurant.id, {
+          productId: it.id,
+          productName: it.name,
+          delta: it.quantity,
+          type: 'adjustment',
+          reason: `إلغاء طلب زبون #${order.daily_order_number}`,
+          performedBy: shift.cashierName || 'كاشير'
+        }).catch(() => {});
+      }
+    });
   };
 
   // Barcode Scanner Listener
@@ -726,8 +882,9 @@ export const CashierPOS: React.FC = () => {
     try {
       let dailyOrderNum = parseInt(customOrderNumber) || 0;
       if (!dailyOrderNum && selectedRestaurant) {
-        // Generate daily sequential order number locally (works 100% offline)
-        dailyOrderNum = getNextOfflineOrderSequence(selectedRestaurant.id);
+        dailyOrderNum = await getNextDailyOrderNumber(selectedRestaurant.id);
+      } else if (dailyOrderNum && selectedRestaurant) {
+        await syncDailyOrderSequence(selectedRestaurant.id, dailyOrderNum);
       }
       if (!dailyOrderNum) {
         dailyOrderNum = activeOrders.length + 1;
@@ -774,12 +931,27 @@ export const CashierPOS: React.FC = () => {
         try {
           const { data, error } = await supabase
             .from('orders')
-            .insert(orderPayload)
-            .select('*')
+            .insert({
+              restaurant_id: selectedRestaurant?.id,
+              table_id: selectedTable?.id || null,
+              status: 'delivered',
+              total_price: parseFloat(finalTotal.toFixed(2))
+            })
+            .select('id')
             .single();
 
           if (!error && data) {
-            createdOrder = data;
+            createdOrder = { ...orderPayload, id: data.id };
+            const itemsPayload = cart.map((it, idx) => ({
+              order_id: data.id,
+              product_id: it.menuItemId,
+              quantity: it.quantity,
+              notes: idx === 0 
+                ? `[طلب كاشير POS #${dailyOrderNum} | ${orderType === 'dine_in' ? `طاولة ${selectedTable?.table_number || ''}` : orderType === 'takeaway' ? 'سفري' : 'دليفري'}${customerName ? ` | ${customerName}` : ''}]` 
+                : (it.notes || null),
+              price_at_order: it.price
+            }));
+            await supabase.from('order_items').insert(itemsPayload);
           } else {
             console.warn('Supabase insert warning, queueing order locally:', error?.message);
             shouldQueueOffline = true;
@@ -801,6 +973,57 @@ export const CashierPOS: React.FC = () => {
           is_offline: true,
           table_number: selectedTable?.table_number,
         };
+      }
+
+      // Register live order to server & local storage for unified tracking
+      if (selectedRestaurant) {
+        registerLiveOrder({
+          id: createdOrder?.id || `pos-${Date.now()}`,
+          daily_order_number: dailyOrderNum,
+          restaurant_id: selectedRestaurant.id,
+          source: 'pos',
+          order_type: orderType,
+          table_id: selectedTable?.id || null,
+          table_number: selectedTable?.table_number || null,
+          customer_name: customerName.trim() || undefined,
+          customer_phone: customerPhone.trim() || undefined,
+          delivery_address: customerAddress.trim() || undefined,
+          notes: orderNotes.trim() || undefined,
+          total_price: finalTotal,
+          status: 'completed',
+          payment_status: 'paid',
+          payment_method: currentPayMethod,
+          items: cart.map(it => ({
+            id: it.menuItemId,
+            name: it.name,
+            quantity: it.quantity,
+            price: it.price,
+            notes: it.notes,
+            options: it.options
+          })),
+          created_at: new Date().toISOString()
+        }).catch(() => {});
+
+        // Update inventory store
+        cart.forEach(it => {
+          updateProductStock(selectedRestaurant.id, {
+            productId: it.menuItemId,
+            productName: it.name,
+            delta: -it.quantity,
+            type: 'sale',
+            reason: `مبيعات كاشير - فاتورة #${dailyOrderNum}`,
+            performedBy: shift.cashierName || 'كاشير'
+          }).catch(() => {});
+        });
+
+        // Log shift audit
+        logShiftAuditRecord(selectedRestaurant.id, {
+          ...shift,
+          ordersCount: shift.ordersCount + 1,
+          totalSales: shift.totalSales + finalTotal,
+          cashSales: shift.cashSales + (currentPayMethod === 'cash' ? finalTotal : 0),
+          cardSales: shift.cardSales + (currentPayMethod === 'card' ? finalTotal : 0),
+        }).catch(() => {});
       }
 
       // Update local activeOrders list immediately
@@ -1140,15 +1363,15 @@ export const CashierPOS: React.FC = () => {
       {/* 🟢 TOP BAR: Brand, Locked Restaurant Info, Shift Status & Fast Actions */}
       <header className="h-14 bg-white border-b border-slate-200 px-4 flex items-center justify-between shrink-0 z-20 shadow-sm">
         <div className="flex items-center gap-3">
-          <Link to="/admin" className="flex items-center gap-2 group">
-            <div className="w-9 h-9 rounded-xl bg-amber-500 flex items-center justify-center text-white font-bold shadow-md shadow-amber-500/20 group-hover:scale-105 transition-transform">
+          <div className="flex items-center gap-2">
+            <div className="w-9 h-9 rounded-xl bg-amber-500 flex items-center justify-center text-white font-bold shadow-md shadow-amber-500/20">
               <Sparkles size={18} />
             </div>
             <div className="hidden sm:block">
               <span className="font-bold text-sm text-slate-800 tracking-tight">Qrieta POS</span>
               <span className="text-[10px] text-amber-600 block font-mono leading-none font-bold">نظام الكاشير المكتبي</span>
             </div>
-          </Link>
+          </div>
 
           {/* 🔒 Locked Restaurant Badge (مقيد بالفرع بدون أي إمكانية للتبديل) */}
           <div className="flex items-center gap-2 bg-slate-50 border border-slate-200 px-3 py-1 rounded-xl shadow-sm">
@@ -1327,7 +1550,7 @@ export const CashierPOS: React.FC = () => {
               ))}
             </div>
 
-            {/* Mode Tabs (Sales / Orders History / Tables Map) */}
+            {/* Mode Tabs (Sales / Orders History / Tables Map / Customer Live Orders) */}
             <div className="flex items-center gap-1 bg-slate-100 p-1 rounded-xl border border-slate-200 shrink-0">
               <button
                 onClick={() => setActiveTab('pos')}
@@ -1353,8 +1576,63 @@ export const CashierPOS: React.FC = () => {
               >
                 الطاولات ({tables.length})
               </button>
+              <button
+                onClick={() => {
+                  setActiveTab('customer_orders');
+                  setHasUnviewedCustomerAlert(false);
+                }}
+                className={`relative px-3 py-1 rounded-lg text-xs font-bold transition-all flex items-center gap-1.5 cursor-pointer ${
+                  activeTab === 'customer_orders'
+                    ? 'bg-orange-600 text-white shadow-md shadow-orange-500/20'
+                    : unhandledCustomerOrdersCount > 0
+                    ? 'bg-red-500 text-white animate-pulse'
+                    : 'text-slate-600 hover:text-slate-900'
+                }`}
+              >
+                <Bell size={13} className={unhandledCustomerOrdersCount > 0 ? "animate-bounce" : ""} />
+                <span>طلبات الزبائن</span>
+                {unhandledCustomerOrdersCount > 0 ? (
+                  <span className="px-1.5 py-0.2 rounded-full bg-white text-red-600 text-[10px] font-black leading-none">
+                    {unhandledCustomerOrdersCount} جديد
+                  </span>
+                ) : (
+                  <span className="text-[10px] opacity-75">({customerLiveOrders.length})</span>
+                )}
+              </button>
             </div>
           </div>
+
+          {/* 🔔 Prominent Banner Alert for New Incoming Customer Orders */}
+          {unhandledCustomerOrdersCount > 0 && activeTab !== 'customer_orders' && (
+            <div 
+              onClick={() => {
+                setActiveTab('customer_orders');
+                setHasUnviewedCustomerAlert(false);
+              }}
+              className="bg-gradient-to-r from-red-600 via-orange-600 to-amber-600 text-white px-4 py-3 mx-3 my-2 rounded-2xl flex items-center justify-between shadow-xl cursor-pointer hover:opacity-95 transition-all animate-pulse shrink-0"
+            >
+              <div className="flex items-center gap-3">
+                <span className="w-9 h-9 rounded-xl bg-white/20 flex items-center justify-center text-xl shrink-0">
+                  🔔
+                </span>
+                <div>
+                  <p className="font-black text-sm">
+                    تنبيه: يوجد ({unhandledCustomerOrdersCount}) طلب جديد من تطبيق الزبائن ينتظر الاستلام والطباعة!
+                  </p>
+                  <p className="text-xs text-orange-100 mt-0.5">
+                    {latestCustomerOrder?.order_type === 'delivery' 
+                      ? `🛵 طلب دليفري جديد #${latestCustomerOrder?.daily_order_number || ''} - العميل: ${latestCustomerOrder?.customer_name || 'عميل'}`
+                      : `🍽️ طلب صالة جديد #${latestCustomerOrder?.daily_order_number || ''} - طاولة: ${latestCustomerOrder?.table_number || 'صالة'}`} 
+                    {' — اضغط هنا لعرض تفاصيل الطلب وطباعة البون فوراً'}
+                  </p>
+                </div>
+              </div>
+              <div className="flex items-center gap-1.5 bg-white text-orange-600 font-black text-xs px-3.5 py-2 rounded-xl shadow-md shrink-0">
+                <span>فتح طلبات الزبائن</span>
+                <ChevronLeft size={16} />
+              </div>
+            </div>
+          )}
 
           {/* Tab 1: Product Grid View */}
           {activeTab === 'pos' && (
@@ -1603,6 +1881,329 @@ export const CashierPOS: React.FC = () => {
                   );
                 })}
               </div>
+            </div>
+          )}
+
+          {/* Tab 4: Customer App Live Orders Workspace */}
+          {activeTab === 'customer_orders' && (
+            <div className="flex-1 overflow-y-auto p-4 space-y-4 bg-slate-100">
+              {/* Workspace Header & Action Controls */}
+              <div className="bg-white p-4 rounded-2xl border border-slate-200 shadow-sm flex flex-col md:flex-row md:items-center justify-between gap-3">
+                <div className="flex items-center gap-3">
+                  <div className="w-10 h-10 rounded-xl bg-orange-100 text-orange-600 flex items-center justify-center font-bold">
+                    <Bell size={20} className={unhandledCustomerOrdersCount > 0 ? "animate-bounce" : ""} />
+                  </div>
+                  <div>
+                    <h3 className="font-black text-slate-900 text-base flex items-center gap-2">
+                      <span>شاشة طلبات تطبيق الزبائن الحية</span>
+                      {unhandledCustomerOrdersCount > 0 && (
+                        <span className="px-2 py-0.5 rounded-full bg-red-500 text-white text-xs font-black animate-pulse">
+                          {unhandledCustomerOrdersCount} بانتظار الاستلام
+                        </span>
+                      )}
+                    </h3>
+                    <p className="text-xs text-slate-500 mt-0.5">
+                      تتلقى هذه الشاشة كافة طلبات الزبائن (سواء من الطاولات عبر QR أو طلبات الدليفري) برقم متسلسل موحد مع الكاشير
+                    </p>
+                  </div>
+                </div>
+
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={() => setIsSoundMuted(!isSoundMuted)}
+                    className={`px-3 py-1.5 rounded-xl border text-xs font-bold flex items-center gap-1.5 transition-all cursor-pointer ${
+                      isSoundMuted 
+                        ? 'bg-rose-50 border-rose-200 text-rose-700 hover:bg-rose-100'
+                        : 'bg-emerald-50 border-emerald-200 text-emerald-700 hover:bg-emerald-100'
+                    }`}
+                  >
+                    {isSoundMuted ? <VolumeX size={15} /> : <Volume2 size={15} />}
+                    <span>{isSoundMuted ? 'تنبيه الصوت: مكتوم' : 'تنبيه الصوت: مفعّل'}</span>
+                  </button>
+
+                  <button
+                    onClick={async () => {
+                      if (!selectedRestaurant) return;
+                      const list = await fetchLiveOrders(selectedRestaurant.id);
+                      setCustomerLiveOrders(list.filter(o => o.source === 'customer_app'));
+                    }}
+                    className="px-3 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl text-xs font-bold flex items-center gap-1.5 border border-slate-200 transition-all cursor-pointer shadow-sm"
+                  >
+                    <RefreshCw size={13} />
+                    <span>تحديث الآن</span>
+                  </button>
+                </div>
+              </div>
+
+              {/* Filter Pills */}
+              <div className="flex items-center gap-2 overflow-x-auto pb-1">
+                <button
+                  onClick={() => setCustomerFilter('all')}
+                  className={`px-3 py-1.5 rounded-xl text-xs font-bold shrink-0 transition-all cursor-pointer ${
+                    customerFilter === 'all'
+                      ? 'bg-slate-900 text-white shadow-sm'
+                      : 'bg-white text-slate-700 border border-slate-200 hover:bg-slate-50'
+                  }`}
+                >
+                  جميع طلبات الزبائن ({customerLiveOrders.length})
+                </button>
+                <button
+                  onClick={() => setCustomerFilter('new')}
+                  className={`px-3 py-1.5 rounded-xl text-xs font-bold shrink-0 transition-all flex items-center gap-1.5 cursor-pointer ${
+                    customerFilter === 'new'
+                      ? 'bg-red-600 text-white shadow-md shadow-red-500/20'
+                      : 'bg-white text-slate-700 border border-slate-200 hover:bg-slate-50'
+                  }`}
+                >
+                  <span className="w-2 h-2 rounded-full bg-red-500 animate-ping"></span>
+                  <span>طلبات جديدة غير مستلمة ({customerLiveOrders.filter(o => o.status === 'new').length})</span>
+                </button>
+                <button
+                  onClick={() => setCustomerFilter('dine_in')}
+                  className={`px-3 py-1.5 rounded-xl text-xs font-bold shrink-0 transition-all flex items-center gap-1.5 cursor-pointer ${
+                    customerFilter === 'dine_in'
+                      ? 'bg-blue-600 text-white shadow-sm'
+                      : 'bg-white text-slate-700 border border-slate-200 hover:bg-slate-50'
+                  }`}
+                >
+                  <UtensilsCrossed size={13} />
+                  <span>طاولات الصالة QR ({customerLiveOrders.filter(o => o.order_type === 'dine_in').length})</span>
+                </button>
+                <button
+                  onClick={() => setCustomerFilter('delivery')}
+                  className={`px-3 py-1.5 rounded-xl text-xs font-bold shrink-0 transition-all flex items-center gap-1.5 cursor-pointer ${
+                    customerFilter === 'delivery'
+                      ? 'bg-purple-600 text-white shadow-sm'
+                      : 'bg-white text-slate-700 border border-slate-200 hover:bg-slate-50'
+                  }`}
+                >
+                  <Bike size={13} />
+                  <span>دليفري وتوصيل ({customerLiveOrders.filter(o => o.order_type === 'delivery').length})</span>
+                </button>
+                <button
+                  onClick={() => setCustomerFilter('completed')}
+                  className={`px-3 py-1.5 rounded-xl text-xs font-bold shrink-0 transition-all cursor-pointer ${
+                    customerFilter === 'completed'
+                      ? 'bg-emerald-600 text-white shadow-sm'
+                      : 'bg-white text-slate-700 border border-slate-200 hover:bg-slate-50'
+                  }`}
+                >
+                  مكتملة ومسلمة ({customerLiveOrders.filter(o => o.status === 'completed').length})
+                </button>
+              </div>
+
+              {/* Orders Grid */}
+              {customerLiveOrders.length === 0 ? (
+                <div className="bg-white rounded-2xl border border-slate-200 p-12 text-center space-y-3">
+                  <div className="w-16 h-16 rounded-2xl bg-orange-50 text-orange-500 mx-auto flex items-center justify-center">
+                    <Smartphone size={32} />
+                  </div>
+                  <h4 className="font-black text-slate-800 text-base">لا توجد طلبات من تطبيق الزبائن حتى الآن</h4>
+                  <p className="text-xs text-slate-500 max-w-md mx-auto">
+                    بمجرد قيام أي زبون بطلب أوردر عبر مسح باركود الطاولة أو طلب دليفري من تطبيق الزبائن، سيظهر هنا مباشرة مع تنبيه صوتي وطباعة فورية لبون المطبخ
+                  </p>
+                </div>
+              ) : (
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                  {customerLiveOrders
+                    .filter(ord => {
+                      if (customerFilter === 'new') return ord.status === 'new';
+                      if (customerFilter === 'dine_in') return ord.order_type === 'dine_in';
+                      if (customerFilter === 'delivery') return ord.order_type === 'delivery';
+                      if (customerFilter === 'completed') return ord.status === 'completed';
+                      return true;
+                    })
+                    .map(ord => {
+                      const isNew = ord.status === 'new';
+                      const isDelivery = ord.order_type === 'delivery';
+                      const formattedDate = new Date(ord.created_at).toLocaleTimeString('ar-EG', {
+                        hour: '2-digit',
+                        minute: '2-digit'
+                      });
+
+                      return (
+                        <div
+                          key={ord.id}
+                          className={`bg-white rounded-2xl p-4 space-y-3 shadow-md border-2 transition-all ${
+                            isNew 
+                              ? 'border-red-500 shadow-red-500/10 animate-in fade-in zoom-in-95' 
+                              : ord.status === 'preparing'
+                              ? 'border-blue-400'
+                              : 'border-slate-200 hover:border-slate-300'
+                          }`}
+                        >
+                          {/* Order Header */}
+                          <div className="flex items-start justify-between gap-2 border-b border-slate-100 pb-3">
+                            <div>
+                              <div className="flex items-center gap-2">
+                                <span className="px-2.5 py-1 rounded-xl bg-slate-900 text-white font-mono font-black text-sm">
+                                  #{ord.daily_order_number || ord.id}
+                                </span>
+                                {isDelivery ? (
+                                  <span className="px-2 py-0.5 bg-purple-100 text-purple-800 border border-purple-200 rounded-lg text-xs font-black flex items-center gap-1">
+                                    <Bike size={13} />
+                                    <span>دليفري</span>
+                                  </span>
+                                ) : (
+                                  <span className="px-2 py-0.5 bg-blue-100 text-blue-800 border border-blue-200 rounded-lg text-xs font-black flex items-center gap-1">
+                                    <UtensilsCrossed size={13} />
+                                    <span>طاولة #{ord.table_number || 'صالة'}</span>
+                                  </span>
+                                )}
+                              </div>
+                              <p className="text-[11px] text-slate-400 font-mono mt-1 flex items-center gap-1">
+                                <Clock size={11} />
+                                <span>{formattedDate}</span>
+                                <span>• تطبيق الزبائن</span>
+                              </p>
+                            </div>
+
+                            <div className="text-left">
+                              {isNew ? (
+                                <span className="px-2.5 py-1 bg-red-500 text-white rounded-xl text-[11px] font-black inline-block animate-pulse">
+                                  🔴 جديد ينتظر
+                                </span>
+                              ) : ord.status === 'preparing' ? (
+                                <span className="px-2.5 py-1 bg-blue-500 text-white rounded-xl text-[11px] font-black inline-block">
+                                  🔵 قيد التحضير
+                                </span>
+                              ) : ord.status === 'completed' ? (
+                                <span className="px-2.5 py-1 bg-emerald-600 text-white rounded-xl text-[11px] font-black inline-block">
+                                  🟢 مكتمل ومستلم
+                                </span>
+                              ) : (
+                                <span className="px-2.5 py-1 bg-slate-600 text-white rounded-xl text-[11px] font-black inline-block">
+                                  ⚫ ملغي
+                                </span>
+                              )}
+                            </div>
+                          </div>
+
+                          {/* Customer Delivery Details if Delivery */}
+                          {isDelivery && (
+                            <div className="bg-purple-50/60 p-2.5 rounded-xl border border-purple-100 text-xs space-y-1 text-purple-950">
+                              <p className="font-bold flex items-center gap-1.5">
+                                <User size={12} className="text-purple-700" />
+                                <span>العميل: {ord.customer_name || 'عميل دليفري'}</span>
+                              </p>
+                              {ord.customer_phone && (
+                                <p className="font-mono text-purple-800 flex items-center gap-1.5">
+                                  <Phone size={12} className="text-purple-700" />
+                                  <a href={`tel:${ord.customer_phone}`} className="underline hover:text-purple-900">{ord.customer_phone}</a>
+                                </p>
+                              )}
+                              {ord.delivery_address && (
+                                <p className="text-[11px] text-purple-900 flex items-start gap-1.5 leading-snug">
+                                  <MapPin size={12} className="text-purple-700 shrink-0 mt-0.5" />
+                                  <span>{ord.delivery_address}</span>
+                                </p>
+                              )}
+                              {ord.notes && (
+                                <p className="text-[10px] text-purple-700 bg-white/60 p-1.5 rounded-lg border border-purple-200/60">
+                                  ملاحظة: {ord.notes}
+                                </p>
+                              )}
+                            </div>
+                          )}
+
+                          {/* Order Items List */}
+                          <div className="bg-slate-50 p-2.5 rounded-xl border border-slate-200 text-xs space-y-1.5 max-h-48 overflow-y-auto">
+                            {ord.items.map((item, idx) => (
+                              <div key={idx} className="flex items-start justify-between text-slate-800 border-b border-slate-100 pb-1 last:border-0 last:pb-0">
+                                <div>
+                                  <span className="font-bold">{item.quantity}x {item.name}</span>
+                                  {item.options && item.options.length > 0 && (
+                                    <div className="text-[10px] text-slate-500">
+                                      {item.options.map((o: any, oi: number) => (
+                                        <span key={oi} className="ml-1">+{o.name}</span>
+                                      ))}
+                                    </div>
+                                  )}
+                                  {item.notes && (
+                                    <div className="text-[10px] text-amber-700 font-medium">
+                                      ملاحظة: {item.notes}
+                                    </div>
+                                  )}
+                                </div>
+                                <span className="font-mono font-bold text-slate-600 shrink-0">
+                                  {((item.price || 0) * (item.quantity || 1)).toFixed(2)} ج.م
+                                </span>
+                              </div>
+                            ))}
+                          </div>
+
+                          {/* Total & Settlement Info */}
+                          <div className="flex items-center justify-between pt-1 border-t border-slate-100">
+                            <div>
+                              <span className="text-[11px] text-slate-500 block">الإجمالي المطلوب:</span>
+                              <span className="font-mono font-black text-emerald-600 text-base">
+                                {ord.total_price.toFixed(2)} ج.م
+                              </span>
+                            </div>
+                            <span className="text-[11px] font-bold px-2 py-1 rounded-lg bg-slate-100 text-slate-700">
+                              {ord.payment_status === 'paid' ? 'مدفوع مسبقاً' : 'الدفع عند الاستلام'}
+                            </span>
+                          </div>
+
+                          {/* Action Buttons */}
+                          <div className="grid grid-cols-2 gap-2 pt-2 border-t border-slate-100">
+                            <button
+                              onClick={() => handlePrintCustomerKOT(ord)}
+                              className="px-2.5 py-1.5 bg-slate-800 hover:bg-slate-900 text-white rounded-xl text-xs font-bold flex items-center justify-center gap-1 transition-all cursor-pointer shadow-sm"
+                            >
+                              <Printer size={13} />
+                              <span>طباعة بون (KOT)</span>
+                            </button>
+
+                            {isNew ? (
+                              <button
+                                onClick={() => handleAcceptCustomerOrder(ord)}
+                                className="px-2.5 py-1.5 bg-red-600 hover:bg-red-700 text-white rounded-xl text-xs font-bold flex items-center justify-center gap-1 transition-all cursor-pointer shadow-md shadow-red-500/20"
+                              >
+                                <CheckCircle2 size={13} />
+                                <span>قبول وتحضير</span>
+                              </button>
+                            ) : ord.status === 'preparing' ? (
+                              <button
+                                onClick={() => handleCompleteCustomerOrder(ord)}
+                                className="px-2.5 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold flex items-center justify-center gap-1 transition-all cursor-pointer shadow-sm"
+                              >
+                                <Check size={13} />
+                                <span>إنهاء وتسليم</span>
+                              </button>
+                            ) : (
+                              <button
+                                onClick={() => handleLoadCustomerOrderToCart(ord)}
+                                className="px-2.5 py-1.5 bg-amber-500 hover:bg-amber-600 text-white rounded-xl text-xs font-bold flex items-center justify-center gap-1 transition-all cursor-pointer shadow-sm"
+                              >
+                                <ShoppingCart size={13} />
+                                <span>تحميل للكاشير</span>
+                              </button>
+                            )}
+
+                            <button
+                              onClick={() => handleLoadCustomerOrderToCart(ord)}
+                              className="px-2.5 py-1.5 bg-amber-50 hover:bg-amber-100 text-amber-800 border border-amber-200 rounded-xl text-xs font-bold flex items-center justify-center gap-1 transition-all cursor-pointer"
+                            >
+                              <ShoppingCart size={13} />
+                              <span>تحميل للسلة</span>
+                            </button>
+
+                            {ord.status !== 'cancelled' && (
+                              <button
+                                onClick={() => handleCancelCustomerOrder(ord)}
+                                className="px-2.5 py-1.5 bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 rounded-xl text-xs font-bold flex items-center justify-center gap-1 transition-all cursor-pointer"
+                              >
+                                <X size={13} />
+                                <span>إلغاء الطلب</span>
+                              </button>
+                            )}
+                          </div>
+                        </div>
+                      );
+                    })}
+                </div>
+              )}
             </div>
           )}
         </div>

@@ -34,6 +34,8 @@ import { getLocalCategoryOptions, syncAllCategoryOptions, resolveProductOptions,
 import { calculateDistanceMeters, getCurrentPosition, fetchAllServerGeofences, getLocalRestaurantGeofence } from '../lib/geoHelper';
 import { DeliveryZone, fetchAllServerDeliveryZones, getLocalDeliveryZones, DEFAULT_DELIVERY_ZONES } from '../lib/deliveryHelper';
 import { initMetaPixel, trackViewContent, trackAddToCart, trackPurchase, trackCallWaiter } from '../lib/analytics';
+import { getNextDailyOrderNumber, registerLiveOrder } from '../lib/ordersService';
+import { updateProductStock } from '../lib/inventoryService';
 
 type CartItem = {
   product: Product;
@@ -514,6 +516,9 @@ export default function CustomerApp() {
       if (!isDeliveryOrder && tableId && uuidRegex.test(tableId)) {
         validTableId = tableId;
       }
+
+      // 1. Unified Daily Sequential Order Number (generated continuously with Cashier POS)
+      const dailySeqNum = await getNextDailyOrderNumber(restaurant.id);
       
       const orderPayload = {
         restaurant_id: restaurant.id,
@@ -522,7 +527,7 @@ export default function CustomerApp() {
         status: 'new'
       };
 
-      console.log('Inserting order header:', orderPayload);
+      console.log('Inserting order header with sequence #', dailySeqNum, orderPayload);
 
       // Only select 'id' to minimize RLS requirements on the response
       const { data: order, error: orderErr } = await supabase
@@ -550,9 +555,11 @@ export default function CustomerApp() {
           fullAddressDetails = fullAddressDetails ? `${fullAddressDetails} (${buildingParts.join(' - ')})` : buildingParts.join(' - ');
         }
 
+        const tableNumLabel = table?.table_number || (tableId && tableId !== 'delivery' && tableId !== 'd' ? tableId : null);
+
         const deliveryHeader = isDeliveryOrder
-          ? `[🛵 دليفري | ${zoneInfoStr} | الاسم: ${deliveryInfo.customerName.trim()} | هاتف: ${deliveryInfo.phone.trim()} | العنوان: ${fullAddressDetails}${deliveryLocation ? ` | لوكيشن: ${deliveryLocation.mapsUrl}` : ''}${deliveryInfo.notes.trim() ? ` | ملاحظات: ${deliveryInfo.notes.trim()}` : ''}]`
-          : '';
+          ? `[طلب زبون #${dailySeqNum} | 🛵 دليفري | ${zoneInfoStr} | الاسم: ${deliveryInfo.customerName.trim()} | هاتف: ${deliveryInfo.phone.trim()} | العنوان: ${fullAddressDetails}${deliveryLocation ? ` | لوكيشن: ${deliveryLocation.mapsUrl}` : ''}${deliveryInfo.notes.trim() ? ` | ملاحظات: ${deliveryInfo.notes.trim()}` : ''}]`
+          : `[طلب زبون #${dailySeqNum} | 🍽️ صالة - طاولة ${tableNumLabel || 'غير محددة'}]`;
 
         const orderItemsList = cart.map((item, itemIdx) => {
           // Compile chosen options into notes string if any
@@ -562,7 +569,7 @@ export default function CustomerApp() {
             compiledNotes = compiledNotes ? `[${optionsSummary}] - ${compiledNotes}` : `[${optionsSummary}]`;
           }
 
-          if (deliveryHeader && itemIdx === 0) {
+          if (itemIdx === 0) {
             compiledNotes = compiledNotes ? `${deliveryHeader} - ${compiledNotes}` : deliveryHeader;
           }
 
@@ -604,44 +611,6 @@ export default function CustomerApp() {
           throw new Error(itemsErr.message);
         }
 
-        // Calculate/fetch daily sequence order number (resets to 1 at 12:00 AM per restaurant)
-        let dailySeqNum: number | string = 1;
-        try {
-          const seqRes = await fetch('/api/orders/daily-sequence', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              restaurant_id: restaurant.id,
-              action: 'next'
-            })
-          });
-          if (seqRes.ok) {
-            const seqData = await seqRes.json();
-            if (seqData?.daily_order_number) {
-              dailySeqNum = seqData.daily_order_number;
-            }
-          }
-        } catch (seqErr) {
-          console.warn('Could not get daily sequence from API, calculating via DB/local:', seqErr);
-        }
-
-        if (dailySeqNum === 1) {
-          try {
-            const now = new Date();
-            const startOfDay = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0, 0, 0, 0);
-            const { count, error } = await supabase
-              .from('orders')
-              .select('id', { count: 'exact', head: true })
-              .eq('restaurant_id', restaurant.id)
-              .gte('created_at', startOfDay.toISOString());
-            if (!error && typeof count === 'number' && count > 0) {
-              dailySeqNum = count;
-            }
-          } catch (cErr) {
-            console.warn('Count fallback error:', cErr);
-          }
-        }
-
         const isPrepaidRest = Boolean(
           restaurant.is_prepaid === true || 
           restaurant.payment_model === 'prepaid' ||
@@ -650,6 +619,47 @@ export default function CustomerApp() {
           (restaurant.slug && getLocalRestaurantGeofence(restaurant.slug)?.is_prepaid) ||
           (restaurant.slug && getLocalRestaurantGeofence(restaurant.slug)?.payment_model === 'prepaid')
         );
+
+        // 2. Register live order to server & local storage for instant Cashier POS & Admin notification
+        await registerLiveOrder({
+          id: order.id,
+          daily_order_number: dailySeqNum,
+          restaurant_id: restaurant.id,
+          source: 'customer_app',
+          order_type: isDeliveryOrder ? 'delivery' : 'dine_in',
+          table_id: validTableId,
+          table_number: tableNumLabel,
+          customer_name: isDeliveryOrder ? deliveryInfo.customerName.trim() : undefined,
+          customer_phone: isDeliveryOrder ? deliveryInfo.phone.trim() : undefined,
+          delivery_address: isDeliveryOrder ? fullAddressDetails : undefined,
+          delivery_notes: isDeliveryOrder ? deliveryInfo.notes.trim() : undefined,
+          notes: deliveryHeader,
+          total_price: parseFloat(total.toFixed(2)),
+          status: 'new',
+          payment_status: isPrepaidRest && !isDeliveryOrder ? 'paid' : 'unpaid',
+          items: cart.map(item => ({
+            id: item.product.id,
+            name: item.product.name_ar || item.product.name_en,
+            quantity: item.quantity,
+            price: parseFloat(item.product.price.toString()),
+            notes: item.notes,
+            options: item.selectedOptionLabels,
+            sugar_level: item.sugar
+          })),
+          created_at: new Date().toISOString()
+        });
+
+        // 3. Deduct stock from inventory
+        cart.forEach(item => {
+          updateProductStock(restaurant.id, {
+            productId: item.product.id,
+            productName: item.product.name_ar || item.product.name_en,
+            delta: -item.quantity,
+            type: 'sale',
+            reason: `طلب زبون أونلاين #${dailySeqNum}`,
+            performedBy: 'تطبيق الزبائن'
+          }).catch(() => {});
+        });
         setCart([]);
         setIsCartOpen(false);
         setLastOrderId(order.id);

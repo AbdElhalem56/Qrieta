@@ -371,8 +371,8 @@ export const ShiftReportModal: React.FC<ShiftReportModalProps> = ({
         </div>
 
         {/* 🖨️ STANDALONE THERMAL REPORT PRINT ELEMENT (Targeted by printThermalElement) */}
-        <div style={{ display: 'none' }}>
-          <div ref={thermalReportRef} id="thermal-shift-report">
+        <div className="hidden print:block printable-thermal" id="thermal-shift-report-wrapper">
+          <div ref={thermalReportRef} id="thermal-shift-report" className="printable-thermal">
             <div className="text-center pb-2 border-b-2 border-dashed border-gray-800">
               <h2 className="text-base font-black tracking-tight">{restaurantName}</h2>
               <p className="text-xs font-bold mt-0.5">

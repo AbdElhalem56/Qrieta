@@ -53,10 +53,18 @@ body {
     visibility: hidden;
   }
   #eta-thermal-receipt,
-  #eta-thermal-receipt * {
+  #eta-thermal-receipt *,
+  #thermal-shift-report,
+  #thermal-shift-report *,
+  #receipt-preview,
+  #receipt-preview *,
+  .printable-thermal,
+  .printable-thermal * {
     visibility: visible !important;
   }
-  #eta-thermal-receipt {
+  #eta-thermal-receipt,
+  #thermal-shift-report,
+  .printable-thermal {
     position: absolute !important;
     left: 0 !important;
     top: 0 !important;
