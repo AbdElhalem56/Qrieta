@@ -3,6 +3,7 @@ import { QRCodeSVG } from 'qrcode.react';
 import { Printer, X, CheckCircle2, Building2, Phone, MapPin, Calendar, Clock, User, Receipt, UtensilsCrossed } from 'lucide-react';
 import { TaxReceiptData, generateEtaTaxQrCode } from '../lib/taxReceiptHelper';
 import { formatCurrency } from '../lib/utils';
+import { printThermalElement } from '../lib/printHelper';
 
 interface TaxReceiptModalProps {
   isOpen: boolean;
@@ -20,7 +21,12 @@ export const TaxReceiptModal: React.FC<TaxReceiptModalProps> = ({
   if (!isOpen) return null;
 
   const handlePrint = () => {
-    window.print();
+    const el = document.getElementById('eta-thermal-receipt') || printRef.current;
+    if (el) {
+      printThermalElement(el, `فاتورة-${receiptData.invoiceNumber || 'receipt'}`);
+    } else {
+      window.print();
+    }
   };
 
   const isoDateTime = typeof receiptData.dateTime === 'string'

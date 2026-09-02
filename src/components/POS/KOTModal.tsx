@@ -1,6 +1,7 @@
 import React, { useRef } from 'react';
 import { Printer, X, ChefHat, CheckCircle2, Clock, Table as TableIcon, User, AlertTriangle } from 'lucide-react';
 import { POSCartItem, formatStationLabel } from '../../lib/posStore';
+import { printThermalElement } from '../../lib/printHelper';
 
 interface KOTModalProps {
   isOpen: boolean;
@@ -40,7 +41,12 @@ export const KOTModal: React.FC<KOTModalProps> = ({
   });
 
   const handlePrintKOT = () => {
-    window.print();
+    const el = printContainerRef.current;
+    if (el) {
+      printThermalElement(el, `بون-مطبخ-${dailyOrderNumber || 'KOT'}`);
+    } else {
+      window.print();
+    }
   };
 
   const now = new Date();

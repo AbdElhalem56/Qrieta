@@ -26,8 +26,31 @@ body {
 }
 
 @media print {
+  @page {
+    size: 80mm auto;
+    margin: 0;
+  }
+  html, body {
+    margin: 0 !important;
+    padding: 0 !important;
+    background: #ffffff !important;
+    color: #000000 !important;
+    overflow: visible !important;
+    height: auto !important;
+    min-height: 100% !important;
+    width: 100% !important;
+  }
+  /* Remove layout clipping on modal wrappers during print */
+  #root, .fixed, .relative, [role="dialog"] {
+    position: static !important;
+    overflow: visible !important;
+    max-height: none !important;
+    height: auto !important;
+    width: 100% !important;
+    background: transparent !important;
+  }
   body * {
-    visibility: hidden !important;
+    visibility: hidden;
   }
   #eta-thermal-receipt,
   #eta-thermal-receipt * {
@@ -37,12 +60,14 @@ body {
     position: absolute !important;
     left: 0 !important;
     top: 0 !important;
-    width: 100% !important;
+    width: 78mm !important;
     max-width: 80mm !important;
     margin: 0 auto !important;
-    padding: 2mm !important;
+    padding: 3mm 2mm !important;
     box-shadow: none !important;
     border: none !important;
+    background: #ffffff !important;
+    color: #000000 !important;
   }
   .no-print {
     display: none !important;

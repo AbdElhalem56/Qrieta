@@ -16,6 +16,20 @@ import {
   getStationForCategory,
   CartItemOption
 } from '../../lib/posStore';
+import {
+  getLockedRestaurantId,
+  setLockedRestaurantId,
+  clearLockedRestaurantId,
+  verifyCashierOrManagerPin,
+  saveCachedRestaurantData,
+  getCachedRestaurantData,
+  getNextOfflineOrderSequence,
+  queueOfflineOrder,
+  getOfflineOrdersQueue,
+  clearSyncedOfflineOrders,
+  getInitialOfflineFallbackData
+} from '../../lib/posOfflineStore';
+import { printThermalElement } from '../../lib/printHelper';
 import { KOTModal } from '../../components/POS/KOTModal';
 import { ShiftReportModal } from '../../components/POS/ShiftReportModal';
 import { SplitBillModal } from '../../components/POS/SplitBillModal';
@@ -181,15 +195,61 @@ export const CashierPOS: React.FC = () => {
     action: () => {},
   });
 
-  // Screen Lock PIN
-  const [isScreenLocked, setIsScreenLocked] = useState<boolean>(false);
+  // Offline & Network State
+  const [isOnline, setIsOnline] = useState<boolean>(typeof navigator !== 'undefined' ? navigator.onLine : true);
+  const [offlineQueue, setOfflineQueue] = useState<any[]>([]);
+  const [isSyncing, setIsSyncing] = useState<boolean>(false);
+  const [isChangeRestaurantModalOpen, setIsChangeRestaurantModalOpen] = useState<boolean>(false);
+  const [cashierInputName, setCashierInputName] = useState<string>('كاشير الفرع');
+
+  // Screen Lock PIN (Default: LOCKED for security like Waiter app, works 100% offline)
+  const [isScreenLocked, setIsScreenLocked] = useState<boolean>(true);
   const [lockPinInput, setLockPinInput] = useState<string>('');
   const [lockPinError, setLockPinError] = useState<string>('');
 
   // Search / Barcode Input Ref
   const searchInputRef = useRef<HTMLInputElement>(null);
 
-  // 1. Initial Load: Restaurants & Settings
+  // Network Online/Offline Listener & Auto-sync
+  useEffect(() => {
+    const handleOnline = () => {
+      setIsOnline(true);
+      const lockedId = getLockedRestaurantId();
+      if (lockedId) syncPendingOrders(lockedId);
+    };
+    const handleOffline = () => {
+      setIsOnline(false);
+    };
+
+    window.addEventListener('online', handleOnline);
+    window.addEventListener('offline', handleOffline);
+    return () => {
+      window.removeEventListener('online', handleOnline);
+      window.removeEventListener('offline', handleOffline);
+    };
+  }, []);
+
+  // Keyboard shortcut listener for PIN lock screen
+  useEffect(() => {
+    if (!isScreenLocked) return;
+
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (['0', '1', '2', '3', '4', '5', '6', '7', '8', '9'].includes(e.key)) {
+        if (lockPinInput.length < 4) {
+          setLockPinInput(prev => prev + e.key);
+        }
+      } else if (e.key === 'Backspace') {
+        setLockPinInput(prev => prev.slice(0, -1));
+      } else if (e.key === 'Enter') {
+        handleUnlockScreen();
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [isScreenLocked, lockPinInput]);
+
+  // 1. Initial Load: Offline First with Locked Restaurant Enforcement
   useEffect(() => {
     loadInitialData();
   }, []);
@@ -197,29 +257,68 @@ export const CashierPOS: React.FC = () => {
   const loadInitialData = async () => {
     setLoading(true);
     try {
-      const [restRes, geofences] = await Promise.all([
-        supabase.from('restaurants').select('*').order('name'),
-        fetchAllServerGeofences()
-      ]);
-
-      const loadedRestaurants = restRes.data || [];
-      setRestaurants(loadedRestaurants);
-
-      const targetId = searchParams.get('restaurantId') || loadedRestaurants[0]?.id;
-      if (targetId) {
-        const foundRest = loadedRestaurants.find(r => r.id === targetId) || loadedRestaurants[0];
-        if (foundRest) {
-          setSelectedRestaurant(foundRest);
-          const geo = geofences[foundRest.id] || null;
-          setRestaurantGeofence(geo);
-          loadRestaurantDetails(foundRest.id);
+      const lockedId = getLockedRestaurantId() || searchParams.get('restaurantId');
+      
+      // 1. Immediate Offline Cache Load: Render instantly without waiting for network!
+      if (lockedId) {
+        const cached = getCachedRestaurantData(lockedId);
+        if (cached && cached.restaurant) {
+          setSelectedRestaurant(cached.restaurant);
+          setRestaurantGeofence(cached.geofence);
+          setCategories(cached.categories);
+          setProducts(cached.products);
+          setTables(cached.tables);
+          const initialStock: Record<string, number> = {};
+          cached.products.forEach((p, idx) => {
+            initialStock[p.id] = (idx % 4 === 0) ? 6 : (idx % 7 === 0) ? 2 : 30;
+          });
+          setStockMap(initialStock);
+          setOfflineQueue(getOfflineOrdersQueue(lockedId));
         }
-      } else if (loadedRestaurants.length > 0) {
-        const foundRest = loadedRestaurants[0];
-        setSelectedRestaurant(foundRest);
-        const geo = geofences[foundRest.id] || null;
-        setRestaurantGeofence(geo);
-        loadRestaurantDetails(foundRest.id);
+      }
+
+      // 2. Fetch Latest from Server if Online
+      if (navigator.onLine) {
+        try {
+          const [restRes, geofences] = await Promise.all([
+            supabase.from('restaurants').select('*').order('name'),
+            fetchAllServerGeofences()
+          ]);
+
+          const loadedRestaurants = restRes.data || [];
+          setRestaurants(loadedRestaurants);
+
+          let targetRest: Restaurant | null = null;
+          if (lockedId) {
+            targetRest = loadedRestaurants.find(r => r.id === lockedId) || null;
+          }
+          
+          // If device is not yet locked to any restaurant, lock to the first one
+          if (!targetRest && loadedRestaurants.length > 0) {
+            targetRest = loadedRestaurants[0];
+            setLockedRestaurantId(targetRest.id);
+          }
+
+          if (targetRest) {
+            setSelectedRestaurant(targetRest);
+            const geo = geofences[targetRest.id] || null;
+            setRestaurantGeofence(geo);
+            await loadRestaurantDetails(targetRest.id, geo, targetRest);
+          }
+        } catch (netErr) {
+          console.warn('Network load failed, falling back to cache:', netErr);
+        }
+      } else {
+        // Pure Offline Mode with no existing cache? Use rich seed data!
+        if (!selectedRestaurant) {
+          const fallbackId = lockedId || 'qrieta-pos-offline';
+          const fallback = getInitialOfflineFallbackData(fallbackId);
+          setSelectedRestaurant(fallback.restaurant);
+          setCategories(fallback.categories);
+          setProducts(fallback.products);
+          setTables(fallback.tables);
+          setLockedRestaurantId(fallbackId);
+        }
       }
     } catch (err) {
       console.error('Error loading POS data:', err);
@@ -228,34 +327,92 @@ export const CashierPOS: React.FC = () => {
     }
   };
 
-  const loadRestaurantDetails = async (restaurantId: string) => {
+  const loadRestaurantDetails = async (restaurantId: string, geo?: RestaurantGeofence | null, restObj?: Restaurant | null) => {
     try {
-      const [catsRes, itemsRes, tablesRes, ordersRes] = await Promise.all([
-        supabase.from('categories').select('*').eq('restaurant_id', restaurantId).order('name_ar'),
-        supabase.from('products').select('*').eq('restaurant_id', restaurantId),
-        supabase.from('tables').select('*').eq('restaurant_id', restaurantId).order('table_number'),
-        supabase.from('orders').select('*').eq('restaurant_id', restaurantId).order('created_at', { ascending: false }).limit(50)
-      ]);
+      if (navigator.onLine) {
+        const [catsRes, itemsRes, tablesRes, ordersRes] = await Promise.all([
+          supabase.from('categories').select('*').eq('restaurant_id', restaurantId).order('name_ar'),
+          supabase.from('products').select('*').eq('restaurant_id', restaurantId),
+          supabase.from('tables').select('*').eq('restaurant_id', restaurantId).order('table_number'),
+          supabase.from('orders').select('*').eq('restaurant_id', restaurantId).order('created_at', { ascending: false }).limit(50)
+        ]);
 
-      if (catsRes.data) setCategories(catsRes.data);
-      if (itemsRes.data) {
-        setProducts(itemsRes.data);
-        const initialStock: Record<string, number> = {};
-        itemsRes.data.forEach((p, idx) => {
-          initialStock[p.id] = (idx % 4 === 0) ? 6 : (idx % 7 === 0) ? 2 : 30;
+        const loadedCats = catsRes.data || [];
+        const loadedItems = itemsRes.data || [];
+        const loadedTables = tablesRes.data || [];
+        const loadedOrders = ordersRes.data || [];
+
+        if (loadedCats.length > 0) setCategories(loadedCats);
+        if (loadedItems.length > 0) {
+          setProducts(loadedItems);
+          const initialStock: Record<string, number> = {};
+          loadedItems.forEach((p, idx) => {
+            initialStock[p.id] = (idx % 4 === 0) ? 6 : (idx % 7 === 0) ? 2 : 30;
+          });
+          setStockMap(initialStock);
+        }
+        if (loadedTables.length > 0) setTables(loadedTables);
+        if (loadedOrders.length > 0) setActiveOrders(loadedOrders);
+
+        // Save fresh snapshot to offline cache
+        saveCachedRestaurantData(restaurantId, {
+          restaurant: restObj || selectedRestaurant,
+          geofence: geo !== undefined ? geo : restaurantGeofence,
+          categories: loadedCats,
+          products: loadedItems,
+          tables: loadedTables,
         });
-        setStockMap(initialStock);
+      } else {
+        // Load from local storage cache
+        const cached = getCachedRestaurantData(restaurantId);
+        if (cached) {
+          setCategories(cached.categories);
+          setProducts(cached.products);
+          setTables(cached.tables);
+          if (cached.restaurant) setSelectedRestaurant(cached.restaurant);
+          if (cached.geofence) setRestaurantGeofence(cached.geofence);
+        }
       }
-      if (tablesRes.data) setTables(tablesRes.data);
-      if (ordersRes.data) setActiveOrders(ordersRes.data);
 
+      setOfflineQueue(getOfflineOrdersQueue(restaurantId));
       setShift(prev => ({
         ...prev,
         restaurantId: restaurantId
       }));
     } catch (err) {
-      console.error('Error loading restaurant details:', err);
+      console.error('Error loading restaurant details, checking cache:', err);
+      const cached = getCachedRestaurantData(restaurantId);
+      if (cached) {
+        setCategories(cached.categories);
+        setProducts(cached.products);
+        setTables(cached.tables);
+      }
     }
+  };
+
+  // Sync Offline Queue to Supabase when network is back
+  const syncPendingOrders = async (restaurantId: string) => {
+    const queue = getOfflineOrdersQueue(restaurantId);
+    if (queue.length === 0) return;
+    setIsSyncing(true);
+    const syncedIds: string[] = [];
+
+    for (const item of queue) {
+      try {
+        const { error } = await supabase.from('orders').insert(item.orderPayload);
+        if (!error) {
+          syncedIds.push(item.localId);
+        }
+      } catch (e) {
+        console.warn('Sync failed for order:', item.localId, e);
+      }
+    }
+
+    if (syncedIds.length > 0) {
+      clearSyncedOfflineOrders(restaurantId, syncedIds);
+      setOfflineQueue(getOfflineOrdersQueue(restaurantId));
+    }
+    setIsSyncing(false);
   };
 
   // Barcode Scanner Listener
@@ -568,18 +725,13 @@ export const CashierPOS: React.FC = () => {
     const currentPayMethod = overridePaymentMethod || paymentMethod;
 
     try {
-      let dailyOrderNum = parseInt(customOrderNumber) || 1;
-      if (!customOrderNumber && selectedRestaurant) {
-        try {
-          const res = await fetch(`/api/restaurants/${selectedRestaurant.id}/daily-order-sequence`);
-          if (res.ok) {
-            const data = await res.json();
-            dailyOrderNum = data.dailyOrderNumber || (activeOrders.length + 1);
-          }
-        } catch (e) {
-          console.warn('Fallback sequence number:', e);
-          dailyOrderNum = activeOrders.length + 1;
-        }
+      let dailyOrderNum = parseInt(customOrderNumber) || 0;
+      if (!dailyOrderNum && selectedRestaurant) {
+        // Generate daily sequential order number locally (works 100% offline)
+        dailyOrderNum = getNextOfflineOrderSequence(selectedRestaurant.id);
+      }
+      if (!dailyOrderNum) {
+        dailyOrderNum = activeOrders.length + 1;
       }
 
       const invNumber = generateInvoiceNumber(
@@ -616,14 +768,40 @@ export const CashierPOS: React.FC = () => {
         created_at: new Date().toISOString()
       };
 
-      const { data: createdOrder, error } = await supabase
-        .from('orders')
-        .insert(orderPayload)
-        .select('*')
-        .single();
+      let createdOrder: any = null;
+      let shouldQueueOffline = false;
 
-      if (error) {
-        console.warn('Database sync fallback warning:', error.message);
+      if (navigator.onLine) {
+        try {
+          const { data, error } = await supabase
+            .from('orders')
+            .insert(orderPayload)
+            .select('*')
+            .single();
+
+          if (!error && data) {
+            createdOrder = data;
+          } else {
+            console.warn('Supabase insert warning, queueing order locally:', error?.message);
+            shouldQueueOffline = true;
+          }
+        } catch (netErr) {
+          console.warn('Network error inserting order, queueing locally:', netErr);
+          shouldQueueOffline = true;
+        }
+      } else {
+        shouldQueueOffline = true;
+      }
+
+      if (shouldQueueOffline && selectedRestaurant) {
+        const queued = queueOfflineOrder(selectedRestaurant.id, orderPayload);
+        setOfflineQueue(getOfflineOrdersQueue(selectedRestaurant.id));
+        createdOrder = {
+          ...orderPayload,
+          id: queued.localId,
+          is_offline: true,
+          table_number: selectedTable?.table_number,
+        };
       }
 
       // Update local activeOrders list immediately
@@ -788,14 +966,33 @@ export const CashierPOS: React.FC = () => {
   };
 
   const handleUnlockScreen = () => {
-    if (lockPinInput === shift.cashierPin || lockPinInput === '1234' || lockPinInput === '0000') {
+    const restId = selectedRestaurant?.id || '';
+    if (verifyCashierOrManagerPin(restId, lockPinInput)) {
       setIsScreenLocked(false);
       setLockPinInput('');
       setLockPinError('');
+      if (cashierInputName.trim()) {
+        setShift(prev => ({
+          ...prev,
+          cashierName: cashierInputName.trim(),
+        }));
+      }
     } else {
-      setLockPinError('رمز PIN غير صحيح!');
+      setLockPinError('رمز PIN غير صحيح! (الافتراضي: 1234 أو 0000)');
       setLockPinInput('');
     }
+  };
+
+  // Manager Prompt to Switch Locked Restaurant
+  const handlePromptChangeRestaurant = () => {
+    setManagerAuthReq({
+      isOpen: true,
+      title: 'تغيير مطعم الجهاز (خاص بالمدير)',
+      description: 'هذا الجهاز مقفل ومخصص لهذا المطعم فقط. لتغيير الفرع يرجى إدخال PIN المدير (9999).',
+      action: () => {
+        setIsChangeRestaurantModalOpen(true);
+      }
+    });
   };
 
   if (loading) {
@@ -803,69 +1000,157 @@ export const CashierPOS: React.FC = () => {
       <div className="min-h-screen bg-slate-100 flex flex-col items-center justify-center text-slate-800" dir="rtl">
         <div className="w-14 h-14 border-4 border-amber-500 border-t-transparent rounded-full animate-spin mb-4" />
         <p className="font-bold text-slate-700">جاري تحميل نظام الكاشير ونقاط البيع...</p>
+        <p className="text-xs text-slate-400 mt-1 font-mono">وضع العمل دون اتصال جاهز 100%</p>
       </div>
     );
   }
 
-  // Lock Screen Overlay
+  // 🔒 STANDALONE CASHIER LOGIN & LOCK SCREEN (Works 100% Offline with PIN)
   if (isScreenLocked) {
     return (
-      <div className="min-h-screen bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4 text-slate-800" dir="rtl">
-        <div className="bg-white border border-slate-200 rounded-3xl p-8 max-w-sm w-full shadow-2xl text-center space-y-6">
-          <div className="w-16 h-16 rounded-3xl bg-amber-50 text-amber-600 flex items-center justify-center mx-auto border border-amber-200 shadow-sm">
-            <Lock size={32} />
-          </div>
-          <div>
-            <h2 className="text-xl font-bold text-slate-800">نظام الكاشير مقفل</h2>
-            <p className="text-xs text-slate-500 mt-1">يرجى إدخال رمز PIN الخاص بالكاشير لاستئناف العمل</p>
-          </div>
-
-          <div className="flex justify-center gap-3 py-2">
-            {[0, 1, 2, 3].map(idx => (
-              <div
-                key={idx}
-                className={`w-4 h-4 rounded-full border-2 transition-all ${
-                  lockPinInput.length > idx ? 'bg-amber-500 border-amber-400 scale-110 shadow-sm' : 'border-slate-300 bg-slate-100'
-                }`}
-              />
-            ))}
+      <div className="min-h-screen bg-slate-900/70 backdrop-blur-md flex items-center justify-center p-4 text-slate-800 select-none" dir="rtl">
+        <div className="bg-white border border-slate-200 rounded-3xl p-6 sm:p-8 max-w-sm w-full shadow-2xl text-center space-y-5 animate-scale-in">
+          
+          {/* Brand Logo & Restaurant Info */}
+          <div className="space-y-2">
+            <div className="w-16 h-16 rounded-2xl bg-amber-500 text-white flex items-center justify-center mx-auto shadow-lg shadow-amber-500/25">
+              <Lock size={30} />
+            </div>
+            <div>
+              <h2 className="text-lg font-bold text-slate-800">
+                {selectedRestaurant?.name || 'محطة كاشير كريتا'}
+              </h2>
+              <div className="inline-flex items-center gap-1.5 px-2.5 py-0.5 mt-1 rounded-full bg-emerald-50 text-emerald-700 border border-emerald-200 text-[11px] font-bold">
+                <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
+                <span>نظام كاشير مستقل (أوفلاين بدون نت)</span>
+              </div>
+            </div>
           </div>
 
-          {lockPinError && <p className="text-xs text-rose-600 font-bold">{lockPinError}</p>}
+          {/* Cashier Name / Operator Input */}
+          <div className="text-right">
+            <label className="text-[11px] font-bold text-slate-600 block mb-1">اسم الكاشير المناوب:</label>
+            <input
+              type="text"
+              value={cashierInputName}
+              onChange={e => setCashierInputName(e.target.value)}
+              placeholder="مثال: أحمد، كاشير 1..."
+              className="w-full bg-slate-50 border border-slate-300 focus:border-amber-500 rounded-xl px-3 py-2 text-xs font-bold text-slate-800 outline-none text-center shadow-inner"
+            />
+          </div>
 
+          {/* PIN Indicators */}
+          <div className="space-y-1">
+            <div className="flex justify-center gap-3 py-1">
+              {[0, 1, 2, 3].map(idx => (
+                <div
+                  key={idx}
+                  className={`w-4 h-4 rounded-full border-2 transition-all duration-150 ${
+                    lockPinInput.length > idx 
+                      ? 'bg-amber-500 border-amber-500 scale-110 shadow-sm' 
+                      : 'border-slate-300 bg-slate-100'
+                  }`}
+                />
+              ))}
+            </div>
+            {lockPinError ? (
+              <p className="text-xs text-rose-600 font-bold animate-shake">{lockPinError}</p>
+            ) : (
+              <p className="text-[11px] text-slate-400">أدخل رمز PIN للكاشير (الافتراضي 1234 أو 0000)</p>
+            )}
+          </div>
+
+          {/* Numeric Touch Keypad */}
           <div className="grid grid-cols-3 gap-2">
             {['1', '2', '3', '4', '5', '6', '7', '8', '9'].map(digit => (
               <button
                 key={digit}
+                type="button"
                 onClick={() => {
-                  if (lockPinInput.length < 4) setLockPinInput(prev => prev + digit);
+                  if (lockPinInput.length < 4) {
+                    const next = lockPinInput + digit;
+                    setLockPinInput(next);
+                    if (next.length === 4) {
+                      const restId = selectedRestaurant?.id || '';
+                      if (verifyCashierOrManagerPin(restId, next)) {
+                        setIsScreenLocked(false);
+                        setLockPinInput('');
+                        setLockPinError('');
+                        if (cashierInputName.trim()) {
+                          setShift(prev => ({ ...prev, cashierName: cashierInputName.trim() }));
+                        }
+                      } else {
+                        setLockPinError('رمز PIN غير صحيح!');
+                        setLockPinInput('');
+                      }
+                    }
+                  }
                 }}
-                className="h-14 bg-slate-50 hover:bg-slate-100 text-slate-800 font-mono font-bold text-xl rounded-2xl border border-slate-200 transition-all active:scale-95 cursor-pointer flex items-center justify-center shadow-sm"
+                className="h-13 bg-slate-50 hover:bg-slate-100 active:bg-slate-200 text-slate-800 font-mono font-bold text-xl rounded-2xl border border-slate-200 transition-all active:scale-95 cursor-pointer flex items-center justify-center shadow-sm"
               >
                 {digit}
               </button>
             ))}
             <button
-              onClick={() => setLockPinInput('')}
-              className="h-14 bg-slate-100 hover:bg-slate-200 text-slate-600 font-bold text-xs rounded-2xl border border-slate-200 flex items-center justify-center"
+              type="button"
+              onClick={() => {
+                setLockPinInput('');
+                setLockPinError('');
+              }}
+              className="h-13 bg-slate-100 hover:bg-slate-200 text-slate-600 font-bold text-xs rounded-2xl border border-slate-200 flex items-center justify-center transition-colors cursor-pointer"
             >
               مسح
             </button>
             <button
+              type="button"
               onClick={() => {
-                if (lockPinInput.length < 4) setLockPinInput(prev => prev + '0');
+                if (lockPinInput.length < 4) {
+                  const next = lockPinInput + '0';
+                  setLockPinInput(next);
+                  if (next.length === 4) {
+                    const restId = selectedRestaurant?.id || '';
+                    if (verifyCashierOrManagerPin(restId, next)) {
+                      setIsScreenLocked(false);
+                      setLockPinInput('');
+                      setLockPinError('');
+                      if (cashierInputName.trim()) {
+                        setShift(prev => ({ ...prev, cashierName: cashierInputName.trim() }));
+                      }
+                    } else {
+                      setLockPinError('رمز PIN غير صحيح!');
+                      setLockPinInput('');
+                    }
+                  }
+                }
               }}
-              className="h-14 bg-slate-50 hover:bg-slate-100 text-slate-800 font-mono font-bold text-xl rounded-2xl border border-slate-200 flex items-center justify-center shadow-sm"
+              className="h-13 bg-slate-50 hover:bg-slate-100 active:bg-slate-200 text-slate-800 font-mono font-bold text-xl rounded-2xl border border-slate-200 flex items-center justify-center shadow-sm"
             >
               0
             </button>
             <button
+              type="button"
               onClick={handleUnlockScreen}
-              className="h-14 bg-amber-500 hover:bg-amber-600 text-white font-bold text-xs rounded-2xl flex items-center justify-center shadow-md shadow-amber-500/20"
+              className="h-13 bg-amber-500 hover:bg-amber-600 active:bg-amber-700 text-white font-bold text-xs rounded-2xl flex items-center justify-center shadow-md shadow-amber-500/20 transition-all cursor-pointer"
             >
               دخول
             </button>
           </div>
+
+          {/* Bottom Security Controls for Manager */}
+          <div className="pt-2 border-t border-slate-100 flex items-center justify-between text-[11px] text-slate-500">
+            <span className="flex items-center gap-1">
+              <Lock size={12} className="text-amber-500" />
+              الجهاز مقيد بالفرع
+            </span>
+            <button
+              type="button"
+              onClick={handlePromptChangeRestaurant}
+              className="text-amber-700 hover:underline font-bold cursor-pointer"
+            >
+              إعدادات الفرع (المدير)
+            </button>
+          </div>
+
         </div>
       </div>
     );
@@ -874,7 +1159,7 @@ export const CashierPOS: React.FC = () => {
   return (
     <div className="h-screen w-full bg-slate-100 text-slate-800 flex flex-col overflow-hidden font-sans select-none" dir="rtl">
       
-      {/* 🟢 TOP BAR: Brand, Shift Status & Fast Actions */}
+      {/* 🟢 TOP BAR: Brand, Locked Restaurant Info, Shift Status & Fast Actions */}
       <header className="h-14 bg-white border-b border-slate-200 px-4 flex items-center justify-between shrink-0 z-20 shadow-sm">
         <div className="flex items-center gap-3">
           <Link to="/admin" className="flex items-center gap-2 group">
@@ -883,31 +1168,55 @@ export const CashierPOS: React.FC = () => {
             </div>
             <div className="hidden sm:block">
               <span className="font-bold text-sm text-slate-800 tracking-tight">Qrieta POS</span>
-              <span className="text-[10px] text-amber-600 block font-mono leading-none font-bold">نظام نقاط البيع والكاشير</span>
+              <span className="text-[10px] text-amber-600 block font-mono leading-none font-bold">نظام الكاشير المكتبي</span>
             </div>
           </Link>
 
-          {/* Restaurant Switcher */}
-          {restaurants.length > 1 && (
-            <select
-              value={selectedRestaurant?.id || ''}
-              onChange={(e) => {
-                const r = restaurants.find(item => item.id === e.target.value);
-                if (r) {
-                  setSelectedRestaurant(r);
-                  loadRestaurantDetails(r.id);
-                }
-              }}
-              className="bg-slate-50 border border-slate-300 text-xs text-slate-800 rounded-xl px-2.5 py-1.5 outline-none font-bold focus:border-amber-500 shadow-sm"
+          {/* 🔒 Locked Restaurant Badge (لا يمكن للكاشير التبديل بين المطاعم) */}
+          <div className="flex items-center gap-2 bg-slate-50 border border-slate-200 px-3 py-1 rounded-xl shadow-sm">
+            <div className="w-2 h-2 rounded-full bg-emerald-500" />
+            <div className="leading-tight text-right">
+              <span className="font-bold text-xs text-slate-800 block">
+                {selectedRestaurant?.name || 'مطعم كريتا'}
+              </span>
+              <span className="text-[10px] text-slate-500 font-mono flex items-center gap-1">
+                <Lock size={10} className="text-amber-500 inline" />
+                فرع مقيد لهذا الجهاز فقط
+              </span>
+            </div>
+            <button
+              type="button"
+              onClick={handlePromptChangeRestaurant}
+              title="تغيير الفرع المقيد (يتطلب رمز PIN المدير 9999)"
+              className="p-1.5 hover:bg-slate-200 rounded-lg text-slate-400 hover:text-slate-700 transition-colors cursor-pointer mr-1"
             >
-              {restaurants.map(r => (
-                <option key={r.id} value={r.id}>{r.name}</option>
-              ))}
-            </select>
-          )}
+              <Settings size={13} />
+            </button>
+          </div>
+
+          {/* 📶 Network & Offline Sync Status Indicator */}
+          <div className={`flex items-center gap-1.5 px-2.5 py-1 rounded-xl text-xs font-bold border shadow-sm ${
+            isOnline 
+              ? 'bg-emerald-50 text-emerald-700 border-emerald-200' 
+              : 'bg-amber-50 text-amber-800 border-amber-300'
+          }`}>
+            <span className={`w-2 h-2 rounded-full ${isOnline ? 'bg-emerald-500 animate-pulse' : 'bg-amber-500'}`} />
+            <span>{isOnline ? 'متصل بالشبكة' : 'أوفلاين (بدون نت)'}</span>
+            {offlineQueue.length > 0 && (
+              <button
+                type="button"
+                onClick={() => selectedRestaurant && syncPendingOrders(selectedRestaurant.id)}
+                disabled={!isOnline || isSyncing}
+                className="ml-1 px-1.5 py-0.5 bg-amber-500 hover:bg-amber-600 disabled:opacity-50 text-white text-[10px] rounded-md transition-colors cursor-pointer"
+                title="مزامنة الفواتير غير المرفوعة"
+              >
+                {isSyncing ? 'جاري المزامنة...' : `مزامنة (${offlineQueue.length})`}
+              </button>
+            )}
+          </div>
 
           {/* Shift Live Counter Badge */}
-          <div className="hidden md:flex items-center gap-2 bg-slate-50 border border-slate-200 px-3 py-1 rounded-xl text-xs shadow-sm">
+          <div className="hidden lg:flex items-center gap-2 bg-slate-50 border border-slate-200 px-3 py-1 rounded-xl text-xs shadow-sm">
             <div className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
             <span className="text-slate-500">الوردية الحالية:</span>
             <span className="font-mono font-bold text-slate-800">{shift.cashSales.toFixed(0)} كاش</span>
@@ -1935,7 +2244,76 @@ export const CashierPOS: React.FC = () => {
         </div>
       )}
 
-      {/* 11. Thermal Tax Receipt Modal */}
+      {/* 11. Manager Change / Re-lock Restaurant Modal */}
+      {isChangeRestaurantModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm animate-fade-in" dir="rtl">
+          <div className="bg-white border border-slate-200 rounded-3xl w-full max-w-md p-6 space-y-4 shadow-2xl">
+            <div className="flex items-center justify-between border-b border-slate-200 pb-3">
+              <div className="flex items-center gap-2 text-slate-800 font-bold text-sm">
+                <Lock size={18} className="text-amber-500" />
+                <span>تعيين المطعم المقيد لهذا الجهاز</span>
+              </div>
+              <button
+                onClick={() => setIsChangeRestaurantModalOpen(false)}
+                className="p-1.5 text-slate-400 hover:text-slate-600 rounded-lg"
+              >
+                <X size={18} />
+              </button>
+            </div>
+
+            <p className="text-xs text-slate-600">
+              اختر المطعم أو الفرع الذي ترغب في تثبيت وقفل هذا الجهاز عليه. الكاشير لن يتمكن من رؤية أو التبديل إلى مطاعم أخرى.
+            </p>
+
+            <div className="space-y-2 max-h-60 overflow-y-auto pr-1">
+              {restaurants.map(rest => {
+                const isSelected = selectedRestaurant?.id === rest.id;
+                return (
+                  <button
+                    key={rest.id}
+                    type="button"
+                    onClick={() => {
+                      setSelectedRestaurant(rest);
+                      setLockedRestaurantId(rest.id);
+                      loadRestaurantDetails(rest.id);
+                      setIsChangeRestaurantModalOpen(false);
+                      alert(`تم تثبيت وقفل جهاز الكاشير بنجاح على: ${rest.name}`);
+                    }}
+                    className={`w-full p-3 rounded-2xl border text-right transition-all flex items-center justify-between cursor-pointer ${
+                      isSelected 
+                        ? 'bg-amber-50 border-amber-500 text-amber-900 shadow-sm' 
+                        : 'bg-slate-50 border-slate-200 text-slate-800 hover:bg-slate-100'
+                    }`}
+                  >
+                    <div>
+                      <div className="font-bold text-xs">{rest.name}</div>
+                      <div className="text-[10px] text-slate-400 font-mono mt-0.5">{rest.slug || rest.id}</div>
+                    </div>
+                    {isSelected && (
+                      <span className="text-xs font-bold text-amber-700 bg-amber-200/60 px-2 py-0.5 rounded-lg flex items-center gap-1">
+                        <Lock size={12} />
+                        المطعم الحالي
+                      </span>
+                    )}
+                  </button>
+                );
+              })}
+            </div>
+
+            <div className="pt-2 border-t border-slate-100 flex justify-end">
+              <button
+                type="button"
+                onClick={() => setIsChangeRestaurantModalOpen(false)}
+                className="px-5 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs rounded-xl font-bold cursor-pointer transition-colors"
+              >
+                إغلاق
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 12. Thermal Tax Receipt Modal */}
       {taxReceiptData && (
         <TaxReceiptModal
           isOpen={isReceiptModalOpen}
