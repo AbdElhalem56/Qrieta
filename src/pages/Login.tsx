@@ -26,13 +26,21 @@ export default function Login() {
   const [directPassword, setDirectPassword] = useState('');
 
   React.useEffect(() => {
-    // Listen for PASSWORD_RECOVERY event
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
-      console.log('Auth state changed in Login page:', event, session);
-      if (event === 'PASSWORD_RECOVERY') {
-        setView('reset');
+    // Listen for PASSWORD_RECOVERY event safely
+    let unsubscribeFn = () => {};
+    try {
+      const { data } = supabase.auth.onAuthStateChange((event, session) => {
+        console.log('Auth state changed in Login page:', event, session);
+        if (event === 'PASSWORD_RECOVERY') {
+          setView('reset');
+        }
+      });
+      if (data?.subscription) {
+        unsubscribeFn = () => data.subscription.unsubscribe();
       }
-    });
+    } catch (e) {
+      console.warn('Login onAuthStateChange error:', e);
+    }
 
     // Check URL parameters or hash
     const hash = window.location.hash || '';
@@ -45,7 +53,7 @@ export default function Login() {
     }
 
     return () => {
-      subscription.unsubscribe();
+      unsubscribeFn();
     };
   }, []);
 
@@ -249,6 +257,12 @@ export default function Login() {
           </div>
         ) : (
           <form onSubmit={view === 'login' ? handleLogin : (view === 'forgot' ? (useDirectReset ? handleDirectReset : handleForgotPassword) : handleUpdatePassword)} className="space-y-4">
+            {isConfigMissing && (
+              <div className="p-3 bg-amber-50 border border-amber-200 rounded-xl text-xs text-amber-800 space-y-1 text-center">
+                <p className="font-semibold">⚠️ بيئة Supabase غير متصلة بعد</p>
+                <p className="text-[11px] text-amber-700">لتسجيل الدخول الفعلي للمشرفين، أضف مفاتيح Supabase في المتغيرات البيئية (.env). يمكنك أيضاً تجربة شاشة الكاشير ونقاط البيع مباشرة عبر <a href="/pos" className="font-bold underline text-amber-900">نظام POS</a>.</p>
+              </div>
+            )}
             {!user && view === 'login' && (
               <>
                 <div>

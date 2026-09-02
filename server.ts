@@ -1,15 +1,11 @@
 import express from "express";
 import path from "path";
 import fs from "fs";
-import { fileURLToPath } from "url";
 import { createServer as createViteServer } from "vite";
 import { createClient } from "@supabase/supabase-js";
 import dotenv from "dotenv";
 
 dotenv.config();
-
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
 
 async function startServer() {
   const app = express();
@@ -535,6 +531,18 @@ async function startServer() {
   };
 
   // API to get/assign daily sequence order number per restaurant
+  app.get("/api/orders/daily-sequence", (req, res) => {
+    const restaurantId = req.query.restaurant_id as string;
+    if (!restaurantId) {
+      return res.status(400).json({ error: "معرف المطعم مطلوب." });
+    }
+    const now = new Date();
+    const dateKey = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+    const storeKey = `${restaurantId}_${dateKey}`;
+    const currentSaved = dailySequenceStore[storeKey] || 0;
+    res.status(200).json({ success: true, restaurant_id: restaurantId, date: dateKey, current_sequence: currentSaved });
+  });
+
   app.post("/api/orders/daily-sequence", async (req, res) => {
     const { restaurant_id, action } = req.body;
     if (!restaurant_id) {
@@ -546,6 +554,18 @@ async function startServer() {
       // Date in YYYY-MM-DD
       const dateKey = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
       const storeKey = `${restaurant_id}_${dateKey}`;
+
+      // Check highest number in today's live orders
+      let highestLiveNum = 0;
+      const liveForRest = liveOrdersStore[restaurant_id] || [];
+      liveForRest.forEach((o: any) => {
+        if (o.created_at && o.created_at.slice(0, 10) === dateKey && o.daily_order_number) {
+          const numVal = parseInt(String(o.daily_order_number), 10);
+          if (!isNaN(numVal) && numVal > highestLiveNum) {
+            highestLiveNum = numVal;
+          }
+        }
+      });
 
       // Also count today's orders in database from 00:00:00 local time
       let dbCount = 0;
@@ -575,10 +595,11 @@ async function startServer() {
       }
 
       const currentSaved = dailySequenceStore[storeKey] || 0;
-      let sequence = Math.max(dbCount, currentSaved);
+      const baseMax = Math.max(currentSaved, highestLiveNum, dbCount);
+      let sequence = baseMax;
 
       if (action === 'next') {
-        sequence = Math.max(sequence + 1, dbCount);
+        sequence = baseMax + 1;
         if (sequence <= 0) sequence = 1;
         dailySequenceStore[storeKey] = sequence;
         persistDailySequences();
@@ -591,7 +612,7 @@ async function startServer() {
         }
       } else {
         if (sequence <= 0) {
-          sequence = dbCount > 0 ? dbCount : 1;
+          sequence = 1;
           dailySequenceStore[storeKey] = sequence;
           persistDailySequences();
         }

@@ -254,3 +254,152 @@ export function playNewOrderAlertSound(): void {
     console.warn('Audio chime playback blocked or not supported:', e);
   }
 }
+
+// 7. Unified Order Number Extractor
+// Ensures identical sequence number displays everywhere (Customer, Admin, Cashier, Waiter)
+export function getDisplayOrderNumber(order: any): number | string {
+  if (!order) return 1;
+
+  // 1. Direct daily_order_number field
+  if (order.daily_order_number !== undefined && order.daily_order_number !== null) {
+    const n = Number(order.daily_order_number);
+    if (!isNaN(n) && n > 0) return n;
+  }
+
+  // 2. Parse from notes (e.g. "[طلب زبون #5 | ...]" or "[طلب كاشير POS #12 | ...]")
+  const sourcesToCheck = [
+    order.notes,
+    order.delivery_notes,
+    order.order_items?.[0]?.notes,
+    order.items?.[0]?.notes
+  ];
+
+  for (const text of sourcesToCheck) {
+    if (typeof text === 'string') {
+      const match = text.match(/#(\d+)/);
+      if (match && match[1]) {
+        const parsed = parseInt(match[1], 10);
+        if (!isNaN(parsed) && parsed > 0) return parsed;
+      }
+    }
+  }
+
+  // 3. Clean string ID or numeric fallback
+  if (order.id !== undefined && order.id !== null) {
+    const idStr = String(order.id);
+    if (idStr.includes('-')) {
+      const firstPart = idStr.split('-')[0];
+      const parsedPart = parseInt(firstPart, 10);
+      return !isNaN(parsedPart) ? parsedPart : firstPart;
+    }
+    const parsedId = parseInt(idStr, 10);
+    return !isNaN(parsedId) ? parsedId : idStr;
+  }
+
+  return 1;
+}
+
+// 8. Customer Device Orders Persistence & Tracking
+// Allows customers to view, track, and re-order their placed orders even after closing the tab
+export interface CustomerSavedOrder {
+  id: string | number;
+  daily_order_number: number;
+  restaurant_id: string;
+  restaurant_name?: string;
+  order_type: 'dine_in' | 'delivery' | 'takeaway';
+  table_number?: string | number | null;
+  delivery_address?: string;
+  items: Array<{
+    name: string;
+    quantity: number;
+    price: number;
+    notes?: string;
+    options?: any;
+  }>;
+  total_price: number;
+  status: 'new' | 'preparing' | 'completed' | 'cancelled';
+  payment_status: 'paid' | 'unpaid';
+  is_prepaid?: boolean;
+  created_at: string;
+}
+
+export function saveCustomerDeviceOrder(restaurantId: string, order: CustomerSavedOrder): void {
+  try {
+    const key = `qrieta_customer_orders_${restaurantId}`;
+    const raw = localStorage.getItem(key);
+    const existing: CustomerSavedOrder[] = raw ? JSON.parse(raw) : [];
+    const idx = existing.findIndex(o => String(o.id) === String(order.id));
+    if (idx >= 0) {
+      existing[idx] = { ...existing[idx], ...order };
+    } else {
+      existing.unshift(order);
+    }
+    localStorage.setItem(key, JSON.stringify(existing.slice(0, 30)));
+  } catch (e) {
+    console.warn('Failed to persist customer device order:', e);
+  }
+}
+
+export function getCustomerDeviceOrders(restaurantId: string): CustomerSavedOrder[] {
+  try {
+    const key = `qrieta_customer_orders_${restaurantId}`;
+    const raw = localStorage.getItem(key);
+    if (!raw) return [];
+    const orders: CustomerSavedOrder[] = JSON.parse(raw);
+    return Array.isArray(orders) ? orders : [];
+  } catch (e) {
+    return [];
+  }
+}
+
+export function updateCustomerDeviceOrderStatus(
+  restaurantId: string,
+  orderId: string | number,
+  status: 'new' | 'preparing' | 'completed' | 'cancelled'
+): void {
+  try {
+    const key = `qrieta_customer_orders_${restaurantId}`;
+    const raw = localStorage.getItem(key);
+    if (!raw) return;
+    const orders: CustomerSavedOrder[] = JSON.parse(raw);
+    const target = orders.find(o => String(o.id) === String(orderId));
+    if (target) {
+      target.status = status;
+      localStorage.setItem(key, JSON.stringify(orders));
+    }
+  } catch (e) {}
+}
+
+export function syncCustomerDeviceOrdersWithLive(
+  restaurantId: string,
+  liveOrders: LiveOrder[]
+): CustomerSavedOrder[] {
+  const localOrders = getCustomerDeviceOrders(restaurantId);
+  if (!liveOrders || liveOrders.length === 0) return localOrders;
+
+  let hasChanged = false;
+  const updated = localOrders.map(local => {
+    const matchingLive = liveOrders.find(
+      l => String(l.id) === String(local.id) ||
+           (l.daily_order_number && local.daily_order_number && Number(l.daily_order_number) === Number(local.daily_order_number))
+    );
+    if (matchingLive && matchingLive.status !== local.status) {
+      hasChanged = true;
+      return {
+        ...local,
+        status: matchingLive.status,
+        payment_status: matchingLive.payment_status || local.payment_status,
+      };
+    }
+    return local;
+  });
+
+  if (hasChanged) {
+    try {
+      localStorage.setItem(`qrieta_customer_orders_${restaurantId}`, JSON.stringify(updated));
+    } catch (e) {}
+  }
+
+  return updated;
+}
+

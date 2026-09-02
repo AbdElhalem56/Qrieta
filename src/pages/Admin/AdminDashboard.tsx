@@ -22,7 +22,7 @@ import {
 } from '../../lib/deliveryHelper';
 import { getStoredCashierPin, setStoredCashierPin } from '../../lib/posOfflineStore';
 import { InventoryAuditTab } from '../../components/Admin/InventoryAuditTab';
-import { fetchLiveOrders, updateLiveOrderStatus, LiveOrder } from '../../lib/ordersService';
+import { fetchLiveOrders, updateLiveOrderStatus, LiveOrder, getDisplayOrderNumber } from '../../lib/ordersService';
 import { 
   Plus, 
   Trash2, 
@@ -530,8 +530,12 @@ export default function AdminDashboard() {
 
       setCategories(formattedCats);
       setProducts(prods.data || []);
-      setOrderCount(ordersResult.data?.length || 0);
-      setOrders(ordersResult.data || []);
+      const fetchedOrders = (ordersResult.data || []).map((ord: any) => ({
+        ...ord,
+        daily_order_number: ord.daily_order_number || getDisplayOrderNumber(ord)
+      }));
+      setOrderCount(fetchedOrders.length);
+      setOrders(fetchedOrders);
 
       // Sync server product options
       syncAllProductOptions().then((optsMap) => {
@@ -1605,7 +1609,7 @@ export default function AdminDashboard() {
                             <div className="flex items-center justify-between border-b pb-2.5">
                               <div className="flex items-center gap-2">
                                 <span className="text-base font-black font-mono px-2.5 py-0.5 rounded-lg bg-gray-900 text-white shadow-sm">
-                                  #{order.daily_order_number || (typeof order.id === 'string' && order.id.includes('-') ? order.id.split('-')[0] : order.id)}
+                                  #{getDisplayOrderNumber(order)}
                                 </span>
                                 {order.source === 'customer_app' ? (
                                   <span className="px-2 py-0.5 rounded-full bg-purple-100 text-purple-700 border border-purple-200 text-[10px] font-black inline-flex items-center gap-1">
@@ -1817,8 +1821,8 @@ export default function AdminDashboard() {
                   <tbody className="divide-y divide-gray-100">
                     {orders.map((order) => (
                       <tr key={order.id} className="hover:bg-gray-50 transition-colors">
-                        <td className="px-6 py-4 font-bold">
-                          #{typeof order.id === 'string' && order.id.includes('-') ? order.id.split('-')[0] : order.id}
+                        <td className="px-6 py-4 font-bold font-mono">
+                          #{getDisplayOrderNumber(order)}
                         </td>
                         <td className="px-6 py-4">
                           {order.tables?.table_number ? (

@@ -27,14 +27,26 @@ import {
   Navigation,
   Crosshair,
   ExternalLink,
-  CreditCard
+  CreditCard,
+  ReceiptText,
+  Clock,
+  ChevronLeft
 } from 'lucide-react';
 import { cn, formatCurrency } from '../lib/utils';
 import { getLocalCategoryOptions, syncAllCategoryOptions, resolveProductOptions, calculateProductEffectivePrice, getProductPriceRange } from '../lib/optionsHelper';
 import { calculateDistanceMeters, getCurrentPosition, fetchAllServerGeofences, getLocalRestaurantGeofence } from '../lib/geoHelper';
 import { DeliveryZone, fetchAllServerDeliveryZones, getLocalDeliveryZones, DEFAULT_DELIVERY_ZONES } from '../lib/deliveryHelper';
 import { initMetaPixel, trackViewContent, trackAddToCart, trackPurchase, trackCallWaiter } from '../lib/analytics';
-import { getNextDailyOrderNumber, registerLiveOrder } from '../lib/ordersService';
+import { 
+  getNextDailyOrderNumber, 
+  registerLiveOrder, 
+  saveCustomerDeviceOrder, 
+  getCustomerDeviceOrders, 
+  syncCustomerDeviceOrdersWithLive, 
+  CustomerSavedOrder, 
+  fetchLiveOrders,
+  getDisplayOrderNumber
+} from '../lib/ordersService';
 import { updateProductStock } from '../lib/inventoryService';
 
 type CartItem = {
@@ -113,9 +125,34 @@ export default function CustomerApp() {
   const [placedOrderIsPrepaid, setPlacedOrderIsPrepaid] = useState<boolean>(false);
   const [waiterCalled, setWaiterCalled] = useState(false);
   const [isCallingWaiter, setIsCallingWaiter] = useState(false);
+  const [customerOrders, setCustomerOrders] = useState<CustomerSavedOrder[]>([]);
+  const [isMyOrdersOpen, setIsMyOrdersOpen] = useState<boolean>(false);
 
   // Delivery order is active when in delivery mode
   const isDeliveryOrder = orderType === 'delivery';
+
+  // Load and continuously sync customer orders from device and live server
+  useEffect(() => {
+    if (!restaurant?.id) return;
+    const initialOrders = getCustomerDeviceOrders(restaurant.id);
+    setCustomerOrders(initialOrders);
+
+    const interval = setInterval(async () => {
+      try {
+        const live = await fetchLiveOrders(restaurant.id);
+        const updated = syncCustomerDeviceOrdersWithLive(restaurant.id, live);
+        setCustomerOrders(updated);
+      } catch (e) {}
+    }, 4000);
+
+    return () => clearInterval(interval);
+  }, [restaurant?.id]);
+
+  const activeCustomerOrders = useMemo(() => {
+    return customerOrders.filter(o => o.status === 'new' || o.status === 'preparing');
+  }, [customerOrders]);
+
+  const latestActiveOrder = activeCustomerOrders[0] || null;
 
   useEffect(() => {
     // Default to Arabic on initial customer load unless user explicitly set language
@@ -140,7 +177,10 @@ export default function CustomerApp() {
       }
     }
 
-    if (!effectiveSlug) return;
+    if (!effectiveSlug) {
+      setLoading(false);
+      return;
+    }
 
     // 1. First fetch server-synced category options
     let syncedOpts: Record<string, CategoryOption[]> = {};
@@ -520,164 +560,210 @@ export default function CustomerApp() {
       // 1. Unified Daily Sequential Order Number (generated continuously with Cashier POS)
       const dailySeqNum = await getNextDailyOrderNumber(restaurant.id);
       
-      const orderPayload = {
+      let finalOrderId: string | number = `cust-${Date.now()}`;
+      let dbOrderCreated = false;
+
+      const orderPayload: any = {
         restaurant_id: restaurant.id,
         table_id: validTableId,
         total_price: parseFloat(total.toFixed(2)),
-        status: 'new'
+        status: 'new',
+        daily_order_number: dailySeqNum
       };
 
       console.log('Inserting order header with sequence #', dailySeqNum, orderPayload);
 
-      // Only select 'id' to minimize RLS requirements on the response
-      const { data: order, error: orderErr } = await supabase
-        .from('orders')
-        .insert(orderPayload)
-        .select('id')
-        .single();
+      try {
+        // Attempt insert with daily_order_number
+        const { data: order, error: orderErr } = await supabase
+          .from('orders')
+          .insert(orderPayload)
+          .select('id')
+          .single();
 
-      if (orderErr) {
-        console.error('Order insertion failed:', orderErr);
-        throw new Error(orderErr.message);
-      }
-
-      if (order) {
-        const zoneInfoStr = selectedZone 
-          ? `المنطقة: ${selectedZone.name} (+${selectedZone.fee} جـ)` 
-          : 'توصيل عام';
-
-        let fullAddressDetails = deliveryInfo.address.trim();
-        const buildingParts = [];
-        if (deliveryInfo.buildingNumber.trim()) buildingParts.push(`عمارة: ${deliveryInfo.buildingNumber.trim()}`);
-        if (deliveryInfo.floor.trim()) buildingParts.push(`طابق: ${deliveryInfo.floor.trim()}`);
-        if (deliveryInfo.apartmentNumber.trim()) buildingParts.push(`شقة: ${deliveryInfo.apartmentNumber.trim()}`);
-        if (buildingParts.length > 0) {
-          fullAddressDetails = fullAddressDetails ? `${fullAddressDetails} (${buildingParts.join(' - ')})` : buildingParts.join(' - ');
-        }
-
-        const tableNumLabel = table?.table_number || (tableId && tableId !== 'delivery' && tableId !== 'd' ? tableId : null);
-
-        const deliveryHeader = isDeliveryOrder
-          ? `[طلب زبون #${dailySeqNum} | 🛵 دليفري | ${zoneInfoStr} | الاسم: ${deliveryInfo.customerName.trim()} | هاتف: ${deliveryInfo.phone.trim()} | العنوان: ${fullAddressDetails}${deliveryLocation ? ` | لوكيشن: ${deliveryLocation.mapsUrl}` : ''}${deliveryInfo.notes.trim() ? ` | ملاحظات: ${deliveryInfo.notes.trim()}` : ''}]`
-          : `[طلب زبون #${dailySeqNum} | 🍽️ صالة - طاولة ${tableNumLabel || 'غير محددة'}]`;
-
-        const orderItemsList = cart.map((item, itemIdx) => {
-          // Compile chosen options into notes string if any
-          let compiledNotes = item.notes ? item.notes.trim() : '';
-          if (item.selectedOptionLabels && item.selectedOptionLabels.length > 0) {
-            const optionsSummary = item.selectedOptionLabels.map(l => `${l.optionName}: ${l.choiceName}`).join(' | ');
-            compiledNotes = compiledNotes ? `[${optionsSummary}] - ${compiledNotes}` : `[${optionsSummary}]`;
-          }
-
-          if (itemIdx === 0) {
-            compiledNotes = compiledNotes ? `${deliveryHeader} - ${compiledNotes}` : deliveryHeader;
-          }
-
-          // Check if any option is sugar-related
-          let derivedSugar = item.sugar;
-          if (derivedSugar === 'none' && item.selectedOptionLabels) {
-            const sugarOpt = item.selectedOptionLabels.find(l => 
-              l.optionName.includes('سكر') || l.optionName.toLowerCase().includes('sugar')
-            );
-            if (sugarOpt) {
-              const ch = sugarOpt.choiceName.toLowerCase();
-              if (ch.includes('خفيف') || ch.includes('low')) derivedSugar = 'low';
-              else if (ch.includes('وسط') || ch.includes('مظبوط') || ch.includes('medium')) derivedSugar = 'medium';
-              else if (ch.includes('زيادة') || ch.includes('extra') || ch.includes('high')) derivedSugar = 'high';
-            }
-          }
-
-          return {
-            order_id: order.id,
-            product_id: item.product.id,
-            quantity: item.quantity,
-            notes: compiledNotes || null,
-            sugar_level: derivedSugar === 'none' ? 'none' : 
-                         (derivedSugar === 'low' ? 'low' : 
-                          (derivedSugar === 'medium' ? 'medium' : 
-                           (derivedSugar === 'high' ? 'high' : 'none'))),
-            price_at_order: parseFloat(item.product.price.toString())
+        if (!orderErr && order?.id) {
+          finalOrderId = order.id;
+          dbOrderCreated = true;
+        } else {
+          // If column daily_order_number doesn't exist yet, retry without it
+          const fallbackPayload = {
+            restaurant_id: restaurant.id,
+            table_id: validTableId,
+            total_price: parseFloat(total.toFixed(2)),
+            status: 'new'
           };
-        });
+          const { data: retryOrder, error: retryErr } = await supabase
+            .from('orders')
+            .insert(fallbackPayload)
+            .select('id')
+            .single();
 
-        console.log('Inserting order line items:', orderItemsList);
-
-        const { error: itemsErr } = await supabase
-          .from('order_items')
-          .insert(orderItemsList);
-
-        if (itemsErr) {
-          console.error('Order items insertion failed:', itemsErr);
-          throw new Error(itemsErr.message);
+          if (!retryErr && retryOrder?.id) {
+            finalOrderId = retryOrder.id;
+            dbOrderCreated = true;
+          } else {
+            console.warn('Supabase order insert warning, continuing with live local fallback:', retryErr || orderErr);
+          }
         }
-
-        const isPrepaidRest = Boolean(
-          restaurant.is_prepaid === true || 
-          restaurant.payment_model === 'prepaid' ||
-          (restaurant.id && getLocalRestaurantGeofence(restaurant.id)?.is_prepaid) ||
-          (restaurant.id && getLocalRestaurantGeofence(restaurant.id)?.payment_model === 'prepaid') ||
-          (restaurant.slug && getLocalRestaurantGeofence(restaurant.slug)?.is_prepaid) ||
-          (restaurant.slug && getLocalRestaurantGeofence(restaurant.slug)?.payment_model === 'prepaid')
-        );
-
-        // 2. Register live order to server & local storage for instant Cashier POS & Admin notification
-        await registerLiveOrder({
-          id: order.id,
-          daily_order_number: dailySeqNum,
-          restaurant_id: restaurant.id,
-          source: 'customer_app',
-          order_type: isDeliveryOrder ? 'delivery' : 'dine_in',
-          table_id: validTableId,
-          table_number: tableNumLabel,
-          customer_name: isDeliveryOrder ? deliveryInfo.customerName.trim() : undefined,
-          customer_phone: isDeliveryOrder ? deliveryInfo.phone.trim() : undefined,
-          delivery_address: isDeliveryOrder ? fullAddressDetails : undefined,
-          delivery_notes: isDeliveryOrder ? deliveryInfo.notes.trim() : undefined,
-          notes: deliveryHeader,
-          total_price: parseFloat(total.toFixed(2)),
-          status: 'new',
-          payment_status: isPrepaidRest && !isDeliveryOrder ? 'paid' : 'unpaid',
-          items: cart.map(item => ({
-            id: item.product.id,
-            name: item.product.name_ar || item.product.name_en,
-            quantity: item.quantity,
-            price: parseFloat(item.product.price.toString()),
-            notes: item.notes,
-            options: item.selectedOptionLabels,
-            sugar_level: item.sugar
-          })),
-          created_at: new Date().toISOString()
-        });
-
-        // 3. Deduct stock from inventory
-        cart.forEach(item => {
-          updateProductStock(restaurant.id, {
-            productId: item.product.id,
-            productName: item.product.name_ar || item.product.name_en,
-            delta: -item.quantity,
-            type: 'sale',
-            reason: `طلب زبون أونلاين #${dailySeqNum}`,
-            performedBy: 'تطبيق الزبائن'
-          }).catch(() => {});
-        });
-        setCart([]);
-        setIsCartOpen(false);
-        setLastOrderId(order.id);
-        setPlacedDailyOrderNum(dailySeqNum);
-        setPlacedOrderTotal(total);
-        setPlacedOrderIsPrepaid(isPrepaidRest && !isDeliveryOrder);
-        setOrderPlaced(true);
-
-        // Track Meta Pixel Purchase event
-        trackPurchase({
-          id: order.id,
-          total: total,
-          itemsCount: cart.reduce((acc, item) => acc + item.quantity, 0),
-          restaurantName: restaurant?.name
-        });
-
-        // NOTE: Modal stays open until the customer explicitly dismisses it, as requested
+      } catch (dbEx) {
+        console.warn('Database connection warning, continuing with live local fallback:', dbEx);
       }
+
+      const zoneInfoStr = selectedZone 
+        ? `المنطقة: ${selectedZone.name} (+${selectedZone.fee} جـ)` 
+        : 'توصيل عام';
+
+      let fullAddressDetails = deliveryInfo.address.trim();
+      const buildingParts = [];
+      if (deliveryInfo.buildingNumber.trim()) buildingParts.push(`عمارة: ${deliveryInfo.buildingNumber.trim()}`);
+      if (deliveryInfo.floor.trim()) buildingParts.push(`طابق: ${deliveryInfo.floor.trim()}`);
+      if (deliveryInfo.apartmentNumber.trim()) buildingParts.push(`شقة: ${deliveryInfo.apartmentNumber.trim()}`);
+      if (buildingParts.length > 0) {
+        fullAddressDetails = fullAddressDetails ? `${fullAddressDetails} (${buildingParts.join(' - ')})` : buildingParts.join(' - ');
+      }
+
+      const tableNumLabel = table?.table_number || (tableId && tableId !== 'delivery' && tableId !== 'd' ? tableId : null);
+
+      const deliveryHeader = isDeliveryOrder
+        ? `[طلب زبون #${dailySeqNum} | 🛵 دليفري | ${zoneInfoStr} | الاسم: ${deliveryInfo.customerName.trim()} | هاتف: ${deliveryInfo.phone.trim()} | العنوان: ${fullAddressDetails}${deliveryLocation ? ` | لوكيشن: ${deliveryLocation.mapsUrl}` : ''}${deliveryInfo.notes.trim() ? ` | ملاحظات: ${deliveryInfo.notes.trim()}` : ''}]`
+        : `[طلب زبون #${dailySeqNum} | 🍽️ صالة - طاولة ${tableNumLabel || 'غير محددة'}]`;
+
+      // If DB order succeeded, insert line items to Supabase
+      if (dbOrderCreated) {
+        try {
+          const orderItemsList = cart.map((item, itemIdx) => {
+            let compiledNotes = item.notes ? item.notes.trim() : '';
+            if (item.selectedOptionLabels && item.selectedOptionLabels.length > 0) {
+              const optionsSummary = item.selectedOptionLabels.map(l => `${l.optionName}: ${l.choiceName}`).join(' | ');
+              compiledNotes = compiledNotes ? `[${optionsSummary}] - ${compiledNotes}` : `[${optionsSummary}]`;
+            }
+
+            if (itemIdx === 0) {
+              compiledNotes = compiledNotes ? `${deliveryHeader} - ${compiledNotes}` : deliveryHeader;
+            }
+
+            let derivedSugar = item.sugar;
+            if (derivedSugar === 'none' && item.selectedOptionLabels) {
+              const sugarOpt = item.selectedOptionLabels.find(l => 
+                l.optionName.includes('سكر') || l.optionName.toLowerCase().includes('sugar')
+              );
+              if (sugarOpt) {
+                const ch = sugarOpt.choiceName.toLowerCase();
+                if (ch.includes('خفيف') || ch.includes('low')) derivedSugar = 'low';
+                else if (ch.includes('وسط') || ch.includes('مظبوط') || ch.includes('medium')) derivedSugar = 'medium';
+                else if (ch.includes('زيادة') || ch.includes('extra') || ch.includes('high')) derivedSugar = 'high';
+              }
+            }
+
+            return {
+              order_id: finalOrderId,
+              product_id: item.product.id,
+              quantity: item.quantity,
+              notes: compiledNotes || null,
+              sugar_level: derivedSugar === 'none' ? 'none' : 
+                           (derivedSugar === 'low' ? 'low' : 
+                            (derivedSugar === 'medium' ? 'medium' : 
+                             (derivedSugar === 'high' ? 'high' : 'none'))),
+              price_at_order: parseFloat(item.product.price.toString())
+            };
+          });
+
+          await supabase.from('order_items').insert(orderItemsList);
+        } catch (itemErr) {
+          console.warn('Order items insert warning:', itemErr);
+        }
+      }
+
+      const isPrepaidRest = Boolean(
+        restaurant.is_prepaid === true || 
+        restaurant.payment_model === 'prepaid' ||
+        (restaurant.id && getLocalRestaurantGeofence(restaurant.id)?.is_prepaid) ||
+        (restaurant.id && getLocalRestaurantGeofence(restaurant.id)?.payment_model === 'prepaid') ||
+        (restaurant.slug && getLocalRestaurantGeofence(restaurant.slug)?.is_prepaid) ||
+        (restaurant.slug && getLocalRestaurantGeofence(restaurant.slug)?.payment_model === 'prepaid')
+      );
+
+      // 2. Register live order to server & local storage for instant Cashier POS & Admin notification
+      await registerLiveOrder({
+        id: finalOrderId,
+        daily_order_number: dailySeqNum,
+        restaurant_id: restaurant.id,
+        source: 'customer_app',
+        order_type: isDeliveryOrder ? 'delivery' : 'dine_in',
+        table_id: validTableId,
+        table_number: tableNumLabel,
+        customer_name: isDeliveryOrder ? deliveryInfo.customerName.trim() : undefined,
+        customer_phone: isDeliveryOrder ? deliveryInfo.phone.trim() : undefined,
+        delivery_address: isDeliveryOrder ? fullAddressDetails : undefined,
+        delivery_notes: isDeliveryOrder ? deliveryInfo.notes.trim() : undefined,
+        notes: deliveryHeader,
+        total_price: parseFloat(total.toFixed(2)),
+        status: 'new',
+        payment_status: isPrepaidRest && !isDeliveryOrder ? 'paid' : 'unpaid',
+        items: cart.map(item => ({
+          id: item.product.id,
+          name: item.product.name_ar || item.product.name_en,
+          quantity: item.quantity,
+          price: parseFloat(item.product.price.toString()),
+          notes: item.notes,
+          options: item.selectedOptionLabels,
+          sugar_level: item.sugar
+        })),
+        created_at: new Date().toISOString()
+      });
+
+      // 3. Persist order to customer's device for continuous tracking
+      const savedCustomerOrder: CustomerSavedOrder = {
+        id: finalOrderId,
+        daily_order_number: dailySeqNum,
+        restaurant_id: restaurant.id,
+        restaurant_name: restaurant.name,
+        order_type: isDeliveryOrder ? 'delivery' : 'dine_in',
+        table_number: tableNumLabel,
+        delivery_address: isDeliveryOrder ? fullAddressDetails : undefined,
+        items: cart.map(item => ({
+          name: item.product.name_ar || item.product.name_en,
+          quantity: item.quantity,
+          price: parseFloat(item.product.price.toString()),
+          notes: item.notes,
+          options: item.selectedOptionLabels
+        })),
+        total_price: parseFloat(total.toFixed(2)),
+        status: 'new',
+        payment_status: isPrepaidRest && !isDeliveryOrder ? 'unpaid' : 'unpaid',
+        is_prepaid: isPrepaidRest && !isDeliveryOrder,
+        created_at: new Date().toISOString()
+      };
+      saveCustomerDeviceOrder(restaurant.id, savedCustomerOrder);
+      setCustomerOrders(prev => [savedCustomerOrder, ...prev.filter(o => String(o.id) !== String(finalOrderId))]);
+
+      // 4. Deduct stock from inventory
+      cart.forEach(item => {
+        updateProductStock(restaurant.id, {
+          productId: item.product.id,
+          productName: item.product.name_ar || item.product.name_en,
+          delta: -item.quantity,
+          type: 'sale',
+          reason: `طلب زبون أونلاين #${dailySeqNum}`,
+          performedBy: 'تطبيق الزبائن'
+        }).catch(() => {});
+      });
+
+      setCart([]);
+      setIsCartOpen(false);
+      setLastOrderId(typeof finalOrderId === 'number' ? finalOrderId : dailySeqNum);
+      setPlacedDailyOrderNum(dailySeqNum);
+      setPlacedOrderTotal(total);
+      setPlacedOrderIsPrepaid(isPrepaidRest && !isDeliveryOrder);
+      setOrderPlaced(true);
+
+      // Track Meta Pixel Purchase event
+      trackPurchase({
+        id: finalOrderId,
+        total: total,
+        itemsCount: cart.reduce((acc, item) => acc + item.quantity, 0),
+        restaurantName: restaurant?.name
+      });
     } catch (err: any) {
       console.error('Checkout error:', err);
       // Friendly Arabic message for the user
@@ -812,6 +898,25 @@ export default function CustomerApp() {
         </div>
 
         <div className="flex-1 flex justify-end items-center gap-2">
+          {/* My Orders Button */}
+          <button 
+            onClick={() => setIsMyOrdersOpen(true)}
+            className="relative p-2.5 sm:p-3 bg-gray-100 hover:bg-gray-200 rounded-2xl text-gray-900 active:scale-95 transition-all flex items-center gap-1.5 cursor-pointer shadow-xs"
+            title={isRTL ? 'طلباتي ومتابعة الحالة' : 'My Orders'}
+          >
+            <ReceiptText size={20} className="text-orange-600" />
+            <span className="text-xs font-black hidden sm:inline">{isRTL ? 'طلباتي' : 'Orders'}</span>
+            {customerOrders.length > 0 && (
+              <span 
+                className={`w-5 h-5 text-white text-[10px] font-black flex items-center justify-center rounded-full border-2 border-white ${
+                  activeCustomerOrders.length > 0 ? 'bg-red-500 animate-pulse' : 'bg-slate-700'
+                }`}
+              >
+                {activeCustomerOrders.length > 0 ? activeCustomerOrders.length : customerOrders.length}
+              </span>
+            )}
+          </button>
+
           {cart.length > 0 && (
             <button 
               onClick={() => setIsCartOpen(true)}
@@ -2056,13 +2161,230 @@ export default function CustomerApp() {
                 </div>
               )}
 
-              {/* Action Button - Dismiss Modal */}
-              <button
-                onClick={() => { setOrderPlaced(false); setPlacedDailyOrderNum(null); }}
-                className="w-full bg-gray-900 hover:bg-gray-800 text-white py-3.5 sm:py-4 rounded-2xl font-black text-sm sm:text-base active:scale-95 transition-all shadow-xl shadow-gray-900/10 cursor-pointer"
-              >
-                {isRTL ? 'حسناً - إغلاق' : 'Got it - Close'}
-              </button>
+              {/* Action Buttons */}
+              <div className="w-full space-y-2.5">
+                <button
+                  onClick={() => { 
+                    setOrderPlaced(false); 
+                    setPlacedDailyOrderNum(null); 
+                    setIsMyOrdersOpen(true);
+                  }}
+                  className="w-full bg-orange-600 hover:bg-orange-700 text-white py-3.5 rounded-2xl font-black text-sm active:scale-95 transition-all shadow-lg shadow-orange-600/20 flex items-center justify-center gap-2 cursor-pointer"
+                >
+                  <ReceiptText size={18} />
+                  <span>{isRTL ? 'متابعة حالة الطلب وقائمة طلباتي' : 'Track Order & View My Orders'}</span>
+                </button>
+
+                <button
+                  onClick={() => { setOrderPlaced(false); setPlacedDailyOrderNum(null); }}
+                  className="w-full bg-gray-100 hover:bg-gray-200 text-gray-800 py-3 rounded-2xl font-bold text-xs sm:text-sm active:scale-95 transition-all cursor-pointer"
+                >
+                  {isRTL ? 'إغلاق ومتابعة تصفح المنيو' : 'Close & Continue Browsing'}
+                </button>
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* 🚀 Floating Quick Order Status Pill (when an order is active: new or preparing) */}
+      {latestActiveOrder && !isMyOrdersOpen && (
+        <div 
+          onClick={() => setIsMyOrdersOpen(true)}
+          className="fixed bottom-4 left-4 right-4 z-40 max-w-md mx-auto bg-slate-900/95 backdrop-blur-md text-white p-3 sm:p-3.5 rounded-2xl shadow-2xl border border-slate-700/60 flex items-center justify-between cursor-pointer hover:bg-slate-900 transition-all active:scale-[0.98]"
+          dir={isRTL ? 'rtl' : 'ltr'}
+        >
+          <div className="flex items-center gap-3">
+            <span className="w-9 h-9 rounded-xl bg-orange-500/25 border border-orange-500/40 text-orange-400 flex items-center justify-center font-mono font-black text-sm shrink-0">
+              #{latestActiveOrder.daily_order_number}
+            </span>
+            <div className="text-right">
+              <div className="flex items-center gap-1.5">
+                <span className="text-xs font-black text-white">
+                  {latestActiveOrder.status === 'new' 
+                    ? (isRTL ? 'تم استلام طلبك (جديد)' : 'Order Received')
+                    : latestActiveOrder.status === 'preparing'
+                    ? (isRTL ? 'الشيف يجهز طلبك الآن 👨‍🍳' : 'Preparing...')
+                    : (isRTL ? 'جاهز / تم التوصيل ✅' : 'Ready / Delivered')}
+                </span>
+                <span className="w-2 h-2 rounded-full bg-emerald-400 animate-ping"></span>
+              </div>
+              <p className="text-[11px] text-gray-400 truncate max-w-[210px] mt-0.5">
+                {latestActiveOrder.order_type === 'delivery' 
+                  ? (isRTL ? '🛵 دليفري' : 'Delivery') 
+                  : (isRTL ? `🍽️ صالة ${latestActiveOrder.table_number ? `(طاولة ${latestActiveOrder.table_number})` : ''}` : 'Dine-in')}
+                {' • '}
+                {formatCurrency(latestActiveOrder.total_price)}
+              </p>
+            </div>
+          </div>
+          <div className="flex items-center gap-1 bg-orange-600 hover:bg-orange-500 text-white font-bold text-xs px-3 py-2 rounded-xl shrink-0 shadow-md">
+            <span>{isRTL ? 'متابعة' : 'Track'}</span>
+            <ChevronLeft size={15} className={isRTL ? '' : 'rotate-180'} />
+          </div>
+        </div>
+      )}
+
+      {/* 📋 Modal: My Orders & Live Tracking (طلباتي ومتابعة الحالة) */}
+      <AnimatePresence>
+        {isMyOrdersOpen && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 z-[150] bg-black/60 backdrop-blur-sm flex items-end sm:items-center justify-center p-0 sm:p-4"
+          >
+            <motion.div
+              initial={{ y: '100%' }}
+              animate={{ y: 0 }}
+              exit={{ y: '100%' }}
+              transition={{ type: 'spring', damping: 25, stiffness: 200 }}
+              className="bg-white w-full max-w-lg max-h-[85vh] rounded-t-[32px] sm:rounded-[32px] shadow-2xl flex flex-col overflow-hidden"
+              dir={isRTL ? 'rtl' : 'ltr'}
+            >
+              {/* Header */}
+              <div className="p-4 sm:p-5 border-b border-gray-100 flex items-center justify-between bg-slate-50/50">
+                <div className="flex items-center gap-2.5">
+                  <div className="w-9 h-9 rounded-xl bg-orange-100 text-orange-600 flex items-center justify-center">
+                    <ReceiptText size={20} />
+                  </div>
+                  <div>
+                    <h3 className="font-black text-slate-900 text-base">
+                      {isRTL ? 'طلباتي ومتابعة الحالة' : 'My Orders & Tracking'}
+                    </h3>
+                    <p className="text-xs text-gray-500">
+                      {isRTL ? 'متابعة مباشرة لخطوات تحضير وتجهيز طلباتك' : 'Real-time order status tracking'}
+                    </p>
+                  </div>
+                </div>
+
+                <button
+                  onClick={() => setIsMyOrdersOpen(false)}
+                  className="w-8 h-8 rounded-full bg-gray-200/80 hover:bg-gray-300 flex items-center justify-center text-gray-600 transition-colors cursor-pointer"
+                >
+                  <X size={18} />
+                </button>
+              </div>
+
+              {/* Body */}
+              <div className="flex-1 overflow-y-auto p-4 space-y-4">
+                {customerOrders.length === 0 ? (
+                  <div className="py-12 text-center text-gray-400 space-y-3">
+                    <div className="w-16 h-16 rounded-full bg-gray-100 flex items-center justify-center mx-auto text-gray-400">
+                      <ReceiptText size={28} />
+                    </div>
+                    <p className="font-bold text-gray-700 text-sm">
+                      {isRTL ? 'لا توجد أي طلبات مسجلة على هذا الجهاز حتى الآن' : 'No orders found on this device yet'}
+                    </p>
+                    <p className="text-xs text-gray-400 max-w-xs mx-auto">
+                      {isRTL ? 'عند طلب أي وجبة ستظهر هنا برقمها الموحد وحالتها في المطبخ لحظة بلحظة' : 'Your placed orders will appear here with live updates.'}
+                    </p>
+                  </div>
+                ) : (
+                  customerOrders.map((ord, idx) => {
+                    const isNew = ord.status === 'new';
+                    const isPreparing = ord.status === 'preparing';
+                    const isReady = ord.status === 'ready';
+                    const isCompleted = ord.status === 'completed';
+                    const isCancelled = ord.status === 'cancelled';
+
+                    // Progress step (0=new, 1=preparing, 2=ready/delivering, 3=completed)
+                    const currentStep = isCancelled ? -1 : (isCompleted ? 3 : (isReady ? 2 : (isPreparing ? 1 : 0)));
+
+                    return (
+                      <div 
+                        key={ord.id || idx}
+                        className="bg-white rounded-2xl border border-gray-200 p-4 space-y-3 shadow-xs hover:border-gray-300 transition-all"
+                      >
+                        {/* Top info */}
+                        <div className="flex items-center justify-between gap-2 border-b border-gray-100 pb-3">
+                          <div className="flex items-center gap-2.5">
+                            <span className="px-3 py-1 bg-gradient-to-r from-gray-900 to-gray-800 text-white font-mono font-black text-sm rounded-xl shadow-xs">
+                              #{ord.daily_order_number || ord.id}
+                            </span>
+                            <div>
+                              <span className="font-black text-xs text-gray-900 block">
+                                {ord.order_type === 'delivery' ? (isRTL ? '🛵 دليفري' : 'Delivery') : (isRTL ? '🍽️ صالة' : 'Dine-In')}
+                                {ord.table_number && ` (طاولة ${ord.table_number})`}
+                              </span>
+                              <span className="text-[10px] text-gray-400">
+                                {new Date(ord.created_at).toLocaleTimeString(isRTL ? 'ar-EG' : 'en-US', { hour: '2-digit', minute: '2-digit' })}
+                              </span>
+                            </div>
+                          </div>
+
+                          <div className="text-left">
+                            <span className="font-mono font-black text-sm text-emerald-600 block">
+                              {formatCurrency(ord.total_price)}
+                            </span>
+                            <span className="text-[10px] text-gray-500 font-bold">
+                              {ord.payment_status === 'paid' ? (isRTL ? '✅ مدفوع' : 'Paid') : (isRTL ? '⏳ غير مدفوع' : 'Unpaid')}
+                            </span>
+                          </div>
+                        </div>
+
+                        {/* Status Stepper */}
+                        {!isCancelled ? (
+                          <div className="bg-slate-50 p-3 rounded-xl border border-slate-100">
+                            <div className="flex items-center justify-between text-[11px] font-bold mb-2">
+                              <span className={currentStep >= 0 ? "text-orange-600 font-black" : "text-gray-400"}>
+                                1. تم الاستلام
+                              </span>
+                              <span className={currentStep >= 1 ? "text-orange-600 font-black" : "text-gray-400"}>
+                                2. بالمطبخ 👨‍🍳
+                              </span>
+                              <span className={currentStep >= 2 ? "text-orange-600 font-black" : "text-gray-400"}>
+                                3. جاهز للتسليم
+                              </span>
+                              <span className={currentStep >= 3 ? "text-emerald-600 font-black" : "text-gray-400"}>
+                                4. تم الاستلام ✅
+                              </span>
+                            </div>
+                            <div className="h-2 bg-gray-200 rounded-full overflow-hidden flex">
+                              <div 
+                                className="h-full bg-gradient-to-r from-orange-500 to-amber-500 transition-all duration-500" 
+                                style={{ width: `${Math.max(25, (currentStep + 1) * 25)}%` }}
+                              />
+                            </div>
+                          </div>
+                        ) : (
+                          <div className="bg-red-50 p-2.5 rounded-xl border border-red-200 text-xs font-bold text-red-700 text-center">
+                            ❌ تم إلغاء هذا الطلب
+                          </div>
+                        )}
+
+                        {/* Prepaid Callout if applicable and unpaid */}
+                        {ord.is_prepaid && ord.payment_status !== 'paid' && !isCancelled && !isCompleted && (
+                          <div className="bg-amber-50 border border-amber-300 p-2.5 rounded-xl text-xs text-amber-900 flex items-center gap-2 font-bold">
+                            <CreditCard size={16} className="text-amber-600 shrink-0" />
+                            <span>يرجى التوجه للكاشير وسداد {formatCurrency(ord.total_price)} برقم طلبك #{ord.daily_order_number}</span>
+                          </div>
+                        )}
+
+                        {/* Items list preview */}
+                        <div className="text-[11px] text-gray-600 space-y-1 bg-gray-50/70 p-2.5 rounded-xl border border-gray-100">
+                          {ord.items.map((it, itemIdx) => (
+                            <div key={itemIdx} className="flex items-center justify-between">
+                              <span className="font-medium text-gray-800">{it.quantity}x {it.name}</span>
+                              <span className="font-mono text-gray-500">{formatCurrency((it.price || 0) * it.quantity)}</span>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    );
+                  })
+                )}
+              </div>
+
+              {/* Footer */}
+              <div className="p-4 border-t border-gray-100 bg-white">
+                <button
+                  onClick={() => setIsMyOrdersOpen(false)}
+                  className="w-full bg-gray-900 hover:bg-gray-800 text-white py-3 rounded-2xl font-bold text-sm active:scale-95 transition-all cursor-pointer"
+                >
+                  {isRTL ? 'إغلاق' : 'Close'}
+                </button>
+              </div>
             </motion.div>
           </motion.div>
         )}

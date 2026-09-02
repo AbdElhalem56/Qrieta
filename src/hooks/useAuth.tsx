@@ -17,28 +17,53 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
+    let isMounted = true;
+
     // Get initial session
-    supabase.auth.getSession().then(({ data: { session } }) => {
-      setUser(session?.user ?? null);
-      if (session?.user) {
-        fetchProfile(session.user.id);
-      } else {
-        setLoading(false);
-      }
-    });
+    supabase.auth.getSession()
+      .then((res) => {
+        if (!isMounted) return;
+        const session = res?.data?.session;
+        setUser(session?.user ?? null);
+        if (session?.user) {
+          fetchProfile(session.user.id);
+        } else {
+          setLoading(false);
+        }
+      })
+      .catch((err) => {
+        console.warn('Initial session check error:', err);
+        if (isMounted) {
+          setUser(null);
+          setLoading(false);
+        }
+      });
 
     // Listen for auth changes
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
-      setUser(session?.user ?? null);
-      if (session?.user) {
-        fetchProfile(session.user.id);
-      } else {
-        setProfile(null);
-        setLoading(false);
+    let unsubscribeFn = () => {};
+    try {
+      const { data } = supabase.auth.onAuthStateChange((_event, session) => {
+        if (!isMounted) return;
+        setUser(session?.user ?? null);
+        if (session?.user) {
+          fetchProfile(session.user.id);
+        } else {
+          setProfile(null);
+          setLoading(false);
+        }
+      });
+      if (data?.subscription) {
+        unsubscribeFn = () => data.subscription.unsubscribe();
       }
-    });
+    } catch (e) {
+      console.warn('onAuthStateChange subscription error:', e);
+      if (isMounted) setLoading(false);
+    }
 
-    return () => subscription.unsubscribe();
+    return () => {
+      isMounted = false;
+      unsubscribeFn();
+    };
   }, []);
 
   async function fetchProfile(userId: string) {

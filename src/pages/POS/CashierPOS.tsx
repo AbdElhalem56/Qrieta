@@ -96,7 +96,8 @@ import {
   fetchLiveOrders, 
   updateLiveOrderStatus, 
   playNewOrderAlertSound, 
-  LiveOrder 
+  LiveOrder,
+  getDisplayOrderNumber
 } from '../../lib/ordersService';
 import { 
   fetchRestaurantInventory, 
@@ -1489,6 +1490,37 @@ export const CashierPOS: React.FC = () => {
             <span className="hidden sm:inline">هالك</span>
           </button>
 
+          {/* Customer App Orders Quick Indicator & Button */}
+          <button
+            onClick={() => {
+              setActiveTab('customer_orders');
+              setHasUnviewedCustomerAlert(false);
+            }}
+            className={`px-3 py-1.5 rounded-xl font-black text-xs flex items-center gap-2 border shadow-sm transition-all cursor-pointer ${
+              unhandledCustomerOrdersCount > 0
+                ? 'bg-gradient-to-r from-red-600 to-orange-600 text-white border-red-500 animate-pulse shadow-red-500/30 ring-2 ring-red-400'
+                : 'bg-orange-50 text-orange-800 border-orange-200 hover:bg-orange-100'
+            }`}
+            title="شاشة طلبات تطبيق الزبائن والدليفري الحية"
+          >
+            <div className="relative flex items-center">
+              <Smartphone size={15} className={unhandledCustomerOrdersCount > 0 ? "animate-bounce" : ""} />
+              {unhandledCustomerOrdersCount > 0 && (
+                <span className="absolute -top-1 -right-1 w-2 h-2 bg-yellow-300 rounded-full animate-ping" />
+              )}
+            </div>
+            <span>طلبات الزبائن</span>
+            {unhandledCustomerOrdersCount > 0 ? (
+              <span className="px-2 py-0.5 rounded-full bg-white text-red-600 font-black text-[10px] leading-none shadow-sm">
+                {unhandledCustomerOrdersCount} جديد
+              </span>
+            ) : (
+              <span className="px-1.5 py-0.5 rounded-md bg-orange-200/70 text-orange-900 text-[10px] font-bold">
+                {customerLiveOrders.length}
+              </span>
+            )}
+          </button>
+
           {/* Lock Screen */}
           <button
             onClick={() => setIsScreenLocked(true)}
@@ -1581,55 +1613,85 @@ export const CashierPOS: React.FC = () => {
                   setActiveTab('customer_orders');
                   setHasUnviewedCustomerAlert(false);
                 }}
-                className={`relative px-3 py-1 rounded-lg text-xs font-bold transition-all flex items-center gap-1.5 cursor-pointer ${
+                className={`relative px-3.5 py-1.5 rounded-xl text-xs font-black transition-all flex items-center gap-2 cursor-pointer shadow-xs ${
                   activeTab === 'customer_orders'
-                    ? 'bg-orange-600 text-white shadow-md shadow-orange-500/20'
+                    ? 'bg-orange-600 text-white shadow-md shadow-orange-500/30 ring-2 ring-orange-400'
                     : unhandledCustomerOrdersCount > 0
-                    ? 'bg-red-500 text-white animate-pulse'
-                    : 'text-slate-600 hover:text-slate-900'
+                    ? 'bg-gradient-to-r from-red-600 to-orange-600 text-white animate-pulse shadow-md ring-2 ring-red-400'
+                    : 'bg-orange-50 text-orange-900 hover:bg-orange-100 border border-orange-200'
                 }`}
               >
-                <Bell size={13} className={unhandledCustomerOrdersCount > 0 ? "animate-bounce" : ""} />
-                <span>طلبات الزبائن</span>
+                <Smartphone size={14} className={unhandledCustomerOrdersCount > 0 ? "animate-bounce" : ""} />
+                <span>طلبات تطبيق الزبائن</span>
                 {unhandledCustomerOrdersCount > 0 ? (
-                  <span className="px-1.5 py-0.2 rounded-full bg-white text-red-600 text-[10px] font-black leading-none">
-                    {unhandledCustomerOrdersCount} جديد
+                  <span className="px-2 py-0.5 rounded-full bg-white text-red-600 text-[10px] font-black leading-none shadow-xs">
+                    {unhandledCustomerOrdersCount} جديد!
                   </span>
                 ) : (
-                  <span className="text-[10px] opacity-75">({customerLiveOrders.length})</span>
+                  <span className="px-1.5 py-0.2 rounded-md bg-orange-200/80 text-orange-950 text-[10px] font-bold">
+                    {customerLiveOrders.length}
+                  </span>
                 )}
               </button>
             </div>
           </div>
 
-          {/* 🔔 Prominent Banner Alert for New Incoming Customer Orders */}
+          {/* 🔔 Highly Prominent, Unmissable Banner Alert for New Incoming Customer Orders */}
           {unhandledCustomerOrdersCount > 0 && activeTab !== 'customer_orders' && (
             <div 
-              onClick={() => {
-                setActiveTab('customer_orders');
-                setHasUnviewedCustomerAlert(false);
-              }}
-              className="bg-gradient-to-r from-red-600 via-orange-600 to-amber-600 text-white px-4 py-3 mx-3 my-2 rounded-2xl flex items-center justify-between shadow-xl cursor-pointer hover:opacity-95 transition-all animate-pulse shrink-0"
+              className="bg-gradient-to-r from-red-600 via-orange-600 to-amber-600 text-white p-3.5 mx-3 my-2 rounded-2xl flex flex-wrap items-center justify-between gap-3 shadow-2xl border-2 border-red-400/80 animate-pulse shrink-0"
             >
               <div className="flex items-center gap-3">
-                <span className="w-9 h-9 rounded-xl bg-white/20 flex items-center justify-center text-xl shrink-0">
+                <div className="w-11 h-11 rounded-2xl bg-white text-red-600 flex items-center justify-center font-black text-xl shrink-0 shadow-md">
                   🔔
-                </span>
+                </div>
                 <div>
-                  <p className="font-black text-sm">
-                    تنبيه: يوجد ({unhandledCustomerOrdersCount}) طلب جديد من تطبيق الزبائن ينتظر الاستلام والطباعة!
-                  </p>
-                  <p className="text-xs text-orange-100 mt-0.5">
+                  <div className="flex items-center gap-2">
+                    <span className="bg-slate-900 text-white font-mono font-black text-sm px-2.5 py-0.5 rounded-lg border border-white/30 shadow-xs">
+                      #{getDisplayOrderNumber(latestCustomerOrder)}
+                    </span>
+                    <p className="font-black text-sm sm:text-base text-white">
+                      طلب زبون جديد ينتظر الاستلام والطباعة! ({unhandledCustomerOrdersCount} بالانتظار)
+                    </p>
+                  </div>
+                  <p className="text-xs text-orange-100 mt-1 flex flex-wrap items-center gap-1.5 font-medium">
                     {latestCustomerOrder?.order_type === 'delivery' 
-                      ? `🛵 طلب دليفري جديد #${latestCustomerOrder?.daily_order_number || ''} - العميل: ${latestCustomerOrder?.customer_name || 'عميل'}`
-                      : `🍽️ طلب صالة جديد #${latestCustomerOrder?.daily_order_number || ''} - طاولة: ${latestCustomerOrder?.table_number || 'صالة'}`} 
-                    {' — اضغط هنا لعرض تفاصيل الطلب وطباعة البون فوراً'}
+                      ? `🛵 دليفري: ${latestCustomerOrder?.customer_name || 'عميل'} (${latestCustomerOrder?.customer_phone || ''})`
+                      : `🍽️ صالة: طاولة #${latestCustomerOrder?.table_number || 'صالة'}`} 
+                    {' • '}
+                    <span className="font-mono font-bold bg-white/20 px-2 py-0.5 rounded-md">
+                      {latestCustomerOrder ? `${latestCustomerOrder.total_price.toFixed(2)} ج.م` : ''}
+                    </span>
+                    {' • '}
+                    <span>{latestCustomerOrder?.items?.length || 0} أصناف</span>
                   </p>
                 </div>
               </div>
-              <div className="flex items-center gap-1.5 bg-white text-orange-600 font-black text-xs px-3.5 py-2 rounded-xl shadow-md shrink-0">
-                <span>فتح طلبات الزبائن</span>
-                <ChevronLeft size={16} />
+
+              <div className="flex items-center gap-2 mr-auto">
+                {latestCustomerOrder && (
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      handleAcceptCustomerOrder(latestCustomerOrder);
+                    }}
+                    className="bg-white hover:bg-orange-50 text-orange-700 font-black text-xs px-4 py-2.5 rounded-xl shadow-lg flex items-center gap-1.5 cursor-pointer active:scale-95 transition-all"
+                  >
+                    <Printer size={15} />
+                    <span>⚡ قبول وطباعة KOT فوراً</span>
+                  </button>
+                )}
+                
+                <button
+                  onClick={() => {
+                    setActiveTab('customer_orders');
+                    setHasUnviewedCustomerAlert(false);
+                  }}
+                  className="bg-slate-900/80 hover:bg-slate-900 text-white font-bold text-xs px-3.5 py-2.5 rounded-xl border border-white/20 flex items-center gap-1 cursor-pointer active:scale-95 transition-all"
+                >
+                  <span>عرض الكل ({unhandledCustomerOrdersCount})</span>
+                  <ChevronLeft size={16} />
+                </button>
               </div>
             </div>
           )}
@@ -2037,7 +2099,7 @@ export const CashierPOS: React.FC = () => {
                             <div>
                               <div className="flex items-center gap-2">
                                 <span className="px-2.5 py-1 rounded-xl bg-slate-900 text-white font-mono font-black text-sm">
-                                  #{ord.daily_order_number || ord.id}
+                                  #{getDisplayOrderNumber(ord)}
                                 </span>
                                 {isDelivery ? (
                                   <span className="px-2 py-0.5 bg-purple-100 text-purple-800 border border-purple-200 rounded-lg text-xs font-black flex items-center gap-1">

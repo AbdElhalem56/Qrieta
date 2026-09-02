@@ -24,6 +24,7 @@ import {
   ExternalLink
 } from 'lucide-react';
 import { formatCurrency, cn, parseOrderDeliveryInfo, cleanItemNotes } from '../lib/utils';
+import { getDisplayOrderNumber } from '../lib/ordersService';
 
 export default function WaiterDashboard() {
   const { profile, signOut, loading: authLoading } = useAuth();
@@ -679,8 +680,8 @@ export default function WaiterDashboard() {
                           </div>
                         </div>
                         <div className="text-left">
-                          <span className="text-xs font-bold block opacity-60">
-                            #{typeof order.id === 'string' && order.id.includes('-') ? order.id.split('-')[0] : order.id}
+                          <span className="text-xs font-bold block opacity-60 font-mono">
+                            #{getDisplayOrderNumber(order)}
                           </span>
                           <span className="text-xs font-mono font-bold text-gray-500">{new Date(order.created_at).toLocaleTimeString('ar-EG', { hour: '2-digit', minute: '2-digit' })}</span>
                         </div>

@@ -3,11 +3,27 @@ import { createClient } from '@supabase/supabase-js';
 export const supabaseUrl = import.meta.env.VITE_SUPABASE_URL || '';
 export const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY || '';
 
-if (!supabaseUrl || !supabaseAnonKey) {
-  console.warn('Supabase URL or Anon Key is missing. Please check your .env file.');
+export const isSupabaseConfigured = Boolean(
+  supabaseUrl && 
+  supabaseAnonKey && 
+  supabaseUrl.startsWith('http') && 
+  !supabaseUrl.includes('placeholder')
+);
+
+if (!isSupabaseConfigured) {
+  console.warn('Supabase URL or Anon Key is missing or using placeholder. Configure VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY in your environment for full database access.');
 }
 
-export const supabase = createClient(supabaseUrl, supabaseAnonKey);
+// Fallback to placeholder to ensure the app doesn't crash at module initialization
+const clientUrl = isSupabaseConfigured ? supabaseUrl : 'https://placeholder.supabase.co';
+const clientKey = isSupabaseConfigured ? supabaseAnonKey : 'placeholder-anon-key';
+
+export const supabase = createClient(clientUrl, clientKey, {
+  auth: {
+    persistSession: typeof window !== 'undefined',
+    autoRefreshToken: typeof window !== 'undefined',
+  }
+});
 
 export type Restaurant = {
   id: string;
