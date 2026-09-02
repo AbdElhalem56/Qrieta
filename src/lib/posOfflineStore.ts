@@ -44,7 +44,8 @@ export function clearLockedRestaurantId(): void {
 // 2. Offline Cashier PIN
 export function getStoredCashierPin(restaurantId: string): string {
   try {
-    return localStorage.getItem(`${CASHIER_PIN_KEY_PREFIX}${restaurantId}`) || '1234';
+    const pin = localStorage.getItem(`${CASHIER_PIN_KEY_PREFIX}${restaurantId}`);
+    return pin ? pin.trim() : '1234';
   } catch (e) {
     return '1234';
   }
@@ -52,15 +53,14 @@ export function getStoredCashierPin(restaurantId: string): string {
 
 export function setStoredCashierPin(restaurantId: string, pin: string): void {
   try {
-    localStorage.setItem(`${CASHIER_PIN_KEY_PREFIX}${restaurantId}`, pin);
+    localStorage.setItem(`${CASHIER_PIN_KEY_PREFIX}${restaurantId}`, pin.trim());
   } catch (e) {
     console.error('Failed to save cashier PIN:', e);
   }
 }
 
 export function verifyCashierOrManagerPin(restaurantId: string, enteredPin: string): boolean {
-  if (enteredPin === MANAGER_OVERRIDE_PIN) return true; // Master manager override
-  if (enteredPin === '1234' || enteredPin === '0000') return true; // Default fallback pins
+  if (enteredPin === MANAGER_OVERRIDE_PIN) return true; // Master manager override (9999)
   const savedPin = getStoredCashierPin(restaurantId);
   return enteredPin === savedPin;
 }

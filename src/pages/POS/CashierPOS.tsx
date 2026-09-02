@@ -199,7 +199,6 @@ export const CashierPOS: React.FC = () => {
   const [isOnline, setIsOnline] = useState<boolean>(typeof navigator !== 'undefined' ? navigator.onLine : true);
   const [offlineQueue, setOfflineQueue] = useState<any[]>([]);
   const [isSyncing, setIsSyncing] = useState<boolean>(false);
-  const [isChangeRestaurantModalOpen, setIsChangeRestaurantModalOpen] = useState<boolean>(false);
   const [cashierInputName, setCashierInputName] = useState<string>('كاشير الفرع');
 
   // Screen Lock PIN (Default: LOCKED for security like Waiter app, works 100% offline)
@@ -978,21 +977,9 @@ export const CashierPOS: React.FC = () => {
         }));
       }
     } else {
-      setLockPinError('رمز PIN غير صحيح! (الافتراضي: 1234 أو 0000)');
+      setLockPinError('رمز PIN غير صحيح! يرجى مراجعة إدارة المطعم');
       setLockPinInput('');
     }
-  };
-
-  // Manager Prompt to Switch Locked Restaurant
-  const handlePromptChangeRestaurant = () => {
-    setManagerAuthReq({
-      isOpen: true,
-      title: 'تغيير مطعم الجهاز (خاص بالمدير)',
-      description: 'هذا الجهاز مقفل ومخصص لهذا المطعم فقط. لتغيير الفرع يرجى إدخال PIN المدير (9999).',
-      action: () => {
-        setIsChangeRestaurantModalOpen(true);
-      }
-    });
   };
 
   if (loading) {
@@ -1056,7 +1043,7 @@ export const CashierPOS: React.FC = () => {
             {lockPinError ? (
               <p className="text-xs text-rose-600 font-bold animate-shake">{lockPinError}</p>
             ) : (
-              <p className="text-[11px] text-slate-400">أدخل رمز PIN للكاشير (الافتراضي 1234 أو 0000)</p>
+              <p className="text-[11px] text-slate-400 font-medium">أدخل رمز PIN للكاشير المحدد من الإدارة</p>
             )}
           </div>
 
@@ -1080,7 +1067,7 @@ export const CashierPOS: React.FC = () => {
                           setShift(prev => ({ ...prev, cashierName: cashierInputName.trim() }));
                         }
                       } else {
-                        setLockPinError('رمز PIN غير صحيح!');
+                        setLockPinError('رمز PIN غير صحيح! يرجى مراجعة إدارة المطعم');
                         setLockPinInput('');
                       }
                     }
@@ -1136,19 +1123,10 @@ export const CashierPOS: React.FC = () => {
             </button>
           </div>
 
-          {/* Bottom Security Controls for Manager */}
-          <div className="pt-2 border-t border-slate-100 flex items-center justify-between text-[11px] text-slate-500">
-            <span className="flex items-center gap-1">
-              <Lock size={12} className="text-amber-500" />
-              الجهاز مقيد بالفرع
-            </span>
-            <button
-              type="button"
-              onClick={handlePromptChangeRestaurant}
-              className="text-amber-700 hover:underline font-bold cursor-pointer"
-            >
-              إعدادات الفرع (المدير)
-            </button>
+          {/* Bottom Security Information */}
+          <div className="pt-2 border-t border-slate-100 flex items-center justify-center text-[11px] text-slate-400 gap-1.5 font-medium">
+            <Lock size={12} className="text-amber-500" />
+            <span>نظام كاشير مستقل ومقيد بهذا الفرع فقط</span>
           </div>
 
         </div>
@@ -1172,7 +1150,7 @@ export const CashierPOS: React.FC = () => {
             </div>
           </Link>
 
-          {/* 🔒 Locked Restaurant Badge (لا يمكن للكاشير التبديل بين المطاعم) */}
+          {/* 🔒 Locked Restaurant Badge (مقيد بالفرع بدون أي إمكانية للتبديل) */}
           <div className="flex items-center gap-2 bg-slate-50 border border-slate-200 px-3 py-1 rounded-xl shadow-sm">
             <div className="w-2 h-2 rounded-full bg-emerald-500" />
             <div className="leading-tight text-right">
@@ -1181,17 +1159,9 @@ export const CashierPOS: React.FC = () => {
               </span>
               <span className="text-[10px] text-slate-500 font-mono flex items-center gap-1">
                 <Lock size={10} className="text-amber-500 inline" />
-                فرع مقيد لهذا الجهاز فقط
+                فرع معتمد ومقفل للجهاز
               </span>
             </div>
-            <button
-              type="button"
-              onClick={handlePromptChangeRestaurant}
-              title="تغيير الفرع المقيد (يتطلب رمز PIN المدير 9999)"
-              className="p-1.5 hover:bg-slate-200 rounded-lg text-slate-400 hover:text-slate-700 transition-colors cursor-pointer mr-1"
-            >
-              <Settings size={13} />
-            </button>
           </div>
 
           {/* 📶 Network & Offline Sync Status Indicator */}
@@ -2244,76 +2214,7 @@ export const CashierPOS: React.FC = () => {
         </div>
       )}
 
-      {/* 11. Manager Change / Re-lock Restaurant Modal */}
-      {isChangeRestaurantModalOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm animate-fade-in" dir="rtl">
-          <div className="bg-white border border-slate-200 rounded-3xl w-full max-w-md p-6 space-y-4 shadow-2xl">
-            <div className="flex items-center justify-between border-b border-slate-200 pb-3">
-              <div className="flex items-center gap-2 text-slate-800 font-bold text-sm">
-                <Lock size={18} className="text-amber-500" />
-                <span>تعيين المطعم المقيد لهذا الجهاز</span>
-              </div>
-              <button
-                onClick={() => setIsChangeRestaurantModalOpen(false)}
-                className="p-1.5 text-slate-400 hover:text-slate-600 rounded-lg"
-              >
-                <X size={18} />
-              </button>
-            </div>
-
-            <p className="text-xs text-slate-600">
-              اختر المطعم أو الفرع الذي ترغب في تثبيت وقفل هذا الجهاز عليه. الكاشير لن يتمكن من رؤية أو التبديل إلى مطاعم أخرى.
-            </p>
-
-            <div className="space-y-2 max-h-60 overflow-y-auto pr-1">
-              {restaurants.map(rest => {
-                const isSelected = selectedRestaurant?.id === rest.id;
-                return (
-                  <button
-                    key={rest.id}
-                    type="button"
-                    onClick={() => {
-                      setSelectedRestaurant(rest);
-                      setLockedRestaurantId(rest.id);
-                      loadRestaurantDetails(rest.id);
-                      setIsChangeRestaurantModalOpen(false);
-                      alert(`تم تثبيت وقفل جهاز الكاشير بنجاح على: ${rest.name}`);
-                    }}
-                    className={`w-full p-3 rounded-2xl border text-right transition-all flex items-center justify-between cursor-pointer ${
-                      isSelected 
-                        ? 'bg-amber-50 border-amber-500 text-amber-900 shadow-sm' 
-                        : 'bg-slate-50 border-slate-200 text-slate-800 hover:bg-slate-100'
-                    }`}
-                  >
-                    <div>
-                      <div className="font-bold text-xs">{rest.name}</div>
-                      <div className="text-[10px] text-slate-400 font-mono mt-0.5">{rest.slug || rest.id}</div>
-                    </div>
-                    {isSelected && (
-                      <span className="text-xs font-bold text-amber-700 bg-amber-200/60 px-2 py-0.5 rounded-lg flex items-center gap-1">
-                        <Lock size={12} />
-                        المطعم الحالي
-                      </span>
-                    )}
-                  </button>
-                );
-              })}
-            </div>
-
-            <div className="pt-2 border-t border-slate-100 flex justify-end">
-              <button
-                type="button"
-                onClick={() => setIsChangeRestaurantModalOpen(false)}
-                className="px-5 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs rounded-xl font-bold cursor-pointer transition-colors"
-              >
-                إغلاق
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* 12. Thermal Tax Receipt Modal */}
+      {/* 11. Thermal Tax Receipt Modal */}
       {taxReceiptData && (
         <TaxReceiptModal
           isOpen={isReceiptModalOpen}

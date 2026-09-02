@@ -20,6 +20,7 @@ import {
   getLocalDeliveryZones, 
   syncDeliveryZones 
 } from '../../lib/deliveryHelper';
+import { getStoredCashierPin, setStoredCashierPin } from '../../lib/posOfflineStore';
 import { 
   Plus, 
   Trash2, 
@@ -64,7 +65,9 @@ import {
   ExternalLink,
   Target,
   Bike,
-  MonitorCheck
+  MonitorCheck,
+  Lock,
+  Key
 } from 'lucide-react';
 import { QRCodeSVG } from 'qrcode.react';
 import { 
@@ -127,6 +130,31 @@ export default function AdminDashboard() {
   const [newZoneTime, setNewZoneTime] = useState<string>('30-45 دقيقة');
   const [isSavingDeliveryZones, setIsSavingDeliveryZones] = useState(false);
   const [deliveryToast, setDeliveryToast] = useState<string | null>(null);
+
+  // POS Cashier PIN Management State
+  const [cashierPinInput, setCashierPinInput] = useState<string>('1234');
+  const [cashierPinSavedToast, setCashierPinSavedToast] = useState<string | null>(null);
+  const [showCashierPin, setShowCashierPin] = useState<boolean>(false);
+
+  useEffect(() => {
+    if (restaurant?.id) {
+      const pin = getStoredCashierPin(restaurant.id);
+      setCashierPinInput(pin || '1234');
+    }
+  }, [restaurant?.id]);
+
+  const handleSaveCashierPin = (e?: React.FormEvent) => {
+    if (e) e.preventDefault();
+    if (!restaurant?.id) return;
+    const clean = cashierPinInput.trim();
+    if (!clean || clean.length < 4) {
+      alert('يرجى كتابة رمز PIN مكون من 4 أرقام على الأقل');
+      return;
+    }
+    setStoredCashierPin(restaurant.id, clean);
+    setCashierPinSavedToast(`تم بنجاح حفظ وتعيين كلمة سر الكاشير الجديدة: ${clean}`);
+    setTimeout(() => setCashierPinSavedToast(null), 5000);
+  };
 
   const openAddProductModal = () => {
     const firstCatId = categories[0]?.id || '';
@@ -1991,6 +2019,80 @@ export default function AdminDashboard() {
           {/* Staff View */}
           {activeTab === 'staff' && (
             <div className="space-y-6 text-right">
+              {/* POS Cashier PIN Security Management Card */}
+              <div className="bg-white rounded-3xl border border-amber-200/80 shadow-sm p-6 sm:p-8 space-y-5">
+                <div className="flex items-center justify-between border-b border-gray-100 pb-4">
+                  <div>
+                    <h3 className="text-xl font-black text-gray-900 flex items-center gap-2">
+                      <Lock className="text-amber-500" size={22} />
+                      <span>تعيين كلمة سر / رمز PIN للكاشير (POS PIN)</span>
+                    </h3>
+                    <p className="text-xs text-gray-500 font-medium mt-1">
+                      أنت كمدير المطعم تحدد هنا كلمة المرور الخاصة بجهاز الكاشير. الكاشير لن يستطيع فتح النظام إلا بالرمز الذي تحدده أنت.
+                    </p>
+                  </div>
+                  <div className="p-3 bg-amber-50 text-amber-600 rounded-2xl">
+                    <Key size={22} />
+                  </div>
+                </div>
+
+                {cashierPinSavedToast && (
+                  <div className="p-3.5 bg-emerald-50 border border-emerald-200 text-emerald-800 rounded-2xl font-bold text-xs flex items-center gap-2 animate-in fade-in">
+                    <CheckCircle2 size={16} className="text-emerald-600 shrink-0" />
+                    <span>{cashierPinSavedToast}</span>
+                  </div>
+                )}
+
+                <form onSubmit={handleSaveCashierPin} className="space-y-4">
+                  <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-4 bg-gray-50 p-4 rounded-2xl border border-gray-100">
+                    <div className="flex-1 space-y-1 text-right">
+                      <label className="text-xs font-black text-gray-600 block">
+                        رمز PIN للكاشير (4 إلى 6 أرقام):
+                      </label>
+                      <div className="relative">
+                        <input
+                          type={showCashierPin ? "text" : "password"}
+                          value={cashierPinInput}
+                          onChange={e => setCashierPinInput(e.target.value)}
+                          placeholder="مثال: 5678"
+                          className="w-full bg-white border border-gray-200 focus:border-amber-500 rounded-xl px-4 py-3 font-mono font-bold text-base text-gray-900 outline-none shadow-sm"
+                          required
+                        />
+                        <button
+                          type="button"
+                          onClick={() => setShowCashierPin(!showCashierPin)}
+                          className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600 p-1"
+                        >
+                          {showCashierPin ? <EyeOff size={18} /> : <Eye size={18} />}
+                        </button>
+                      </div>
+                    </div>
+
+                    <div className="flex items-end gap-2 pt-2 sm:pt-0">
+                      <button
+                        type="submit"
+                        className="px-6 py-3.5 bg-amber-500 hover:bg-amber-600 text-white text-xs font-black rounded-xl shadow-md shadow-amber-500/20 transition-all cursor-pointer active:scale-95 flex items-center gap-2 whitespace-nowrap"
+                      >
+                        <Save size={16} />
+                        <span>حفظ كلمة سر الكاشير</span>
+                      </button>
+
+                      {restaurant?.id && (
+                        <a
+                          href={`/pos?restaurant=${restaurant.id}`}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="px-4 py-3.5 bg-slate-900 hover:bg-black text-white text-xs font-bold rounded-xl shadow-sm transition-all flex items-center gap-1.5 whitespace-nowrap"
+                        >
+                          <ExternalLink size={15} />
+                          <span>فتح الكاشير (POS)</span>
+                        </a>
+                      )}
+                    </div>
+                  </div>
+                </form>
+              </div>
+
               <div className="bg-white rounded-3xl border shadow-sm p-8">
                 <div className="flex items-center justify-between mb-6">
                   <h3 className="text-xl font-bold">إضافة نادل جديد</h3>
@@ -2244,6 +2346,76 @@ export default function AdminDashboard() {
           {/* Settings View */}
           {activeTab === 'settings' && restaurant && (
             <div className="max-w-3xl mx-auto animate-in fade-in slide-in-from-bottom-4 duration-500 space-y-8">
+              {/* POS Cashier PIN Management Card in Settings */}
+              <div className="bg-white p-6 md:p-8 rounded-[36px] border border-amber-100 shadow-xl shadow-gray-200/50 space-y-5">
+                <div className="flex items-center justify-between border-b pb-4">
+                  <div>
+                    <h3 className="text-xl font-black text-gray-900 flex items-center gap-2">
+                      <Lock className="text-amber-500" size={22} />
+                      <span>كلمة سر ورمز PIN الكاشير (POS PIN)</span>
+                    </h3>
+                    <p className="text-xs text-gray-500 font-medium mt-1">
+                      الرمز السري المخصص لتسجيل دخول موظف الكاشير لنقطة البيع التابعة لهذا المطعم
+                    </p>
+                  </div>
+                  <div className="p-3 bg-amber-50 text-amber-600 rounded-2xl">
+                    <Key size={22} />
+                  </div>
+                </div>
+
+                {cashierPinSavedToast && (
+                  <div className="p-3.5 bg-emerald-50 border border-emerald-200 text-emerald-800 rounded-2xl font-bold text-xs flex items-center gap-2 animate-in fade-in">
+                    <CheckCircle2 size={16} className="text-emerald-600 shrink-0" />
+                    <span>{cashierPinSavedToast}</span>
+                  </div>
+                )}
+
+                <form onSubmit={handleSaveCashierPin} className="flex flex-col sm:flex-row items-stretch sm:items-center gap-4 bg-gray-50 p-4 rounded-2xl border border-gray-100">
+                  <div className="flex-1 space-y-1 text-right">
+                    <label className="text-xs font-black text-gray-600 block">
+                      رمز PIN الخاص بالكاشير:
+                    </label>
+                    <div className="relative">
+                      <input
+                        type={showCashierPin ? "text" : "password"}
+                        value={cashierPinInput}
+                        onChange={e => setCashierPinInput(e.target.value)}
+                        placeholder="مثال: 5678"
+                        className="w-full bg-white border border-gray-200 focus:border-amber-500 rounded-xl px-4 py-3 font-mono font-bold text-base text-gray-900 outline-none shadow-sm"
+                        required
+                      />
+                      <button
+                        type="button"
+                        onClick={() => setShowCashierPin(!showCashierPin)}
+                        className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600 p-1"
+                      >
+                        {showCashierPin ? <EyeOff size={18} /> : <Eye size={18} />}
+                      </button>
+                    </div>
+                  </div>
+
+                  <div className="flex items-end gap-2 pt-2 sm:pt-0">
+                    <button
+                      type="submit"
+                      className="px-6 py-3.5 bg-amber-500 hover:bg-amber-600 text-white text-xs font-black rounded-xl shadow-md shadow-amber-500/20 transition-all cursor-pointer active:scale-95 flex items-center gap-2 whitespace-nowrap"
+                    >
+                      <Save size={16} />
+                      <span>حفظ الرمز</span>
+                    </button>
+
+                    <a
+                      href={`/pos?restaurant=${restaurant.id}`}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="px-4 py-3.5 bg-slate-900 hover:bg-black text-white text-xs font-bold rounded-xl shadow-sm transition-all flex items-center gap-1.5 whitespace-nowrap"
+                    >
+                      <ExternalLink size={15} />
+                      <span>شاشة POS</span>
+                    </a>
+                  </div>
+                </form>
+              </div>
+
               {/* 1. Subdomain & Links Card */}
               <div className="bg-white p-6 md:p-8 rounded-[36px] border border-gray-100 shadow-xl shadow-gray-200/50 space-y-6">
                 <div className="flex items-center justify-between border-b pb-4">
