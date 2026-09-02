@@ -1,3 +1,5 @@
+import { supabase } from './supabase';
+
 // Real-time Orders & Daily Sequence Service
 // Synchronizes Cashier POS, Customer App, and Admin Dashboard
 
@@ -32,7 +34,7 @@ export interface LiveOrder {
   is_offline?: boolean;
 }
 
-// 1. Get next unified sequential daily order number from server
+// 1. Get next unified sequential daily order number from server & database
 export async function getNextDailyOrderNumber(restaurantId: string): Promise<number> {
   const today = new Date().toISOString().slice(0, 10);
   const localKey = `qrieta_pos_seq_${restaurantId}_${today}`;
@@ -43,6 +45,35 @@ export async function getNextDailyOrderNumber(restaurantId: string): Promise<num
     localNext = currentLocal + 1;
   } catch (e) {
     localNext = 1;
+  }
+
+  // Also query Supabase directly for today's orders to guarantee accurate continuous sequence
+  let dbHighestSeq = 0;
+  try {
+    const startOfDay = new Date();
+    startOfDay.setHours(0, 0, 0, 0);
+
+    const { data: todayOrders } = await supabase
+      .from('orders')
+      .select('id, created_at, order_items(notes)')
+      .eq('restaurant_id', restaurantId)
+      .gte('created_at', startOfDay.toISOString());
+
+    if (Array.isArray(todayOrders)) {
+      dbHighestSeq = todayOrders.length;
+      todayOrders.forEach(ord => {
+        const note = ord.order_items?.[0]?.notes || '';
+        const match = note.match(/#(\d+)/);
+        if (match && match[1]) {
+          const parsed = parseInt(match[1], 10);
+          if (!isNaN(parsed) && parsed > dbHighestSeq) {
+            dbHighestSeq = parsed;
+          }
+        }
+      });
+    }
+  } catch (dbErr) {
+    console.warn('DB sequence check:', dbErr);
   }
 
   try {
@@ -58,8 +89,12 @@ export async function getNextDailyOrderNumber(restaurantId: string): Promise<num
     if (res.ok) {
       const data = await res.json();
       if (data?.daily_order_number) {
-        const serverNum = Number(data.daily_order_number);
-        // Save to local cache
+        let serverNum = Number(data.daily_order_number);
+        // Ensure serverNum is at least higher than what exists in Supabase
+        if (dbHighestSeq >= serverNum) {
+          serverNum = dbHighestSeq + 1;
+          syncDailyOrderSequence(restaurantId, serverNum).catch(() => {});
+        }
         try {
           localStorage.setItem(localKey, String(serverNum));
         } catch (e) {}
@@ -67,14 +102,15 @@ export async function getNextDailyOrderNumber(restaurantId: string): Promise<num
       }
     }
   } catch (err) {
-    console.warn('Daily sequence server request failed, using local sequence counter:', err);
+    console.warn('Daily sequence server request failed, using database/local sequence counter:', err);
   }
 
-  // Fallback to local sequence counter
+  // Fallback to highest known sequence + 1
+  const finalSeq = Math.max(localNext, dbHighestSeq + 1);
   try {
-    localStorage.setItem(localKey, String(localNext));
+    localStorage.setItem(localKey, String(finalSeq));
   } catch (e) {}
-  return localNext;
+  return finalSeq;
 }
 
 // 2. Sync server sequence if Cashier generated a number locally or manually
@@ -126,7 +162,7 @@ export async function registerLiveOrder(order: LiveOrder): Promise<void> {
   }
 }
 
-// 4. Fetch live orders for restaurant
+// 4. Fetch live orders for restaurant (Server + Supabase + LocalStorage)
 export async function fetchLiveOrders(restaurantId: string): Promise<LiveOrder[]> {
   let serverOrders: LiveOrder[] = [];
 
@@ -139,7 +175,67 @@ export async function fetchLiveOrders(restaurantId: string): Promise<LiveOrder[]
       }
     }
   } catch (err) {
-    console.warn('Fetch live orders server error, checking local storage:', err);
+    console.warn('Fetch live orders server error, checking Supabase & local storage:', err);
+  }
+
+  // If server returned no orders or failed, query Supabase directly as robust fallback
+  if (serverOrders.length === 0) {
+    try {
+      const { data: dbOrders, error } = await supabase
+        .from('orders')
+        .select('*, order_items(*, products(*)), tables(table_number)')
+        .eq('restaurant_id', restaurantId)
+        .order('created_at', { ascending: false })
+        .limit(60);
+
+      if (!error && Array.isArray(dbOrders)) {
+        serverOrders = dbOrders.map((dbo: any) => {
+          const firstNote = dbo.order_items?.[0]?.notes || '';
+          const isCustomer = firstNote.includes('[طلب زبون') || (!dbo.waiter_id && (dbo.status === 'new' || dbo.status === 'preparing'));
+          const numMatch = firstNote.match(/#(\d+)/);
+          const dailyNum = numMatch ? parseInt(numMatch[1], 10) : dbo.id;
+
+          let orderType: 'dine_in' | 'delivery' | 'takeaway' = 'dine_in';
+          if (firstNote.includes('دليفري')) orderType = 'delivery';
+          else if (firstNote.includes('سفري')) orderType = 'takeaway';
+
+          const tableNumMatch = firstNote.match(/طاولة\s*([^|\]]+)/);
+          const tableNum = dbo.tables?.table_number || (tableNumMatch ? tableNumMatch[1].trim() : null);
+
+          const nameMatch = firstNote.match(/الاسم:\s*([^|\]]+)/);
+          const phoneMatch = firstNote.match(/هاتف:\s*([^|\]]+)/);
+          const addrMatch = firstNote.match(/العنوان:\s*([^|\]]+)/);
+
+          return {
+            id: dbo.id,
+            daily_order_number: dailyNum,
+            restaurant_id: dbo.restaurant_id,
+            source: isCustomer ? 'customer_app' : 'pos',
+            order_type: orderType,
+            table_id: dbo.table_id,
+            table_number: tableNum,
+            customer_name: nameMatch ? nameMatch[1].trim() : undefined,
+            customer_phone: phoneMatch ? phoneMatch[1].trim() : undefined,
+            delivery_address: addrMatch ? addrMatch[1].trim() : undefined,
+            notes: firstNote,
+            total_price: Number(dbo.total_price || 0),
+            status: dbo.status || 'new',
+            payment_status: 'unpaid',
+            items: (dbo.order_items || []).map((it: any) => ({
+              id: it.product_id,
+              name: it.products?.name_ar || it.products?.name_en || 'صنف',
+              quantity: it.quantity,
+              price: Number(it.price_at_order || 0),
+              notes: it.notes,
+              sugar_level: it.sugar_level
+            })),
+            created_at: dbo.created_at
+          };
+        });
+      }
+    } catch (e) {
+      console.warn('Direct Supabase fetch live orders fallback error:', e);
+    }
   }
 
   // Merge with local storage in case of offline/recent orders
@@ -175,7 +271,7 @@ export async function updateLiveOrderStatus(
   status: 'new' | 'preparing' | 'completed' | 'cancelled',
   paymentStatus?: 'paid' | 'unpaid'
 ): Promise<void> {
-  // Update local
+  // 1. Update local cache
   try {
     const key = `qrieta_live_orders_${restaurantId}`;
     const raw = localStorage.getItem(key);
@@ -190,7 +286,24 @@ export async function updateLiveOrderStatus(
     }
   } catch (e) {}
 
-  // Update server
+  // 2. Update Supabase directly
+  try {
+    const updatePayload: any = { status };
+    if (status === 'preparing') updatePayload.preparing_at = new Date().toISOString();
+    if (status === 'completed') updatePayload.delivered_at = new Date().toISOString();
+    if (status === 'cancelled') updatePayload.cancelled_at = new Date().toISOString();
+
+    const numId = parseInt(String(orderId), 10);
+    if (!isNaN(numId)) {
+      await supabase.from('orders').update(updatePayload).eq('id', numId);
+    } else {
+      await supabase.from('orders').update(updatePayload).eq('id', orderId);
+    }
+  } catch (e) {
+    console.warn('Supabase status update error:', e);
+  }
+
+  // 3. Update server API
   try {
     await fetch(`/api/orders/live/${orderId}/status`, {
       method: 'PATCH',
@@ -372,34 +485,62 @@ export function updateCustomerDeviceOrderStatus(
 
 export function syncCustomerDeviceOrdersWithLive(
   restaurantId: string,
-  liveOrders: LiveOrder[]
+  liveOrders: LiveOrder[],
+  currentTableNumber?: string | number | null,
+  currentTableId?: string | null,
+  customerPhone?: string | null
 ): CustomerSavedOrder[] {
   const localOrders = getCustomerDeviceOrders(restaurantId);
-  if (!liveOrders || liveOrders.length === 0) return localOrders;
+  const localMap = new Map<string, CustomerSavedOrder>();
+  localOrders.forEach(o => localMap.set(String(o.id), o));
 
-  let hasChanged = false;
-  const updated = localOrders.map(local => {
-    const matchingLive = liveOrders.find(
-      l => String(l.id) === String(local.id) ||
-           (l.daily_order_number && local.daily_order_number && Number(l.daily_order_number) === Number(local.daily_order_number))
-    );
-    if (matchingLive && matchingLive.status !== local.status) {
-      hasChanged = true;
-      return {
-        ...local,
-        status: matchingLive.status,
-        payment_status: matchingLive.payment_status || local.payment_status,
-      };
-    }
-    return local;
-  });
+  if (Array.isArray(liveOrders)) {
+    liveOrders.forEach(live => {
+      if (live.source !== 'customer_app') return;
 
-  if (hasChanged) {
-    try {
-      localStorage.setItem(`qrieta_customer_orders_${restaurantId}`, JSON.stringify(updated));
-    } catch (e) {}
+      const matchesTable = (currentTableNumber && live.table_number && String(live.table_number).trim() === String(currentTableNumber).trim()) ||
+                            (currentTableId && live.table_id && String(live.table_id) === String(currentTableId));
+      const matchesPhone = customerPhone && live.customer_phone && String(live.customer_phone).trim() === String(customerPhone).trim();
+      const existing = localMap.get(String(live.id)) || 
+                       Array.from(localMap.values()).find(lo => lo.daily_order_number && Number(lo.daily_order_number) === Number(live.daily_order_number));
+
+      if (existing) {
+        existing.status = live.status;
+        existing.payment_status = live.payment_status || existing.payment_status;
+        if (live.daily_order_number) existing.daily_order_number = live.daily_order_number;
+      } else if (matchesTable || matchesPhone) {
+        const newSavedOrder: CustomerSavedOrder = {
+          id: live.id,
+          daily_order_number: Number(live.daily_order_number) || 1,
+          restaurant_id: live.restaurant_id,
+          order_type: live.order_type,
+          table_number: live.table_number,
+          delivery_address: live.delivery_address,
+          total_price: live.total_price,
+          status: live.status,
+          payment_status: live.payment_status,
+          created_at: live.created_at,
+          items: (live.items || []).map(it => ({
+            name: it.name,
+            quantity: it.quantity,
+            price: it.price,
+            notes: it.notes,
+            options: it.options
+          }))
+        };
+        localMap.set(String(live.id), newSavedOrder);
+      }
+    });
   }
 
-  return updated;
+  const result = Array.from(localMap.values()).sort(
+    (a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
+  );
+
+  try {
+    localStorage.setItem(`qrieta_customer_orders_${restaurantId}`, JSON.stringify(result.slice(0, 30)));
+  } catch (e) {}
+
+  return result;
 }
 

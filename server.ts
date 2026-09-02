@@ -567,7 +567,7 @@ async function startServer() {
         }
       });
 
-      // Also count today's orders in database from 00:00:00 local time
+      // Also count today's orders in database and inspect highest daily order number
       let dbCount = 0;
       const supabaseUrl = process.env.VITE_SUPABASE_URL || process.env.SUPABASE_URL;
       const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
@@ -580,14 +580,24 @@ async function startServer() {
 
         const startOfDay = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0, 0, 0, 0);
         try {
-          const { count, error } = await client
+          const { data: dbOrders, error } = await client
             .from("orders")
-            .select("id", { count: "exact", head: true })
+            .select("id, created_at, order_items(notes)")
             .eq("restaurant_id", restaurant_id)
             .gte("created_at", startOfDay.toISOString());
 
-          if (!error && typeof count === 'number') {
-            dbCount = count;
+          if (!error && Array.isArray(dbOrders)) {
+            dbCount = dbOrders.length;
+            dbOrders.forEach((ord: any) => {
+              const note = ord.order_items?.[0]?.notes || '';
+              const match = note.match(/#(\d+)/);
+              if (match && match[1]) {
+                const parsed = parseInt(match[1], 10);
+                if (!isNaN(parsed) && parsed > dbCount) {
+                  dbCount = parsed;
+                }
+              }
+            });
           }
         } catch (dbErr) {
           console.warn("Daily count error from DB:", dbErr);
@@ -695,19 +705,113 @@ async function startServer() {
     }
   });
 
-  // GET /api/orders/live - Get live orders for a restaurant
-  app.get("/api/orders/live", (req, res) => {
+  // GET /api/orders/live - Get live orders for a restaurant (merges in-memory and Supabase)
+  app.get("/api/orders/live", async (req, res) => {
     const restaurantId = req.query.restaurant_id as string;
     if (!restaurantId) {
       return res.status(400).json({ error: "معرف المطعم مطلوب." });
     }
 
-    const orders = liveOrdersStore[restaurantId] || [];
+    let orders = liveOrdersStore[restaurantId] || [];
+
+    // Also enrich from Supabase if available so orders persist across server restarts or different tabs
+    const supabaseUrl = process.env.VITE_SUPABASE_URL || process.env.SUPABASE_URL;
+    const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+    const anonKey = process.env.VITE_SUPABASE_ANON_KEY || process.env.SUPABASE_ANON_KEY;
+
+    if (supabaseUrl) {
+      try {
+        const client = serviceRoleKey
+          ? createClient(supabaseUrl, serviceRoleKey)
+          : createClient(supabaseUrl, anonKey || "");
+
+        const { data: dbOrders, error } = await client
+          .from("orders")
+          .select("*, order_items(*, products(*)), tables(table_number)")
+          .eq("restaurant_id", restaurantId)
+          .order("created_at", { ascending: false })
+          .limit(60);
+
+        if (!error && Array.isArray(dbOrders)) {
+          const mergedMap = new Map<string, any>();
+          
+          // First add existing in-memory live orders
+          orders.forEach((o: any) => mergedMap.set(String(o.id), o));
+
+          // Then map dbOrders
+          dbOrders.forEach((dbo: any) => {
+            const firstNote = dbo.order_items?.[0]?.notes || '';
+            const isCustomer = firstNote.includes('[طلب زبون') || (!dbo.waiter_id && (dbo.status === 'new' || dbo.status === 'preparing'));
+            const numMatch = firstNote.match(/#(\d+)/);
+            const dailyNum = numMatch ? parseInt(numMatch[1], 10) : dbo.id;
+
+            let orderType = 'dine_in';
+            if (firstNote.includes('دليفري')) orderType = 'delivery';
+            else if (firstNote.includes('سفري')) orderType = 'takeaway';
+
+            const tableNumMatch = firstNote.match(/طاولة\s*([^|\]]+)/);
+            const tableNum = dbo.tables?.table_number || (tableNumMatch ? tableNumMatch[1].trim() : null);
+
+            // Delivery info
+            const nameMatch = firstNote.match(/الاسم:\s*([^|\]]+)/);
+            const phoneMatch = firstNote.match(/هاتف:\s*([^|\]]+)/);
+            const addrMatch = firstNote.match(/العنوان:\s*([^|\]]+)/);
+
+            const mappedOrder = {
+              id: dbo.id,
+              daily_order_number: dailyNum,
+              restaurant_id: dbo.restaurant_id,
+              source: isCustomer ? 'customer_app' : 'pos',
+              order_type: orderType,
+              table_id: dbo.table_id,
+              table_number: tableNum,
+              customer_name: nameMatch ? nameMatch[1].trim() : undefined,
+              customer_phone: phoneMatch ? phoneMatch[1].trim() : undefined,
+              delivery_address: addrMatch ? addrMatch[1].trim() : undefined,
+              notes: firstNote,
+              total_price: Number(dbo.total_price || 0),
+              status: dbo.status || 'new',
+              payment_status: 'unpaid',
+              items: (dbo.order_items || []).map((it: any) => ({
+                id: it.product_id,
+                name: it.products?.name_ar || it.products?.name_en || 'صنف',
+                quantity: it.quantity,
+                price: Number(it.price_at_order || 0),
+                notes: it.notes,
+                sugar_level: it.sugar_level
+              })),
+              created_at: dbo.created_at
+            };
+
+            const existing = mergedMap.get(String(dbo.id));
+            if (!existing) {
+              mergedMap.set(String(dbo.id), mappedOrder);
+            } else {
+              // Merge status if db has newer status
+              mergedMap.set(String(dbo.id), {
+                ...mappedOrder,
+                ...existing,
+                status: dbo.status || existing.status
+              });
+            }
+          });
+
+          orders = Array.from(mergedMap.values()).sort(
+            (a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
+          );
+          liveOrdersStore[restaurantId] = orders;
+          persistLiveOrders();
+        }
+      } catch (dbErr) {
+        console.warn("Live orders DB sync error:", dbErr);
+      }
+    }
+
     res.status(200).json({ success: true, orders });
   });
 
   // PATCH /api/orders/live/:id/status - Update status of an order
-  app.patch("/api/orders/live/:id/status", (req, res) => {
+  app.patch("/api/orders/live/:id/status", async (req, res) => {
     const orderId = req.params.id;
     const { restaurant_id, status, payment_status } = req.body;
     if (!restaurant_id) {
@@ -717,15 +821,40 @@ async function startServer() {
     try {
       const orders = liveOrdersStore[restaurant_id] || [];
       const order = orders.find((o: any) => String(o.id) === String(orderId));
-      if (!order) {
-        return res.status(404).json({ error: "الطلب غير موجود" });
+      if (order) {
+        if (status) order.status = status;
+        if (payment_status) order.payment_status = payment_status;
+        order.updated_at = new Date().toISOString();
+        persistLiveOrders();
       }
 
-      if (status) order.status = status;
-      if (payment_status) order.payment_status = payment_status;
-      order.updated_at = new Date().toISOString();
+      // Also update Supabase orders table
+      const supabaseUrl = process.env.VITE_SUPABASE_URL || process.env.SUPABASE_URL;
+      const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+      const anonKey = process.env.VITE_SUPABASE_ANON_KEY || process.env.SUPABASE_ANON_KEY;
 
-      persistLiveOrders();
+      if (supabaseUrl && status) {
+        try {
+          const client = serviceRoleKey
+            ? createClient(supabaseUrl, serviceRoleKey)
+            : createClient(supabaseUrl, anonKey || "");
+
+          const updatePayload: any = { status };
+          if (status === 'preparing') updatePayload.preparing_at = new Date().toISOString();
+          if (status === 'completed' || status === 'delivered') updatePayload.delivered_at = new Date().toISOString();
+          if (status === 'cancelled') updatePayload.cancelled_at = new Date().toISOString();
+
+          const numId = parseInt(orderId, 10);
+          if (!isNaN(numId)) {
+            await client.from("orders").update(updatePayload).eq("id", numId);
+          } else {
+            await client.from("orders").update(updatePayload).eq("id", orderId);
+          }
+        } catch (dbErr) {
+          console.warn("DB status update error:", dbErr);
+        }
+      }
+
       res.status(200).json({ success: true, order });
     } catch (err: any) {
       res.status(500).json({ error: err.message || "فشل في تحديث حالة الطلب" });

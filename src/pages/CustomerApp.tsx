@@ -134,19 +134,32 @@ export default function CustomerApp() {
   // Load and continuously sync customer orders from device and live server
   useEffect(() => {
     if (!restaurant?.id) return;
+
+    const currentTableNum = table?.table_number || (tableId && tableId !== 'delivery' && tableId !== 'd' ? tableId : null);
+    const currentTblId = table?.id || (tableId && /^[0-9a-f]{8}-[0-9a-f]{4}/i.test(tableId) ? tableId : null);
+
     const initialOrders = getCustomerDeviceOrders(restaurant.id);
     setCustomerOrders(initialOrders);
 
-    const interval = setInterval(async () => {
+    const syncOrders = async () => {
       try {
         const live = await fetchLiveOrders(restaurant.id);
-        const updated = syncCustomerDeviceOrdersWithLive(restaurant.id, live);
+        const updated = syncCustomerDeviceOrdersWithLive(
+          restaurant.id, 
+          live, 
+          currentTableNum, 
+          currentTblId,
+          deliveryInfo.phone
+        );
         setCustomerOrders(updated);
       } catch (e) {}
-    }, 4000);
+    };
+
+    syncOrders();
+    const interval = setInterval(syncOrders, 3500);
 
     return () => clearInterval(interval);
-  }, [restaurant?.id]);
+  }, [restaurant?.id, table?.id, table?.table_number, tableId, deliveryInfo.phone]);
 
   const activeCustomerOrders = useMemo(() => {
     return customerOrders.filter(o => o.status === 'new' || o.status === 'preparing');
@@ -2196,7 +2209,7 @@ export default function CustomerApp() {
         >
           <div className="flex items-center gap-3">
             <span className="w-9 h-9 rounded-xl bg-orange-500/25 border border-orange-500/40 text-orange-400 flex items-center justify-center font-mono font-black text-sm shrink-0">
-              #{latestActiveOrder.daily_order_number}
+              #{getDisplayOrderNumber(latestActiveOrder)}
             </span>
             <div className="text-right">
               <div className="flex items-center gap-1.5">
@@ -2300,7 +2313,7 @@ export default function CustomerApp() {
                         <div className="flex items-center justify-between gap-2 border-b border-gray-100 pb-3">
                           <div className="flex items-center gap-2.5">
                             <span className="px-3 py-1 bg-gradient-to-r from-gray-900 to-gray-800 text-white font-mono font-black text-sm rounded-xl shadow-xs">
-                              #{ord.daily_order_number || ord.id}
+                              #{getDisplayOrderNumber(ord)}
                             </span>
                             <div>
                               <span className="font-black text-xs text-gray-900 block">

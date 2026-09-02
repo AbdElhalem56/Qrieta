@@ -1,0 +1,256 @@
+{
+  "test-res": [
+    {
+      "id": 9999,
+      "restaurant_id": "test-res",
+      "source": "customer_app",
+      "daily_order_number": 1,
+      "items": [],
+      "total_price": 50,
+      "status": "new",
+      "updated_at": "2026-09-02T22:51:59.461Z"
+    }
+  ],
+  "d0b85fda-0bfa-4781-808d-0121a270ff56": [
+    {
+      "id": 69,
+      "daily_order_number": 7,
+      "restaurant_id": "d0b85fda-0bfa-4781-808d-0121a270ff56",
+      "source": "customer_app",
+      "order_type": "dine_in",
+      "table_id": "747c6308-6e32-4fc6-b016-babd7e85c5e9",
+      "table_number": "5",
+      "notes": "[طلب زبون #7 | 🍽️ صالة - طاولة 5] - [درجة السكر: بدون سكر | كمية الثلج: بدون ثلج]",
+      "total_price": 91.2,
+      "status": "new",
+      "payment_status": "unpaid",
+      "items": [
+        {
+          "id": "6d89d06b-5ff0-4c16-a8b6-5e2f69741b4f",
+          "name": "عصير مانجو",
+          "quantity": 1,
+          "price": 80,
+          "notes": "[طلب زبون #7 | 🍽️ صالة - طاولة 5] - [درجة السكر: بدون سكر | كمية الثلج: بدون ثلج]",
+          "sugar_level": "none"
+        }
+      ],
+      "created_at": "2026-09-02T22:47:52.19707+00:00"
+    },
+    {
+      "id": 68,
+      "daily_order_number": 6,
+      "restaurant_id": "d0b85fda-0bfa-4781-808d-0121a270ff56",
+      "source": "customer_app",
+      "order_type": "dine_in",
+      "table_id": "747c6308-6e32-4fc6-b016-babd7e85c5e9",
+      "table_number": "5",
+      "notes": "[طلب زبون #6 | 🍽️ صالة - طاولة 5] - [درجة السكر: بدون سكر]",
+      "total_price": 96.9,
+      "status": "new",
+      "payment_status": "unpaid",
+      "items": [
+        {
+          "id": "8b8676dc-eb7b-47b7-88a0-5f81bff20123",
+          "name": "إسبريسو دبل",
+          "quantity": 1,
+          "price": 85,
+          "notes": "[طلب زبون #6 | 🍽️ صالة - طاولة 5] - [درجة السكر: بدون سكر]",
+          "sugar_level": "none"
+        }
+      ],
+      "created_at": "2026-09-02T22:46:32.078657+00:00"
+    },
+    {
+      "id": 67,
+      "daily_order_number": 5,
+      "restaurant_id": "d0b85fda-0bfa-4781-808d-0121a270ff56",
+      "source": "customer_app",
+      "order_type": "dine_in",
+      "table_id": "10a17e2b-f460-453c-860f-8cf48d21d780",
+      "table_number": "4",
+      "notes": "[طلب زبون #5 | 🍽️ صالة - طاولة 4] - [درجة السكر: بدون سكر]",
+      "total_price": 96.9,
+      "status": "new",
+      "payment_status": "unpaid",
+      "items": [
+        {
+          "id": "8b8676dc-eb7b-47b7-88a0-5f81bff20123",
+          "name": "إسبريسو دبل",
+          "quantity": 1,
+          "price": 85,
+          "notes": "[طلب زبون #5 | 🍽️ صالة - طاولة 4] - [درجة السكر: بدون سكر]",
+          "sugar_level": "none"
+        }
+      ],
+      "created_at": "2026-09-02T22:04:40.007151+00:00"
+    },
+    {
+      "id": 66,
+      "daily_order_number": 4,
+      "restaurant_id": "d0b85fda-0bfa-4781-808d-0121a270ff56",
+      "source": "customer_app",
+      "order_type": "dine_in",
+      "table_id": "10a17e2b-f460-453c-860f-8cf48d21d780",
+      "table_number": "4",
+      "notes": "[طلب زبون #4 | 🍽️ صالة - طاولة 4] - [درجة السكر: بدون سكر]",
+      "total_price": 74.1,
+      "status": "new",
+      "payment_status": "unpaid",
+      "items": [
+        {
+          "id": "1048b9d2-e568-4f67-9ab3-38f0a6ae7fa3",
+          "name": "إسبريسو",
+          "quantity": 1,
+          "price": 65,
+          "notes": "[طلب زبون #4 | 🍽️ صالة - طاولة 4] - [درجة السكر: بدون سكر]",
+          "sugar_level": "none"
+        }
+      ],
+      "created_at": "2026-09-02T22:03:12.688269+00:00"
+    },
+    {
+      "id": 65,
+      "daily_order_number": 6,
+      "restaurant_id": "d0b85fda-0bfa-4781-808d-0121a270ff56",
+      "source": "pos",
+      "order_type": "dine_in",
+      "table_id": "747c6308-6e32-4fc6-b016-babd7e85c5e9",
+      "table_number": "5",
+      "notes": "[طلب كاشير POS #6 | طاولة 5]",
+      "total_price": 153.22,
+      "status": "delivered",
+      "payment_status": "unpaid",
+      "items": [
+        {
+          "id": "95ccc11b-0ad6-46c3-8303-083fcdd69b8a",
+          "name": "آيس موكا",
+          "quantity": 1,
+          "price": 120,
+          "notes": "[طلب كاشير POS #6 | طاولة 5]",
+          "sugar_level": null
+        }
+      ],
+      "created_at": "2026-09-02T22:02:54.688439+00:00"
+    },
+    {
+      "id": 64,
+      "daily_order_number": 3,
+      "restaurant_id": "d0b85fda-0bfa-4781-808d-0121a270ff56",
+      "source": "customer_app",
+      "order_type": "dine_in",
+      "table_id": "10a17e2b-f460-453c-860f-8cf48d21d780",
+      "table_number": "4",
+      "notes": "[طلب زبون #3 | 🍽️ صالة - طاولة 4] - [درجة السكر: بدون سكر]",
+      "total_price": 96.9,
+      "status": "new",
+      "payment_status": "unpaid",
+      "items": [
+        {
+          "id": "8b8676dc-eb7b-47b7-88a0-5f81bff20123",
+          "name": "إسبريسو دبل",
+          "quantity": 1,
+          "price": 85,
+          "notes": "[طلب زبون #3 | 🍽️ صالة - طاولة 4] - [درجة السكر: بدون سكر]",
+          "sugar_level": "none"
+        }
+      ],
+      "created_at": "2026-09-02T22:02:16.279418+00:00"
+    },
+    {
+      "id": 63,
+      "daily_order_number": 2,
+      "restaurant_id": "d0b85fda-0bfa-4781-808d-0121a270ff56",
+      "source": "customer_app",
+      "order_type": "dine_in",
+      "table_id": "10a17e2b-f460-453c-860f-8cf48d21d780",
+      "table_number": "4",
+      "notes": "[طلب زبون #2 | 🍽️ صالة - طاولة 4] - [درجة السكر: بدون سكر]",
+      "total_price": 85.5,
+      "status": "new",
+      "payment_status": "unpaid",
+      "items": [
+        {
+          "id": "5d072c7e-f754-4d4b-964e-18834d1f9496",
+          "name": "أمريكانو",
+          "quantity": 1,
+          "price": 75,
+          "notes": "[طلب زبون #2 | 🍽️ صالة - طاولة 4] - [درجة السكر: بدون سكر]",
+          "sugar_level": "none"
+        }
+      ],
+      "created_at": "2026-09-02T22:00:35.668089+00:00"
+    },
+    {
+      "id": 62,
+      "daily_order_number": 1,
+      "restaurant_id": "d0b85fda-0bfa-4781-808d-0121a270ff56",
+      "source": "customer_app",
+      "order_type": "dine_in",
+      "table_id": "bf90c3ac-e3af-40cd-9dcf-fd8bb2fa1745",
+      "table_number": "3",
+      "notes": "[طلب زبون #1 | 🍽️ صالة - طاولة 3] - [درجة السكر: بدون سكر]",
+      "total_price": 74.1,
+      "status": "new",
+      "payment_status": "unpaid",
+      "items": [
+        {
+          "id": "1048b9d2-e568-4f67-9ab3-38f0a6ae7fa3",
+          "name": "إسبريسو",
+          "quantity": 1,
+          "price": 65,
+          "notes": "[طلب زبون #1 | 🍽️ صالة - طاولة 3] - [درجة السكر: بدون سكر]",
+          "sugar_level": "none"
+        }
+      ],
+      "created_at": "2026-09-02T21:59:32.737731+00:00"
+    },
+    {
+      "id": 61,
+      "daily_order_number": 5,
+      "restaurant_id": "d0b85fda-0bfa-4781-808d-0121a270ff56",
+      "source": "pos",
+      "order_type": "dine_in",
+      "table_id": "694d85c4-2cc4-44ab-bb6a-b32338426c1c",
+      "table_number": "1",
+      "notes": "[طلب كاشير POS #5 | طاولة 1]",
+      "total_price": 178.75,
+      "status": "delivered",
+      "payment_status": "unpaid",
+      "items": [
+        {
+          "id": "81effb6c-7a9f-4099-8368-3b68f71254bd",
+          "name": "تشيز كيك فراولة",
+          "quantity": 1,
+          "price": 140,
+          "notes": "[طلب كاشير POS #5 | طاولة 1]",
+          "sugar_level": null
+        }
+      ],
+      "created_at": "2026-09-02T21:58:34.020163+00:00"
+    },
+    {
+      "id": 60,
+      "daily_order_number": 60,
+      "restaurant_id": "d0b85fda-0bfa-4781-808d-0121a270ff56",
+      "source": "customer_app",
+      "order_type": "dine_in",
+      "table_id": "bf90c3ac-e3af-40cd-9dcf-fd8bb2fa1745",
+      "table_number": "3",
+      "notes": "[درجة السكر: بدون سكر]",
+      "total_price": 74.1,
+      "status": "new",
+      "payment_status": "unpaid",
+      "items": [
+        {
+          "id": "1048b9d2-e568-4f67-9ab3-38f0a6ae7fa3",
+          "name": "إسبريسو",
+          "quantity": 1,
+          "price": 65,
+          "notes": "[درجة السكر: بدون سكر]",
+          "sugar_level": "none"
+        }
+      ],
+      "created_at": "2026-09-02T21:38:45.573248+00:00"
+    }
+  ]
+}

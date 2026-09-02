@@ -359,7 +359,7 @@ export const CashierPOS: React.FC = () => {
           supabase.from('categories').select('*').eq('restaurant_id', restaurantId).order('name_ar'),
           supabase.from('products').select('*').eq('restaurant_id', restaurantId),
           supabase.from('tables').select('*').eq('restaurant_id', restaurantId).order('table_number'),
-          supabase.from('orders').select('*').eq('restaurant_id', restaurantId).order('created_at', { ascending: false }).limit(50)
+          supabase.from('orders').select('*, order_items(*, products(*)), tables(table_number)').eq('restaurant_id', restaurantId).order('created_at', { ascending: false }).limit(60)
         ]);
 
         const loadedCats = catsRes.data || [];
@@ -377,7 +377,75 @@ export const CashierPOS: React.FC = () => {
           setStockMap(initialStock);
         }
         if (loadedTables.length > 0) setTables(loadedTables);
-        if (loadedOrders.length > 0) setActiveOrders(loadedOrders);
+        if (loadedOrders.length > 0) {
+          const formattedOrders = loadedOrders.map((ord: any) => {
+            const dailyNum = getDisplayOrderNumber(ord);
+            const firstNote = ord.order_items?.[0]?.notes || '';
+            let orderType = ord.order_type || 'dine_in';
+            if (firstNote.includes('دليفري')) orderType = 'delivery';
+            else if (firstNote.includes('سفري')) orderType = 'takeaway';
+
+            const tableNum = ord.tables?.table_number || ord.table_number || (firstNote.match(/طاولة\s*([^|\]]+)/)?.[1]?.trim()) || null;
+
+            return {
+              ...ord,
+              order_type: orderType,
+              daily_order_number: dailyNum,
+              table_number: tableNum,
+              items: Array.isArray(ord.order_items) && ord.order_items.length > 0
+                ? ord.order_items.map((it: any) => ({
+                    name: it.products?.name_ar || it.products?.name_en || 'صنف',
+                    quantity: it.quantity,
+                    price: Number(it.price_at_order || 0),
+                    notes: it.notes,
+                  }))
+                : (ord.items || [])
+            };
+          });
+          setActiveOrders(formattedOrders);
+
+          // Immediately sync customer app orders to customerLiveOrders so they never miss showing in طلبات الزبائن
+          const customerOrdersFromDb: LiveOrder[] = formattedOrders
+            .filter((ord: any) => {
+              const firstNote = ord.order_items?.[0]?.notes || ord.notes || '';
+              return firstNote.includes('[طلب زبون') || (!ord.waiter_id && (ord.status === 'new' || ord.status === 'preparing'));
+            })
+            .map((ord: any) => {
+              const firstNote = ord.order_items?.[0]?.notes || ord.notes || '';
+              const nameMatch = firstNote.match(/الاسم:\s*([^|\]]+)/);
+              const phoneMatch = firstNote.match(/هاتف:\s*([^|\]]+)/);
+              const addrMatch = firstNote.match(/العنوان:\s*([^|\]]+)/);
+              return {
+                id: ord.id,
+                daily_order_number: ord.daily_order_number || getDisplayOrderNumber(ord),
+                restaurant_id: ord.restaurant_id,
+                source: 'customer_app' as const,
+                order_type: (ord.order_type as any) || 'dine_in',
+                table_id: ord.table_id,
+                table_number: ord.table_number,
+                customer_name: nameMatch ? nameMatch[1].trim() : undefined,
+                customer_phone: phoneMatch ? phoneMatch[1].trim() : undefined,
+                delivery_address: addrMatch ? addrMatch[1].trim() : undefined,
+                notes: firstNote,
+                total_price: Number(ord.total_price || 0),
+                status: ord.status || 'new',
+                payment_status: ord.payment_status || 'unpaid',
+                items: ord.items || [],
+                created_at: ord.created_at
+              };
+            });
+
+          if (customerOrdersFromDb.length > 0) {
+            setCustomerLiveOrders(prev => {
+              const map = new Map<string, LiveOrder>();
+              customerOrdersFromDb.forEach(co => map.set(String(co.id), co));
+              prev.forEach(po => map.set(String(po.id), po));
+              return Array.from(map.values()).sort(
+                (a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
+              );
+            });
+          }
+        }
 
         // Save fresh snapshot to offline cache
         saveCachedRestaurantData(restaurantId, {
@@ -449,7 +517,11 @@ export const CashierPOS: React.FC = () => {
       try {
         const list = await fetchLiveOrders(selectedRestaurant.id);
         if (!isMounted) return;
-        const customerOnly = list.filter(o => o.source === 'customer_app');
+        const customerOnly = list.filter(o => 
+          o.source === 'customer_app' || 
+          (typeof o.notes === 'string' && o.notes.includes('[طلب زبون')) ||
+          (typeof o.delivery_notes === 'string' && o.delivery_notes.includes('[طلب زبون'))
+        );
         setCustomerLiveOrders(customerOnly);
 
         const unhandledNew = customerOnly.filter(o => o.status === 'new');
@@ -469,10 +541,30 @@ export const CashierPOS: React.FC = () => {
     };
 
     pollOrders();
-    const interval = setInterval(pollOrders, 4000);
+    const interval = setInterval(pollOrders, 3000);
+
+    // Instant real-time listener via Supabase
+    const channel = supabase
+      .channel(`cashier-orders-${selectedRestaurant.id}`)
+      .on(
+        'postgres_changes',
+        {
+          event: '*',
+          schema: 'public',
+          table: 'orders',
+          filter: `restaurant_id=eq.${selectedRestaurant.id}`,
+        },
+        () => {
+          pollOrders();
+          loadRestaurantDetails(selectedRestaurant.id, restaurantGeofence, selectedRestaurant);
+        }
+      )
+      .subscribe();
+
     return () => {
       isMounted = false;
       clearInterval(interval);
+      supabase.removeChannel(channel);
     };
   }, [selectedRestaurant?.id, isSoundMuted]);
 
@@ -1811,7 +1903,7 @@ export const CashierPOS: React.FC = () => {
                         <div className="flex items-center justify-between">
                           <div className="flex items-center gap-2">
                             <span className="w-7 h-7 rounded-xl bg-amber-50 border border-amber-200 text-amber-800 flex items-center justify-center font-bold font-mono text-xs">
-                              #{ord.daily_order_number || String(ord.id).slice(-4)}
+                              #{getDisplayOrderNumber(ord)}
                             </span>
                             <span className="font-bold text-slate-800 text-xs">
                               {ord.order_type === 'dine_in' ? 'صالة' : ord.order_type === 'takeaway' ? 'سفري' : 'دليفري'}
@@ -1850,8 +1942,8 @@ export const CashierPOS: React.FC = () => {
                                   commercialRegistration: restaurantGeofence?.commercial_registration || '45892',
                                   branchAddress: restaurantGeofence?.address || 'بورسعيد - حي الشرق',
                                   branchPhone: restaurantGeofence?.phone || '01000000000',
-                                  invoiceNumber: `INV-${ord.daily_order_number || ord.id}`,
-                                  dailyOrderNumber: ord.daily_order_number || ord.id,
+                                  invoiceNumber: `INV-${getDisplayOrderNumber(ord)}`,
+                                  dailyOrderNumber: getDisplayOrderNumber(ord),
                                   orderType: ord.order_type || 'dine_in',
                                   tableNumber: ord.table_number,
                                   cashierName: shift.cashierName,
@@ -2275,6 +2367,62 @@ export const CashierPOS: React.FC = () => {
           
           {/* Order Header / Configuration */}
           <div className="p-3 bg-white border-b border-slate-200 space-y-2">
+            {/* 📱 Prominent Customer App Orders Card in Right Sidebar (Cart) */}
+            <button
+              type="button"
+              onClick={() => {
+                setActiveTab('customer_orders');
+                setHasUnviewedCustomerAlert(false);
+              }}
+              className={`w-full p-2.5 rounded-2xl flex items-center justify-between transition-all cursor-pointer shadow-sm text-right ${
+                unhandledCustomerOrdersCount > 0
+                  ? 'bg-gradient-to-r from-red-600 via-orange-600 to-amber-600 text-white ring-2 ring-red-400 animate-pulse'
+                  : customerLiveOrders.length > 0
+                  ? 'bg-orange-50 hover:bg-orange-100 text-orange-900 border-2 border-orange-300'
+                  : 'bg-slate-50 hover:bg-slate-100 text-slate-700 border border-slate-200'
+              }`}
+            >
+              <div className="flex items-center gap-2.5">
+                <div className={`w-8 h-8 rounded-xl flex items-center justify-center shrink-0 ${
+                  unhandledCustomerOrdersCount > 0 
+                    ? 'bg-white text-red-600' 
+                    : customerLiveOrders.length > 0
+                    ? 'bg-orange-500 text-white'
+                    : 'bg-slate-200 text-slate-600'
+                }`}>
+                  <Smartphone size={16} className={unhandledCustomerOrdersCount > 0 ? "animate-bounce" : ""} />
+                </div>
+                <div>
+                  <div className="flex items-center gap-1.5">
+                    <span className="text-xs font-black">طلبات تطبيق الزبائن</span>
+                    {unhandledCustomerOrdersCount > 0 && (
+                      <span className="w-2 h-2 rounded-full bg-yellow-300 animate-ping"></span>
+                    )}
+                  </div>
+                  <span className="text-[10px] block opacity-85 font-medium">
+                    {unhandledCustomerOrdersCount > 0 
+                      ? `⚠️ ${unhandledCustomerOrdersCount} أوردر جديد يحتاج استلام!`
+                      : customerLiveOrders.length > 0
+                      ? `${customerLiveOrders.length} طلبات مسجلة (عرض الشاشة)`
+                      : 'لا توجد طلبات جديدة'}
+                  </span>
+                </div>
+              </div>
+
+              <div className="flex items-center gap-1">
+                <span className={`px-2 py-0.5 rounded-lg text-xs font-mono font-black ${
+                  unhandledCustomerOrdersCount > 0 
+                    ? 'bg-white text-red-600' 
+                    : customerLiveOrders.length > 0
+                    ? 'bg-orange-200 text-orange-950'
+                    : 'bg-slate-200 text-slate-700'
+                }`}>
+                  {customerLiveOrders.length}
+                </span>
+                <ChevronLeft size={15} />
+              </div>
+            </button>
+
             {/* Order Type Tabs */}
             <div className="grid grid-cols-3 gap-1 bg-slate-100 p-1 rounded-xl border border-slate-200">
               <button

@@ -21,6 +21,7 @@ import {
 import { Order } from '../../lib/supabase';
 import { TaxReceiptData } from '../../lib/taxReceiptHelper';
 import { TaxReceiptModal } from '../TaxReceiptModal';
+import { getDisplayOrderNumber } from '../../lib/ordersService';
 
 interface OrdersHistoryModalProps {
   isOpen: boolean;
@@ -69,8 +70,8 @@ export const OrdersHistoryModal: React.FC<OrdersHistoryModalProps> = ({
       commercialRegistration: restaurantGeofence?.commercial_registration || '45892',
       branchAddress: restaurantGeofence?.address || 'بورسعيد - حي الشرق',
       branchPhone: restaurantGeofence?.phone || '01000000000',
-      invoiceNumber: `INV-${ord.daily_order_number || ord.id}`,
-      dailyOrderNumber: ord.daily_order_number || ord.id,
+      invoiceNumber: `INV-${getDisplayOrderNumber(ord)}`,
+      dailyOrderNumber: getDisplayOrderNumber(ord),
       orderType: ord.order_type || 'dine_in',
       tableNumber: ord.table_number || ord.table?.table_number,
       cashierName: ord.cashier_name || 'الكاشير',
@@ -211,7 +212,7 @@ export const OrdersHistoryModal: React.FC<OrdersHistoryModalProps> = ({
                       <div className="flex items-start justify-between">
                         <div className="flex items-center gap-2">
                           <span className="w-8 h-8 rounded-xl bg-amber-50 border border-amber-200 text-amber-700 flex items-center justify-center font-bold font-mono text-xs">
-                            #{ord.daily_order_number || ord.id}
+                            #{getDisplayOrderNumber(ord)}
                           </span>
                           <div>
                             <div className="flex items-center gap-1.5">
@@ -308,7 +309,7 @@ export const OrdersHistoryModal: React.FC<OrdersHistoryModalProps> = ({
               <div className="space-y-3 overflow-y-auto max-h-[350px] md:max-h-none">
                 <div className="flex items-center justify-between border-b border-slate-200 pb-2">
                   <div>
-                    <h4 className="font-bold text-slate-800 text-sm">تفاصيل الفاتورة #{selectedOrder.daily_order_number || selectedOrder.id}</h4>
+                    <h4 className="font-bold text-slate-800 text-sm">تفاصيل الفاتورة #{getDisplayOrderNumber(selectedOrder)}</h4>
                     <span className="text-[11px] text-slate-500 font-mono">
                       {new Date(selectedOrder.created_at || Date.now()).toLocaleString('ar-EG')}
                     </span>
