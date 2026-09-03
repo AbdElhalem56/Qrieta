@@ -1,6 +1,16 @@
 import React, { useEffect, useState, useRef } from 'react';
 import { createClient } from '@supabase/supabase-js';
-import { supabase, supabaseUrl, supabaseAnonKey, Restaurant, Table } from '../../lib/supabase';
+import { 
+  supabase, 
+  supabaseUrl, 
+  supabaseAnonKey, 
+  Restaurant, 
+  Table,
+  RestaurantServicePreset,
+  RESTAURANT_SERVICE_PRESETS,
+  resolveRestaurantServices,
+  getRestaurantPresetDef
+} from '../../lib/supabase';
 import qretaLogo from '../../assets/images/qreta_logo_1787613852268.jpg';
 import { 
   Building2, 
@@ -42,7 +52,14 @@ import {
   CreditCard,
   MonitorCheck,
   Calculator,
-  FileText
+  FileText,
+  ChefHat,
+  Utensils,
+  Zap,
+  Sparkles,
+  Sliders,
+  Smartphone,
+  CheckCheck
 } from 'lucide-react';
 import { QRCodeSVG } from 'qrcode.react';
 import { 
@@ -68,6 +85,7 @@ export default function SuperAdminDashboard() {
   
   // UI States
   const [activeTab, setActiveTab] = useState<'restaurants' | 'tables' | 'staff' | 'analytics' | 'orders'>('restaurants');
+  const [restaurantFilter, setRestaurantFilter] = useState<string>('all');
   const [isResModalOpen, setIsResModalOpen] = useState(false);
   const [editingRes, setEditingRes] = useState<Partial<Restaurant> | null>(null);
 
@@ -260,7 +278,13 @@ export default function SuperAdminDashboard() {
               ? g.is_prepaid
               : (r.is_prepaid !== undefined ? r.is_prepaid : (r.payment_model === 'prepaid')),
             payment_model: g?.payment_model || r.payment_model || (g?.is_prepaid || r.is_prepaid ? 'prepaid' : 'postpaid'),
+            business_type_preset: g?.business_type_preset || r.business_type_preset || 'full_system',
             pos_enabled: g?.pos_enabled !== undefined ? g.pos_enabled : (r.pos_enabled ?? true),
+            kitchen_enabled: g?.kitchen_enabled !== undefined ? g.kitchen_enabled : (r.kitchen_enabled ?? true),
+            tables_enabled: g?.tables_enabled !== undefined ? g.tables_enabled : (r.tables_enabled ?? true),
+            customer_app_enabled: g?.customer_app_enabled !== undefined ? g.customer_app_enabled : (r.customer_app_enabled ?? true),
+            delivery_enabled: g?.delivery_enabled !== undefined ? g.delivery_enabled : (r.delivery_enabled ?? true),
+            waiter_enabled: g?.waiter_enabled !== undefined ? g.waiter_enabled : (r.waiter_enabled ?? true),
             tax_number: g?.tax_number || r.tax_number || '',
             commercial_registration: g?.commercial_registration || r.commercial_registration || '',
             tax_rate: g?.tax_rate !== undefined ? g.tax_rate : (r.tax_rate ?? 14),
@@ -504,7 +528,13 @@ export default function SuperAdminDashboard() {
         service_fee_percentage: serviceFee,
         is_prepaid: isPrepaid,
         payment_model: (isPrepaid ? 'prepaid' : 'postpaid') as 'prepaid' | 'postpaid',
+        business_type_preset: editingRes.business_type_preset || 'full_system',
         pos_enabled: editingRes.pos_enabled !== undefined ? !!editingRes.pos_enabled : true,
+        kitchen_enabled: editingRes.kitchen_enabled !== undefined ? !!editingRes.kitchen_enabled : true,
+        tables_enabled: editingRes.tables_enabled !== undefined ? !!editingRes.tables_enabled : true,
+        customer_app_enabled: editingRes.customer_app_enabled !== undefined ? !!editingRes.customer_app_enabled : true,
+        delivery_enabled: editingRes.delivery_enabled !== undefined ? !!editingRes.delivery_enabled : true,
+        waiter_enabled: editingRes.waiter_enabled !== undefined ? !!editingRes.waiter_enabled : true,
         tax_number: editingRes.tax_number ? String(editingRes.tax_number).trim() : '',
         commercial_registration: editingRes.commercial_registration ? String(editingRes.commercial_registration).trim() : '',
         tax_rate: editingRes.tax_rate !== undefined && editingRes.tax_rate !== null ? Number(editingRes.tax_rate) : 14,
@@ -820,13 +850,26 @@ export default function SuperAdminDashboard() {
 
           {activeTab === 'restaurants' && (
             <section className="text-right">
-              <div className="flex flex-col sm:flex-row sm:items-center justify-between mb-8 md:mb-12 gap-4">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between mb-6 md:mb-8 gap-4">
                 <div>
                   <h2 className="text-3xl md:text-4xl font-black tracking-tight text-gray-900">شبكة الشركاء</h2>
-                  <p className="text-gray-400 mt-2 font-medium">إدارة ومراقبة جميع المستأجرين.</p>
+                  <p className="text-gray-400 mt-2 font-medium">إدارة ومراقبة جميع المستأجرين وباقات تشغيل الخدمات.</p>
                 </div>
                 <button 
-                  onClick={() => { setEditingRes({ primary_color: '#f97316', secondary_color: '#1f2937' }); setIsResModalOpen(true); }}
+                  onClick={() => { 
+                    setEditingRes({ 
+                      primary_color: '#f97316', 
+                      secondary_color: '#1f2937',
+                      business_type_preset: 'full_system',
+                      pos_enabled: true,
+                      kitchen_enabled: true,
+                      tables_enabled: true,
+                      customer_app_enabled: true,
+                      delivery_enabled: true,
+                      waiter_enabled: true,
+                    }); 
+                    setIsResModalOpen(true); 
+                  }}
                   className="bg-gray-900 text-white px-6 md:px-8 py-3 md:py-4 rounded-2xl font-bold flex items-center justify-center gap-3 shadow-2xl hover:scale-105 active:scale-95 transition-all text-sm md:text-base"
                 >
                   <Plus size={24} />
@@ -834,8 +877,102 @@ export default function SuperAdminDashboard() {
                 </button>
               </div>
 
+              {/* Modular Service Presets Filter Bar */}
+              <div className="flex items-center gap-2 overflow-x-auto pb-3 mb-6 scrollbar-none text-xs font-bold">
+                {[
+                  { id: 'all', label: 'الكل', count: restaurants.length },
+                  { 
+                    id: 'cloud_kitchen', 
+                    label: '☁️ مطاعم سحابية (كاشير + مطبخ + دليفري)', 
+                    count: restaurants.filter(r => {
+                      const s = resolveRestaurantServices(r);
+                      return r.business_type_preset === 'cloud_kitchen' || (s.pos_enabled && s.kitchen_enabled && !s.tables_enabled);
+                    }).length 
+                  },
+                  { 
+                    id: 'fast_counter', 
+                    label: '⚡ كافيهات سريعة (كاشير + دليفري - بدون مطبخ)', 
+                    count: restaurants.filter(r => {
+                      const s = resolveRestaurantServices(r);
+                      return r.business_type_preset === 'fast_counter' || (s.pos_enabled && !s.kitchen_enabled && !s.tables_enabled);
+                    }).length 
+                  },
+                  { 
+                    id: 'full_system', 
+                    label: '🌟 نظام متكامل شامل', 
+                    count: restaurants.filter(r => {
+                      const s = resolveRestaurantServices(r);
+                      return r.business_type_preset === 'full_system' || (s.pos_enabled && s.kitchen_enabled && s.tables_enabled);
+                    }).length 
+                  },
+                  { 
+                    id: 'pos_only', 
+                    label: '💻 كاشير فقط', 
+                    count: restaurants.filter(r => {
+                      const s = resolveRestaurantServices(r);
+                      return r.business_type_preset === 'pos_only' || (s.pos_enabled && !s.delivery_enabled && !s.tables_enabled);
+                    }).length 
+                  },
+                  { 
+                    id: 'delivery_only', 
+                    label: '🛵 دليفري أونلاين فقط', 
+                    count: restaurants.filter(r => {
+                      const s = resolveRestaurantServices(r);
+                      return r.business_type_preset === 'delivery_only' || (!s.pos_enabled && s.delivery_enabled);
+                    }).length 
+                  },
+                ].map(tab => (
+                  <button
+                    key={tab.id}
+                    onClick={() => setRestaurantFilter(tab.id)}
+                    className={`px-4 py-2 rounded-xl whitespace-nowrap transition-all flex items-center gap-2 border cursor-pointer ${
+                      restaurantFilter === tab.id
+                        ? 'bg-slate-900 text-white border-slate-900 shadow-md'
+                        : 'bg-white text-gray-600 border-gray-200 hover:bg-gray-50'
+                    }`}
+                  >
+                    <span>{tab.label}</span>
+                    <span className={`px-1.5 py-0.2 text-[10px] rounded-full ${
+                      restaurantFilter === tab.id ? 'bg-slate-700 text-white' : 'bg-gray-100 text-gray-600'
+                    }`}>
+                      {tab.count}
+                    </span>
+                  </button>
+                ))}
+              </div>
+
               <div className="grid grid-cols-1 lg:grid-cols-2 xl:grid-cols-3 gap-8">
-                {restaurants.map(res => (
+                {restaurants.filter(res => {
+                  if (restaurantFilter === 'all') return true;
+                  const s = resolveRestaurantServices(res);
+                  if (restaurantFilter === 'cloud_kitchen') {
+                    return res.business_type_preset === 'cloud_kitchen' || (s.pos_enabled && s.kitchen_enabled && !s.tables_enabled);
+                  }
+                  if (restaurantFilter === 'fast_counter') {
+                    return res.business_type_preset === 'fast_counter' || (s.pos_enabled && !s.kitchen_enabled && !s.tables_enabled);
+                  }
+                  if (restaurantFilter === 'full_system') {
+                    return res.business_type_preset === 'full_system' || (s.pos_enabled && s.kitchen_enabled && s.tables_enabled);
+                  }
+                  if (restaurantFilter === 'pos_only') {
+                    return res.business_type_preset === 'pos_only' || (s.pos_enabled && !s.delivery_enabled && !s.tables_enabled);
+                  }
+                  if (restaurantFilter === 'delivery_only') {
+                    return res.business_type_preset === 'delivery_only' || (!s.pos_enabled && s.delivery_enabled);
+                  }
+                  return true;
+                }).map(res => {
+                  const resServices = resolveRestaurantServices(res);
+                  const effectivePreset = res.business_type_preset || (
+                    resServices.pos_enabled && resServices.kitchen_enabled && !resServices.tables_enabled ? 'cloud_kitchen' :
+                    resServices.pos_enabled && !resServices.kitchen_enabled && !resServices.tables_enabled ? 'fast_counter' :
+                    resServices.pos_enabled && !resServices.delivery_enabled && !resServices.tables_enabled ? 'pos_only' :
+                    !resServices.pos_enabled && resServices.delivery_enabled ? 'delivery_only' :
+                    'full_system'
+                  );
+                  const presetConfig = getRestaurantPresetDef(effectivePreset);
+
+                  return (
                   <motion.div 
                     layout
                     key={res.id}
@@ -871,7 +1008,15 @@ export default function SuperAdminDashboard() {
                         </div>
                         <div>
                           <h3 className="text-xl font-bold text-gray-900">{res.name}</h3>
-                          <div className="flex flex-wrap items-center gap-1.5 mt-1.5">
+                          
+                          {/* Business Model Preset Badge */}
+                          <div className="mt-1">
+                            <span className="bg-slate-900 text-white text-[11px] font-black px-2.5 py-0.5 rounded-lg inline-flex items-center gap-1 shadow-sm">
+                              <span>{presetConfig.titleAr}</span>
+                            </span>
+                          </div>
+
+                          <div className="flex flex-wrap items-center gap-1.5 mt-2">
                             <p className="text-xs font-mono text-gray-400">slug: {res.slug}</p>
                             {res.is_prepaid || res.payment_model === 'prepaid' ? (
                               <span className="bg-emerald-100 text-emerald-800 text-[10px] font-black px-2 py-0.5 rounded-md inline-flex items-center gap-1">
@@ -882,15 +1027,35 @@ export default function SuperAdminDashboard() {
                                 غير مسبق الدفع
                               </span>
                             )}
-                            {res.pos_enabled !== false ? (
-                              <span className="bg-blue-100 text-blue-800 text-[10px] font-black px-2 py-0.5 rounded-md inline-flex items-center gap-1" title="نظام الكاشير مفعل">
-                                <MonitorCheck size={10} /> كاشير POS مفعل
-                              </span>
-                            ) : (
-                              <span className="bg-amber-50 text-amber-700 text-[10px] font-medium px-2 py-0.5 rounded-md inline-flex items-center gap-1">
-                                الكاشير معطل
-                              </span>
-                            )}
+                          </div>
+
+                          {/* Modular Service Micro-chips */}
+                          <div className="flex flex-wrap items-center gap-1 mt-2">
+                            <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded flex items-center gap-0.5 ${
+                              resServices.pos_enabled ? 'bg-blue-100 text-blue-800' : 'bg-gray-100 text-gray-400 line-through'
+                            }`} title={resServices.pos_enabled ? 'نظام الكاشير مفعل' : 'الكاشير معطل'}>
+                              <MonitorCheck size={10} /> كاشير
+                            </span>
+                            <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded flex items-center gap-0.5 ${
+                              resServices.kitchen_enabled ? 'bg-amber-100 text-amber-800' : 'bg-gray-100 text-gray-400 line-through'
+                            }`} title={resServices.kitchen_enabled ? 'إرسال للمطبخ وبون KOT' : 'تسليم فوري بدون مطبخ'}>
+                              <ChefHat size={10} /> مطبخ
+                            </span>
+                            <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded flex items-center gap-0.5 ${
+                              resServices.tables_enabled ? 'bg-emerald-100 text-emerald-800' : 'bg-gray-100 text-gray-400 line-through'
+                            }`} title={resServices.tables_enabled ? 'طاولات الصالة و QR' : 'بدون طاولات (تيك أواي/دليفري فقط)'}>
+                              <Utensils size={10} /> طاولات
+                            </span>
+                            <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded flex items-center gap-0.5 ${
+                              resServices.delivery_enabled ? 'bg-purple-100 text-purple-800' : 'bg-gray-100 text-gray-400 line-through'
+                            }`} title={resServices.delivery_enabled ? 'تطبيق وطلبات الدليفري مفعل' : 'الدليفري معطل'}>
+                              <Bike size={10} /> دليفري
+                            </span>
+                            <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded flex items-center gap-0.5 ${
+                              resServices.customer_app_enabled ? 'bg-sky-100 text-sky-800' : 'bg-gray-100 text-gray-400 line-through'
+                            }`} title={resServices.customer_app_enabled ? 'تطبيق الزبائن للصالة مفعل' : 'تطبيق الزبائن معطل'}>
+                              <Smartphone size={10} /> زبائن
+                            </span>
                           </div>
                         </div>
                       </div>
@@ -987,7 +1152,8 @@ export default function SuperAdminDashboard() {
                        </div>
                     </div>
                   </motion.div>
-                ))}
+                );
+                })}
               </div>
             </section>
           )}
@@ -2316,49 +2482,306 @@ export default function SuperAdminDashboard() {
                       )}
                     </div>
 
-                    {/* Egyptian Tax Authority & POS System Configuration Section */}
-                    <div className="col-span-2 bg-gradient-to-br from-slate-900 to-gray-950 text-white rounded-3xl p-5 md:p-6 space-y-5 text-right shadow-xl border border-gray-800">
-                      <div className="flex items-center justify-between gap-3 border-b border-gray-800 pb-4">
-                        <div className="flex items-center gap-3">
-                          <div className="w-10 h-10 rounded-2xl bg-blue-600 text-white flex items-center justify-center shadow-lg shrink-0">
-                            <MonitorCheck size={22} />
-                          </div>
-                          <div>
-                            <div className="flex items-center gap-2">
-                              <h4 className="font-black text-white text-sm md:text-base">نظام الكاشير ونقاط البيع المتكامل (Cloud POS)</h4>
-                              <span className="bg-blue-500/20 border border-blue-400/40 text-blue-300 text-[10px] font-black px-2 py-0.5 rounded-full">
-                                ميزة مخصصة للمطاعم
-                              </span>
+                    {/* Modular Restaurant System Architecture & Services Configuration Section */}
+                    <div className="col-span-2 bg-gradient-to-br from-slate-900 via-slate-950 to-gray-950 text-white rounded-3xl p-5 md:p-7 space-y-6 text-right shadow-2xl border border-slate-800">
+                      
+                      {/* Section Header */}
+                      <div className="border-b border-slate-800 pb-4">
+                        <div className="flex items-center justify-between gap-3">
+                          <div className="flex items-center gap-3">
+                            <div className="w-11 h-11 rounded-2xl bg-amber-500 text-slate-950 flex items-center justify-center shadow-lg shadow-amber-500/20 shrink-0 font-black">
+                              <Sliders size={22} />
                             </div>
-                            <p className="text-xs text-gray-400 font-medium mt-0.5">
-                              تمكين الكاشير لإصدار فواتير حرارية وطباعة إيصالات معتمدة من مصلحة الضرائب المصرية
-                            </p>
+                            <div>
+                              <div className="flex items-center gap-2">
+                                <h4 className="font-black text-white text-base md:text-lg">باقة تشغيل النظام والخدمات الموديلار</h4>
+                                <span className="bg-amber-500/20 border border-amber-400/40 text-amber-300 text-[10px] font-black px-2.5 py-0.5 rounded-full">
+                                  نظام مخصص لكل نشاط
+                                </span>
+                              </div>
+                              <p className="text-xs text-slate-400 font-medium mt-1">
+                                اختر باقة التشغيل الجاهزة بنقرة واحدة، أو خصص كل خدمة بشكل فردي بحسب رغبة العميل:
+                              </p>
+                            </div>
                           </div>
                         </div>
 
-                        {/* POS Enabled Toggle Switch */}
-                        <div className="flex items-center gap-2 bg-gray-800/80 px-3 py-1.5 rounded-2xl border border-gray-700">
-                          <span className="text-xs font-bold text-gray-300">
-                            {editingRes?.pos_enabled !== false ? 'مفعل' : 'معطل'}
-                          </span>
-                          <label className="relative inline-flex items-center cursor-pointer">
-                            <input 
-                              type="checkbox" 
-                              className="sr-only peer"
-                              checked={editingRes?.pos_enabled !== false}
-                              onChange={e => setEditingRes({ ...editingRes, pos_enabled: e.target.checked })}
-                            />
-                            <div className="w-11 h-6 bg-gray-700 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-blue-600"></div>
-                          </label>
+                        {/* Presets Selection Grid */}
+                        <div className="grid grid-cols-2 sm:grid-cols-3 gap-2.5 mt-5">
+                          {[
+                            {
+                              id: 'cloud_kitchen',
+                              title: '☁️ مطعم سحابي وتيك أواي',
+                              desc: 'كاشير + مطبخ + دليفري (بدون طاولات ولا تطبيق صالة)',
+                              activeColor: 'border-purple-500 bg-purple-950/40 text-purple-200',
+                            },
+                            {
+                              id: 'fast_counter',
+                              title: '⚡ كافيه سريع وكاونتر',
+                              desc: 'كاشير + دليفري (تسليم فوري مباشر بدون مطبخ وبدون طاولات)',
+                              activeColor: 'border-amber-500 bg-amber-950/40 text-amber-200',
+                            },
+                            {
+                              id: 'full_system',
+                              title: '🌟 نظام متكامل شامل',
+                              desc: 'كاشير + مطبخ + طاولات + تطبيق زبائن + دليفري + ويتر',
+                              activeColor: 'border-emerald-500 bg-emerald-950/40 text-emerald-200',
+                            },
+                            {
+                              id: 'pos_only',
+                              title: '💻 كاشير فقط',
+                              desc: 'نقاط بيع وفواتير ضريبية بدون توصيل وبدون طاولات',
+                              activeColor: 'border-blue-500 bg-blue-950/40 text-blue-200',
+                            },
+                            {
+                              id: 'delivery_only',
+                              title: '🛵 دليفري أونلاين فقط',
+                              desc: 'منيو رقمي وتوصيل واستقبال طلبات بدون كاشير',
+                              activeColor: 'border-sky-500 bg-sky-950/40 text-sky-200',
+                            },
+                            {
+                              id: 'custom',
+                              title: '🛠️ تخصيص يدوي حر',
+                              desc: 'تحديد الخدمات يدوياً بحسب رغبة المستأجر',
+                              activeColor: 'border-slate-400 bg-slate-800 text-white',
+                            },
+                          ].map(preset => {
+                            const isCurrent = (editingRes?.business_type_preset || 'full_system') === preset.id;
+                            return (
+                              <button
+                                key={preset.id}
+                                type="button"
+                                onClick={() => {
+                                  if (preset.id === 'custom') {
+                                    setEditingRes({ ...editingRes, business_type_preset: 'custom' });
+                                  } else {
+                                    const pConfig = RESTAURANT_SERVICE_PRESETS[preset.id as RestaurantServicePreset];
+                                    if (pConfig) {
+                                      setEditingRes({
+                                        ...editingRes,
+                                        business_type_preset: preset.id as RestaurantServicePreset,
+                                        pos_enabled: pConfig.pos_enabled,
+                                        kitchen_enabled: pConfig.kitchen_enabled,
+                                        tables_enabled: pConfig.tables_enabled,
+                                        customer_app_enabled: pConfig.customer_app_enabled,
+                                        delivery_enabled: pConfig.delivery_enabled,
+                                        waiter_enabled: pConfig.waiter_enabled,
+                                      });
+                                    }
+                                  }
+                                }}
+                                className={`p-3 rounded-2xl border text-right transition-all cursor-pointer flex flex-col justify-between gap-1.5 ${
+                                  isCurrent
+                                    ? `${preset.activeColor} shadow-lg ring-2 ring-white/20`
+                                    : 'border-slate-800 bg-slate-900/60 text-slate-400 hover:border-slate-700 hover:text-slate-200'
+                                }`}
+                              >
+                                <div className="flex items-center justify-between">
+                                  <span className="font-bold text-xs">{preset.title}</span>
+                                  {isCurrent && <CheckCircle2 size={14} className="text-amber-400 shrink-0" />}
+                                </div>
+                                <span className="text-[10px] leading-relaxed opacity-80">{preset.desc}</span>
+                              </button>
+                            );
+                          })}
                         </div>
                       </div>
 
-                      {/* Tax Settings Fields */}
-                      {editingRes?.pos_enabled !== false && (
-                        <div className="space-y-4 pt-1">
+                      {/* 6 Individual Modular Feature Toggles */}
+                      <div className="space-y-3">
+                        <div className="flex items-center justify-between">
+                          <span className="text-xs font-black text-slate-300 flex items-center gap-1.5">
+                            <Sparkles size={14} className="text-amber-400" />
+                            <span>تخصيص المفاتيح الفردية للخدمات:</span>
+                          </span>
+                          <span className="text-[11px] text-slate-500 font-mono">
+                            النمط الحالي: {editingRes?.business_type_preset || 'full_system'}
+                          </span>
+                        </div>
+
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                          {/* 1. POS Cashier */}
+                          <div className={`p-3.5 rounded-2xl border transition-all flex items-start justify-between gap-3 ${
+                            editingRes?.pos_enabled !== false ? 'bg-slate-900/90 border-blue-500/40' : 'bg-slate-950/40 border-slate-800 opacity-60'
+                          }`}>
+                            <div className="space-y-1">
+                              <div className="flex items-center gap-2">
+                                <MonitorCheck size={16} className={editingRes?.pos_enabled !== false ? 'text-blue-400' : 'text-slate-600'} />
+                                <span className="text-xs font-bold text-white">نظام الكاشير (POS)</span>
+                                <span className={`text-[9px] font-black px-1.5 py-0.2 rounded ${
+                                  editingRes?.pos_enabled !== false ? 'bg-blue-500/20 text-blue-300' : 'bg-slate-800 text-slate-500'
+                                }`}>
+                                  {editingRes?.pos_enabled !== false ? 'مفعل' : 'معطل'}
+                                </span>
+                              </div>
+                              <p className="text-[10px] text-slate-400 leading-tight">
+                                البيع المباشر، إصدار الفواتير الحرارية، والوردية
+                              </p>
+                            </div>
+                            <label className="relative inline-flex items-center cursor-pointer shrink-0 mt-0.5">
+                              <input 
+                                type="checkbox" 
+                                className="sr-only peer"
+                                checked={editingRes?.pos_enabled !== false}
+                                onChange={e => setEditingRes({ ...editingRes, pos_enabled: e.target.checked, business_type_preset: 'custom' })}
+                              />
+                              <div className="w-9 h-5 bg-slate-800 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-blue-600"></div>
+                            </label>
+                          </div>
+
+                          {/* 2. Kitchen KOT */}
+                          <div className={`p-3.5 rounded-2xl border transition-all flex items-start justify-between gap-3 ${
+                            editingRes?.kitchen_enabled !== false ? 'bg-slate-900/90 border-amber-500/40' : 'bg-slate-950/40 border-slate-800 opacity-60'
+                          }`}>
+                            <div className="space-y-1">
+                              <div className="flex items-center gap-2">
+                                <ChefHat size={16} className={editingRes?.kitchen_enabled !== false ? 'text-amber-400' : 'text-slate-600'} />
+                                <span className="text-xs font-bold text-white">شاشات وبون المطبخ (KOT)</span>
+                                <span className={`text-[9px] font-black px-1.5 py-0.2 rounded ${
+                                  editingRes?.kitchen_enabled !== false ? 'bg-amber-500/20 text-amber-300' : 'bg-slate-800 text-slate-500'
+                                }`}>
+                                  {editingRes?.kitchen_enabled !== false ? 'مفعل' : 'تسليم فوري'}
+                                </span>
+                              </div>
+                              <p className="text-[10px] text-slate-400 leading-tight">
+                                توجيه الأوردر للمطبخ للتحضير. (عند التعطيل: تسليم فوري سريع)
+                              </p>
+                            </div>
+                            <label className="relative inline-flex items-center cursor-pointer shrink-0 mt-0.5">
+                              <input 
+                                type="checkbox" 
+                                className="sr-only peer"
+                                checked={editingRes?.kitchen_enabled !== false}
+                                onChange={e => setEditingRes({ ...editingRes, kitchen_enabled: e.target.checked, business_type_preset: 'custom' })}
+                              />
+                              <div className="w-9 h-5 bg-slate-800 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-amber-500"></div>
+                            </label>
+                          </div>
+
+                          {/* 3. Dine-in Tables */}
+                          <div className={`p-3.5 rounded-2xl border transition-all flex items-start justify-between gap-3 ${
+                            editingRes?.tables_enabled !== false ? 'bg-slate-900/90 border-emerald-500/40' : 'bg-slate-950/40 border-slate-800 opacity-60'
+                          }`}>
+                            <div className="space-y-1">
+                              <div className="flex items-center gap-2">
+                                <Utensils size={16} className={editingRes?.tables_enabled !== false ? 'text-emerald-400' : 'text-slate-600'} />
+                                <span className="text-xs font-bold text-white">طاولات الصالة و QR</span>
+                                <span className={`text-[9px] font-black px-1.5 py-0.2 rounded ${
+                                  editingRes?.tables_enabled !== false ? 'bg-emerald-500/20 text-emerald-300' : 'bg-slate-800 text-slate-500'
+                                }`}>
+                                  {editingRes?.tables_enabled !== false ? 'مفعل' : 'معطل'}
+                                </span>
+                              </div>
+                              <p className="text-[10px] text-slate-400 leading-tight">
+                                إدارة الطاولات وباركود الطاولة. (عطله للمطاعم السحابية والسفري)
+                              </p>
+                            </div>
+                            <label className="relative inline-flex items-center cursor-pointer shrink-0 mt-0.5">
+                              <input 
+                                type="checkbox" 
+                                className="sr-only peer"
+                                checked={editingRes?.tables_enabled !== false}
+                                onChange={e => setEditingRes({ ...editingRes, tables_enabled: e.target.checked, business_type_preset: 'custom' })}
+                              />
+                              <div className="w-9 h-5 bg-slate-800 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-emerald-500"></div>
+                            </label>
+                          </div>
+
+                          {/* 4. Delivery App */}
+                          <div className={`p-3.5 rounded-2xl border transition-all flex items-start justify-between gap-3 ${
+                            editingRes?.delivery_enabled !== false ? 'bg-slate-900/90 border-purple-500/40' : 'bg-slate-950/40 border-slate-800 opacity-60'
+                          }`}>
+                            <div className="space-y-1">
+                              <div className="flex items-center gap-2">
+                                <Bike size={16} className={editingRes?.delivery_enabled !== false ? 'text-purple-400' : 'text-slate-600'} />
+                                <span className="text-xs font-bold text-white">تطبيق وطلبات الدليفري</span>
+                                <span className={`text-[9px] font-black px-1.5 py-0.2 rounded ${
+                                  editingRes?.delivery_enabled !== false ? 'bg-purple-500/20 text-purple-300' : 'bg-slate-800 text-slate-500'
+                                }`}>
+                                  {editingRes?.delivery_enabled !== false ? 'مفعل' : 'معطل'}
+                                </span>
+                              </div>
+                              <p className="text-[10px] text-slate-400 leading-tight">
+                                صفحة استقبال طلبات التوصيل الخارجي وتحديد رسوم الدليفري
+                              </p>
+                            </div>
+                            <label className="relative inline-flex items-center cursor-pointer shrink-0 mt-0.5">
+                              <input 
+                                type="checkbox" 
+                                className="sr-only peer"
+                                checked={editingRes?.delivery_enabled !== false}
+                                onChange={e => setEditingRes({ ...editingRes, delivery_enabled: e.target.checked, business_type_preset: 'custom' })}
+                              />
+                              <div className="w-9 h-5 bg-slate-800 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-purple-600"></div>
+                            </label>
+                          </div>
+
+                          {/* 5. Customer Dine-in App */}
+                          <div className={`p-3.5 rounded-2xl border transition-all flex items-start justify-between gap-3 ${
+                            editingRes?.customer_app_enabled !== false ? 'bg-slate-900/90 border-sky-500/40' : 'bg-slate-950/40 border-slate-800 opacity-60'
+                          }`}>
+                            <div className="space-y-1">
+                              <div className="flex items-center gap-2">
+                                <Smartphone size={16} className={editingRes?.customer_app_enabled !== false ? 'text-sky-400' : 'text-slate-600'} />
+                                <span className="text-xs font-bold text-white">تطبيق وقائمة الزبائن بالصالة</span>
+                                <span className={`text-[9px] font-black px-1.5 py-0.2 rounded ${
+                                  editingRes?.customer_app_enabled !== false ? 'bg-sky-500/20 text-sky-300' : 'bg-slate-800 text-slate-500'
+                                }`}>
+                                  {editingRes?.customer_app_enabled !== false ? 'مفعل' : 'معطل'}
+                                </span>
+                              </div>
+                              <p className="text-[10px] text-slate-400 leading-tight">
+                                تمكين الزبائن من مسح QR الطاولة والطلب الذاتي من هواتفهم
+                              </p>
+                            </div>
+                            <label className="relative inline-flex items-center cursor-pointer shrink-0 mt-0.5">
+                              <input 
+                                type="checkbox" 
+                                className="sr-only peer"
+                                checked={editingRes?.customer_app_enabled !== false}
+                                onChange={e => setEditingRes({ ...editingRes, customer_app_enabled: e.target.checked, business_type_preset: 'custom' })}
+                              />
+                              <div className="w-9 h-5 bg-slate-800 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-sky-500"></div>
+                            </label>
+                          </div>
+
+                          {/* 6. Waiter App */}
+                          <div className={`p-3.5 rounded-2xl border transition-all flex items-start justify-between gap-3 ${
+                            editingRes?.waiter_enabled !== false ? 'bg-slate-900/90 border-teal-500/40' : 'bg-slate-950/40 border-slate-800 opacity-60'
+                          }`}>
+                            <div className="space-y-1">
+                              <div className="flex items-center gap-2">
+                                <Users size={16} className={editingRes?.waiter_enabled !== false ? 'text-teal-400' : 'text-slate-600'} />
+                                <span className="text-xs font-bold text-white">تطبيق الويتر والضيافة</span>
+                                <span className={`text-[9px] font-black px-1.5 py-0.2 rounded ${
+                                  editingRes?.waiter_enabled !== false ? 'bg-teal-500/20 text-teal-300' : 'bg-slate-800 text-slate-500'
+                                }`}>
+                                  {editingRes?.waiter_enabled !== false ? 'مفعل' : 'معطل'}
+                                </span>
+                              </div>
+                              <p className="text-[10px] text-slate-400 leading-tight">
+                                تمكين طاقم الخدمة من تسجيل ومتابعة طلبات الطاولات
+                              </p>
+                            </div>
+                            <label className="relative inline-flex items-center cursor-pointer shrink-0 mt-0.5">
+                              <input 
+                                type="checkbox" 
+                                className="sr-only peer"
+                                checked={editingRes?.waiter_enabled !== false}
+                                onChange={e => setEditingRes({ ...editingRes, waiter_enabled: e.target.checked, business_type_preset: 'custom' })}
+                              />
+                              <div className="w-9 h-5 bg-slate-800 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-teal-500"></div>
+                            </label>
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* Tax Settings Fields (Shown only when POS is enabled) */}
+                      {editingRes?.pos_enabled !== false ? (
+                        <div className="space-y-4 pt-3 border-t border-slate-800">
                           <div className="flex items-center gap-2 text-xs font-black text-amber-400">
                             <FileText size={16} />
-                            <span>بيانات الفاتورة الضريبية المصرية (Egyptian Tax Authority - ETA):</span>
+                            <span>بيانات الفاتورة الضريبية المصرية للكاشير (Egyptian Tax Authority - ETA):</span>
                           </div>
 
                           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
@@ -2451,6 +2874,11 @@ export default function SuperAdminDashboard() {
                               />
                             </div>
                           </div>
+                        </div>
+                      ) : (
+                        <div className="bg-slate-900/60 p-3.5 rounded-2xl border border-slate-800 text-xs text-slate-400 flex items-center gap-2">
+                          <AlertCircle size={16} className="text-amber-400 shrink-0" />
+                          <span>نظام الكاشير معطل لهذا المطعم. لن تظهر شاشة نقاط البيع ولن يتم طلب بيانات الفاتورة الضريبية.</span>
                         </div>
                       )}
                     </div>

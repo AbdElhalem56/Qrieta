@@ -8,8 +8,15 @@ export interface RestaurantGeofence {
   service_fee_percentage?: number;
   is_prepaid?: boolean;
   payment_model?: 'prepaid' | 'postpaid';
-  // POS & Egyptian Tax Authority Settings
+  // Modular System Services & Presets
+  business_type_preset?: string;
   pos_enabled?: boolean;
+  kitchen_enabled?: boolean;
+  tables_enabled?: boolean;
+  customer_app_enabled?: boolean;
+  delivery_enabled?: boolean;
+  waiter_enabled?: boolean;
+  // POS & Egyptian Tax Authority Settings
   tax_number?: string; // الرقم الضريبي / رقم التسجيل الضريبي (9 أرقام)
   commercial_registration?: string; // السجل التجاري
   tax_rate?: number; // نسبة ضريبة القيمة المضافة الافتراضية 14%

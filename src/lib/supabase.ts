@@ -25,6 +25,178 @@ export const supabase = createClient(clientUrl, clientKey, {
   }
 });
 
+export type RestaurantServicePreset = 
+  | 'full_system' 
+  | 'cloud_kitchen' 
+  | 'fast_counter' 
+  | 'pos_only' 
+  | 'delivery_only' 
+  | 'custom';
+
+export interface RestaurantServicePresetDef {
+  id: RestaurantServicePreset;
+  titleAr: string;
+  descAr: string;
+  icon: string;
+  badgeColor: string;
+  services: {
+    pos_enabled: boolean;
+    kitchen_enabled: boolean;
+    tables_enabled: boolean;
+    customer_app_enabled: boolean;
+    delivery_enabled: boolean;
+    waiter_enabled: boolean;
+  };
+}
+
+export const RESTAURANT_SERVICE_PRESETS: RestaurantServicePresetDef[] = [
+  {
+    id: 'full_system',
+    titleAr: 'مطعم وكافيه متكامل الشامل (كل الخدمات)',
+    descAr: 'كاشير + مطبخ + طاولات صالة + تطبيق زبائن الصالة + تطبيق دليفري + تطبيق الويتر',
+    icon: 'Sparkles',
+    badgeColor: 'bg-purple-100 text-purple-900 border-purple-200',
+    services: {
+      pos_enabled: true,
+      kitchen_enabled: true,
+      tables_enabled: true,
+      customer_app_enabled: true,
+      delivery_enabled: true,
+      waiter_enabled: true,
+    }
+  },
+  {
+    id: 'cloud_kitchen',
+    titleAr: 'مطعم سحابي / تيك أواي ومطبخ ودليفري',
+    descAr: 'كاشير + مطبخ + دليفري (بدون طاولات صالة وبدون تطبيق صالة للزبائن)',
+    icon: 'ChefHat',
+    badgeColor: 'bg-blue-100 text-blue-900 border-blue-200',
+    services: {
+      pos_enabled: true,
+      kitchen_enabled: true,
+      tables_enabled: false,
+      customer_app_enabled: false,
+      delivery_enabled: true,
+      waiter_enabled: false,
+    }
+  },
+  {
+    id: 'fast_counter',
+    titleAr: 'كافيه سريع / كاونتر فاست فود ودليفري',
+    descAr: 'كاشير + دليفري (بدون مطبخ وبدون طاولات وبدون تطبيق صالة - تسليم فوري مباشر)',
+    icon: 'Zap',
+    badgeColor: 'bg-amber-100 text-amber-900 border-amber-200',
+    services: {
+      pos_enabled: true,
+      kitchen_enabled: false,
+      tables_enabled: false,
+      customer_app_enabled: false,
+      delivery_enabled: true,
+      waiter_enabled: false,
+    }
+  },
+  {
+    id: 'pos_only',
+    titleAr: 'نظام كاشير ونقاط بيع فقط (POS Only)',
+    descAr: 'كاشير مبيعات سريعة وفواتير ضريبية فقط (بدون مطبخ ولا طاولات ولا دليفري)',
+    icon: 'MonitorCheck',
+    badgeColor: 'bg-indigo-100 text-indigo-900 border-indigo-200',
+    services: {
+      pos_enabled: true,
+      kitchen_enabled: false,
+      tables_enabled: false,
+      customer_app_enabled: false,
+      delivery_enabled: false,
+      waiter_enabled: false,
+    }
+  },
+  {
+    id: 'delivery_only',
+    titleAr: 'منيو وتطبيق دليفري أونلاين فقط',
+    descAr: 'قائمة طعام رقمية واستقبال طلبات دليفري وتوصيل أونلاين بدون كاشير محلي',
+    icon: 'Bike',
+    badgeColor: 'bg-emerald-100 text-emerald-900 border-emerald-200',
+    services: {
+      pos_enabled: false,
+      kitchen_enabled: true,
+      tables_enabled: false,
+      customer_app_enabled: true,
+      delivery_enabled: true,
+      waiter_enabled: false,
+    }
+  },
+  {
+    id: 'custom',
+    titleAr: 'تخصيص يدوي مخصص (Custom Services)',
+    descAr: 'اختيار وتحديد الخدمات المناسبة للمطعم بحرية تامة',
+    icon: 'Sliders',
+    badgeColor: 'bg-gray-100 text-gray-900 border-gray-200',
+    services: {
+      pos_enabled: true,
+      kitchen_enabled: true,
+      tables_enabled: true,
+      customer_app_enabled: true,
+      delivery_enabled: true,
+      waiter_enabled: true,
+    }
+  }
+];
+
+export const RESTAURANT_SERVICE_PRESETS_MAP: Record<RestaurantServicePreset, RestaurantServicePresetDef> = RESTAURANT_SERVICE_PRESETS.reduce((acc, curr) => {
+  acc[curr.id] = curr;
+  return acc;
+}, {} as Record<RestaurantServicePreset, RestaurantServicePresetDef>);
+
+export function getRestaurantPresetDef(presetId?: string | null): RestaurantServicePresetDef {
+  if (presetId && RESTAURANT_SERVICE_PRESETS_MAP[presetId as RestaurantServicePreset]) {
+    return RESTAURANT_SERVICE_PRESETS_MAP[presetId as RestaurantServicePreset];
+  }
+  return RESTAURANT_SERVICE_PRESETS[0]; // full_system
+}
+
+export interface ResolvedRestaurantServices {
+  pos_enabled: boolean;
+  kitchen_enabled: boolean;
+  tables_enabled: boolean;
+  customer_app_enabled: boolean;
+  delivery_enabled: boolean;
+  waiter_enabled: boolean;
+  business_type_preset: RestaurantServicePreset;
+}
+
+export function resolveRestaurantServices(
+  restaurant?: Partial<Restaurant> | null,
+  geofence?: any
+): ResolvedRestaurantServices {
+  const preset: RestaurantServicePreset = 
+    (geofence?.business_type_preset || restaurant?.business_type_preset || 'full_system') as RestaurantServicePreset;
+
+  const presetDef = RESTAURANT_SERVICE_PRESETS.find(p => p.id === preset) || RESTAURANT_SERVICE_PRESETS[0];
+
+  const getProp = (key: string): boolean | undefined => {
+    if (geofence && typeof geofence[key] === 'boolean') return geofence[key];
+    if (restaurant && typeof (restaurant as any)[key] === 'boolean') return (restaurant as any)[key];
+    return undefined;
+  };
+
+  const pos_enabled = getProp('pos_enabled') ?? presetDef.services.pos_enabled;
+  const kitchen_enabled = getProp('kitchen_enabled') ?? presetDef.services.kitchen_enabled;
+  const tables_enabled = getProp('tables_enabled') ?? presetDef.services.tables_enabled;
+  const customer_app_enabled = getProp('customer_app_enabled') ?? presetDef.services.customer_app_enabled;
+  const delivery_enabled = getProp('delivery_enabled') ?? presetDef.services.delivery_enabled;
+  const waiter_enabled = getProp('waiter_enabled') ?? presetDef.services.waiter_enabled;
+
+  return {
+    pos_enabled,
+    kitchen_enabled,
+    tables_enabled,
+    customer_app_enabled,
+    delivery_enabled,
+    waiter_enabled,
+    business_type_preset: preset,
+  };
+}
+
 export type Restaurant = {
   id: string;
   name: string;
@@ -43,6 +215,21 @@ export type Restaurant = {
   tiktok_pixel_id?: string;
   is_prepaid?: boolean;
   payment_model?: 'prepaid' | 'postpaid';
+  // Modular System Services
+  pos_enabled?: boolean;
+  kitchen_enabled?: boolean;
+  tables_enabled?: boolean;
+  customer_app_enabled?: boolean;
+  delivery_enabled?: boolean;
+  waiter_enabled?: boolean;
+  business_type_preset?: RestaurantServicePreset;
+  // POS & Tax Data
+  tax_number?: string;
+  commercial_registration?: string;
+  tax_rate?: number;
+  invoice_prefix?: string;
+  address?: string;
+  phone?: string;
 };
 
 export type Table = {

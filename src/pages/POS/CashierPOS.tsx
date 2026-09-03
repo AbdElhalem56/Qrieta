@@ -1,6 +1,17 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { useSearchParams, useNavigate, Link } from 'react-router-dom';
-import { supabase, Restaurant, Category, Product, Table, Order } from '../../lib/supabase';
+import { 
+  supabase, 
+  Restaurant, 
+  Category, 
+  Product, 
+  Table, 
+  Order, 
+  resolveRestaurantServices, 
+  RESTAURANT_SERVICE_PRESETS, 
+  RestaurantServicePreset,
+  getRestaurantPresetDef 
+} from '../../lib/supabase';
 import { fetchAllServerGeofences, RestaurantGeofence } from '../../lib/geoHelper';
 import { TaxReceiptModal } from '../../components/TaxReceiptModal';
 import { TaxReceiptData, generateInvoiceNumber } from '../../lib/taxReceiptHelper';
@@ -87,7 +98,9 @@ import {
   Volume2,
   VolumeX,
   ChevronLeft,
-  Boxes
+  Boxes,
+  Zap,
+  MonitorCheck
 } from 'lucide-react';
 import { 
   getNextDailyOrderNumber, 
@@ -136,8 +149,23 @@ export const CashierPOS: React.FC = () => {
   const [searchQuery, setSearchQuery] = useState<string>('');
 
   // Order Details
-  const [orderType, setOrderType] = useState<'dine_in' | 'takeaway' | 'delivery'>('dine_in');
+  const [orderType, setOrderType] = useState<'dine_in' | 'takeaway' | 'delivery'>('takeaway');
   const [selectedTable, setSelectedTable] = useState<Table | null>(null);
+
+  // Modular Services Configuration per Restaurant
+  const restaurantServices = useMemo(() => {
+    return resolveRestaurantServices(selectedRestaurant, restaurantGeofence);
+  }, [selectedRestaurant, restaurantGeofence]);
+
+  // Auto-adjust orderType when restaurant services forbid dine-in or delivery
+  useEffect(() => {
+    if (!restaurantServices.tables_enabled && orderType === 'dine_in') {
+      setOrderType('takeaway');
+    }
+    if (!restaurantServices.delivery_enabled && orderType === 'delivery') {
+      setOrderType('takeaway');
+    }
+  }, [restaurantServices.tables_enabled, restaurantServices.delivery_enabled, orderType]);
   const [customerName, setCustomerName] = useState<string>('');
   const [customerPhone, setCustomerPhone] = useState<string>('');
   const [customerAddress, setCustomerAddress] = useState<string>('');
@@ -1450,6 +1478,46 @@ export const CashierPOS: React.FC = () => {
     );
   }
 
+  // 🚫 Access Restriction: If Cashier POS is disabled for this restaurant
+  if (restaurantServices && restaurantServices.pos_enabled === false) {
+    return (
+      <div className="h-screen w-full bg-slate-950 text-white flex flex-col items-center justify-center p-6 text-center select-none" dir="rtl">
+        <div className="w-20 h-20 rounded-3xl bg-amber-500/20 text-amber-400 flex items-center justify-center mb-5 border border-amber-500/30 shadow-2xl">
+          <MonitorCheck size={40} />
+        </div>
+        <h1 className="text-2xl md:text-3xl font-black mb-3 text-white">نظام الكاشير (POS) غير مفعل لهذا المتجر</h1>
+        <p className="text-slate-400 max-w-md text-sm md:text-base mb-6 leading-relaxed">
+          تم ضبط باقة تشغيل مطعم <span className="text-amber-400 font-bold">{selectedRestaurant?.name}</span> على نمط لا يتضمن شاشة الكاشير المباشرة (مثل: منيو وتوصيل أونلاين فقط).
+        </p>
+        <div className="flex flex-wrap items-center justify-center gap-3">
+          <Link 
+            to="/" 
+            className="px-6 py-3 rounded-2xl bg-slate-800 hover:bg-slate-700 text-sm font-bold text-slate-200 transition-all"
+          >
+            الرئيسية
+          </Link>
+          {selectedRestaurant?.slug && (
+            <a 
+              href={`/r/${selectedRestaurant.slug}`} 
+              className="px-6 py-3 rounded-2xl bg-amber-500 hover:bg-amber-600 text-sm font-black text-slate-950 shadow-lg shadow-amber-500/20 transition-all"
+            >
+              فتح تطبيق الطلبات والدليفري
+            </a>
+          )}
+        </div>
+      </div>
+    );
+  }
+
+  const effectivePreset = selectedRestaurant?.business_type_preset || (
+    restaurantServices.pos_enabled && restaurantServices.kitchen_enabled && !restaurantServices.tables_enabled ? 'cloud_kitchen' :
+    restaurantServices.pos_enabled && !restaurantServices.kitchen_enabled && !restaurantServices.tables_enabled ? 'fast_counter' :
+    restaurantServices.pos_enabled && !restaurantServices.delivery_enabled && !restaurantServices.tables_enabled ? 'pos_only' :
+    !restaurantServices.pos_enabled && restaurantServices.delivery_enabled ? 'delivery_only' :
+    'full_system'
+  );
+  const currentPresetInfo = getRestaurantPresetDef(effectivePreset);
+
   return (
     <div className="h-screen w-full bg-slate-100 text-slate-800 flex flex-col overflow-hidden font-sans select-none" dir="rtl">
       
@@ -1470,9 +1538,14 @@ export const CashierPOS: React.FC = () => {
           <div className="flex items-center gap-2 bg-slate-50 border border-slate-200 px-3 py-1 rounded-xl shadow-sm">
             <div className="w-2 h-2 rounded-full bg-emerald-500" />
             <div className="leading-tight text-right">
-              <span className="font-bold text-xs text-slate-800 block">
-                {selectedRestaurant?.name || 'مطعم كريتا'}
-              </span>
+              <div className="flex items-center gap-1.5">
+                <span className="font-bold text-xs text-slate-800 block">
+                  {selectedRestaurant?.name || 'مطعم كريتا'}
+                </span>
+                <span className="bg-slate-900 text-white text-[9px] font-black px-1.5 py-0.2 rounded-md">
+                  {currentPresetInfo.titleAr}
+                </span>
+              </div>
               <span className="text-[10px] text-slate-500 font-mono flex items-center gap-1">
                 <Lock size={10} className="text-amber-500 inline" />
                 فرع معتمد ومقفل للجهاز
@@ -1692,39 +1765,43 @@ export const CashierPOS: React.FC = () => {
               >
                 الفواتير ({activeOrders.length})
               </button>
-              <button
-                onClick={() => setActiveTab('tables')}
-                className={`px-3 py-1 rounded-lg text-xs font-bold transition-all cursor-pointer ${
-                  activeTab === 'tables' ? 'bg-amber-500 text-white shadow-sm' : 'text-slate-600 hover:text-slate-900'
-                }`}
-              >
-                الطاولات ({tables.length})
-              </button>
-              <button
-                onClick={() => {
-                  setActiveTab('customer_orders');
-                  setHasUnviewedCustomerAlert(false);
-                }}
-                className={`relative px-3.5 py-1.5 rounded-xl text-xs font-black transition-all flex items-center gap-2 cursor-pointer shadow-xs ${
-                  activeTab === 'customer_orders'
-                    ? 'bg-orange-600 text-white shadow-md shadow-orange-500/30 ring-2 ring-orange-400'
-                    : unhandledCustomerOrdersCount > 0
-                    ? 'bg-gradient-to-r from-red-600 to-orange-600 text-white animate-pulse shadow-md ring-2 ring-red-400'
-                    : 'bg-orange-50 text-orange-900 hover:bg-orange-100 border border-orange-200'
-                }`}
-              >
-                <Smartphone size={14} className={unhandledCustomerOrdersCount > 0 ? "animate-bounce" : ""} />
-                <span>طلبات تطبيق الزبائن</span>
-                {unhandledCustomerOrdersCount > 0 ? (
-                  <span className="px-2 py-0.5 rounded-full bg-white text-red-600 text-[10px] font-black leading-none shadow-xs">
-                    {unhandledCustomerOrdersCount} جديد!
-                  </span>
-                ) : (
-                  <span className="px-1.5 py-0.2 rounded-md bg-orange-200/80 text-orange-950 text-[10px] font-bold">
-                    {customerLiveOrders.length}
-                  </span>
-                )}
-              </button>
+              {restaurantServices.tables_enabled && (
+                <button
+                  onClick={() => setActiveTab('tables')}
+                  className={`px-3 py-1 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+                    activeTab === 'tables' ? 'bg-amber-500 text-white shadow-sm' : 'text-slate-600 hover:text-slate-900'
+                  }`}
+                >
+                  الطاولات ({tables.length})
+                </button>
+              )}
+              {(restaurantServices.customer_app_enabled || restaurantServices.delivery_enabled) && (
+                <button
+                  onClick={() => {
+                    setActiveTab('customer_orders');
+                    setHasUnviewedCustomerAlert(false);
+                  }}
+                  className={`relative px-3.5 py-1.5 rounded-xl text-xs font-black transition-all flex items-center gap-2 cursor-pointer shadow-xs ${
+                    activeTab === 'customer_orders'
+                      ? 'bg-orange-600 text-white shadow-md shadow-orange-500/30 ring-2 ring-orange-400'
+                      : unhandledCustomerOrdersCount > 0
+                      ? 'bg-gradient-to-r from-red-600 to-orange-600 text-white animate-pulse shadow-md ring-2 ring-red-400'
+                      : 'bg-orange-50 text-orange-900 hover:bg-orange-100 border border-orange-200'
+                  }`}
+                >
+                  <Smartphone size={14} className={unhandledCustomerOrdersCount > 0 ? "animate-bounce" : ""} />
+                  <span>طلبات تطبيق الزبائن</span>
+                  {unhandledCustomerOrdersCount > 0 ? (
+                    <span className="px-2 py-0.5 rounded-full bg-white text-red-600 text-[10px] font-black leading-none shadow-xs">
+                      {unhandledCustomerOrdersCount} جديد!
+                    </span>
+                  ) : (
+                    <span className="px-1.5 py-0.2 rounded-md bg-orange-200/80 text-orange-950 text-[10px] font-bold">
+                      {customerLiveOrders.length}
+                    </span>
+                  )}
+                </button>
+              )}
             </div>
           </div>
 
@@ -1743,7 +1820,7 @@ export const CashierPOS: React.FC = () => {
                       #{getDisplayOrderNumber(latestCustomerOrder)}
                     </span>
                     <p className="font-black text-sm sm:text-base text-white">
-                      طلب زبون جديد ينتظر الاستلام والطباعة! ({unhandledCustomerOrdersCount} بالانتظار)
+                      طلب زبون جديد ينتظر الاستلام! ({unhandledCustomerOrdersCount} بالانتظار)
                     </p>
                   </div>
                   <p className="text-xs text-orange-100 mt-1 flex flex-wrap items-center gap-1.5 font-medium">
@@ -1770,7 +1847,7 @@ export const CashierPOS: React.FC = () => {
                     className="bg-white hover:bg-orange-50 text-orange-700 font-black text-xs px-4 py-2.5 rounded-xl shadow-lg flex items-center gap-1.5 cursor-pointer active:scale-95 transition-all"
                   >
                     <Printer size={15} />
-                    <span>⚡ قبول وطباعة KOT فوراً</span>
+                    <span>{restaurantServices.kitchen_enabled ? '⚡ قبول وطباعة KOT فوراً' : '⚡ قبول وتسليم فوري'}</span>
                   </button>
                 )}
                 
@@ -2423,18 +2500,26 @@ export const CashierPOS: React.FC = () => {
               </div>
             </button>
 
-            {/* Order Type Tabs */}
-            <div className="grid grid-cols-3 gap-1 bg-slate-100 p-1 rounded-xl border border-slate-200">
-              <button
-                type="button"
-                onClick={() => setOrderType('dine_in')}
-                className={`py-1.5 rounded-lg text-xs font-bold flex items-center justify-center gap-1 transition-all cursor-pointer ${
-                  orderType === 'dine_in' ? 'bg-amber-500 text-white shadow-sm' : 'text-slate-600 hover:text-slate-900'
-                }`}
-              >
-                <UtensilsCrossed size={13} />
-                <span>صالة</span>
-              </button>
+            {/* Order Type Tabs (Dynamically adapted to restaurant services) */}
+            <div className={`grid gap-1 bg-slate-100 p-1 rounded-xl border border-slate-200 ${
+              restaurantServices.tables_enabled && restaurantServices.delivery_enabled
+                ? 'grid-cols-3'
+                : (restaurantServices.tables_enabled || restaurantServices.delivery_enabled)
+                ? 'grid-cols-2'
+                : 'grid-cols-1'
+            }`}>
+              {restaurantServices.tables_enabled && (
+                <button
+                  type="button"
+                  onClick={() => setOrderType('dine_in')}
+                  className={`py-1.5 rounded-lg text-xs font-bold flex items-center justify-center gap-1 transition-all cursor-pointer ${
+                    orderType === 'dine_in' ? 'bg-amber-500 text-white shadow-sm' : 'text-slate-600 hover:text-slate-900'
+                  }`}
+                >
+                  <UtensilsCrossed size={13} />
+                  <span>صالة</span>
+                </button>
+              )}
               <button
                 type="button"
                 onClick={() => setOrderType('takeaway')}
@@ -2445,16 +2530,18 @@ export const CashierPOS: React.FC = () => {
                 <ShoppingBag size={13} />
                 <span>سفري</span>
               </button>
-              <button
-                type="button"
-                onClick={() => setOrderType('delivery')}
-                className={`py-1.5 rounded-lg text-xs font-bold flex items-center justify-center gap-1 transition-all cursor-pointer ${
-                  orderType === 'delivery' ? 'bg-amber-500 text-white shadow-sm' : 'text-slate-600 hover:text-slate-900'
-                }`}
-              >
-                <Bike size={13} />
-                <span>دليفري</span>
-              </button>
+              {restaurantServices.delivery_enabled && (
+                <button
+                  type="button"
+                  onClick={() => setOrderType('delivery')}
+                  className={`py-1.5 rounded-lg text-xs font-bold flex items-center justify-center gap-1 transition-all cursor-pointer ${
+                    orderType === 'delivery' ? 'bg-amber-500 text-white shadow-sm' : 'text-slate-600 hover:text-slate-900'
+                  }`}
+                >
+                  <Bike size={13} />
+                  <span>دليفري</span>
+                </button>
+              )}
             </div>
 
             {/* Conditional Sub-info: Table Picker / Customer Info */}
@@ -2597,14 +2684,24 @@ export const CashierPOS: React.FC = () => {
                 <span>تقسيم</span>
               </button>
 
-              <button
-                onClick={() => setIsKOTModalOpen(true)}
-                className="py-1.5 bg-amber-50 hover:bg-amber-100 text-amber-800 font-bold text-[11px] rounded-xl border border-amber-200 flex items-center justify-center gap-1 transition-all cursor-pointer shadow-sm"
-                title="إرسال البون للمطبخ والأقسام"
-              >
-                <ChefHat size={13} className="text-amber-600" />
-                <span>إرسال KOT</span>
-              </button>
+              {restaurantServices.kitchen_enabled ? (
+                <button
+                  onClick={() => setIsKOTModalOpen(true)}
+                  className="py-1.5 bg-amber-50 hover:bg-amber-100 text-amber-800 font-bold text-[11px] rounded-xl border border-amber-200 flex items-center justify-center gap-1 transition-all cursor-pointer shadow-sm"
+                  title="إرسال البون للمطبخ والأقسام"
+                >
+                  <ChefHat size={13} className="text-amber-600" />
+                  <span>إرسال KOT</span>
+                </button>
+              ) : (
+                <div
+                  className="py-1.5 px-2 bg-emerald-50 text-emerald-800 font-bold text-[11px] rounded-xl border border-emerald-200 flex items-center justify-center gap-1 shadow-sm select-none"
+                  title="تسليم فوري ومباشر بدون شاشة مطبخ"
+                >
+                  <Zap size={13} className="text-emerald-600" />
+                  <span>تسليم فوري</span>
+                </div>
+              )}
             </div>
           )}
 
