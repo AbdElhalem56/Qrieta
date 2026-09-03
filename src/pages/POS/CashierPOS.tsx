@@ -258,8 +258,8 @@ export const CashierPOS: React.FC = () => {
   const [isSyncing, setIsSyncing] = useState<boolean>(false);
   const [cashierInputName, setCashierInputName] = useState<string>('كاشير الفرع');
 
-  // Screen Lock PIN (Default: LOCKED for security like Waiter app, works 100% offline)
-  const [isScreenLocked, setIsScreenLocked] = useState<boolean>(true);
+  // Screen Lock PIN (Default: UNLOCKED so cashier opens immediately, lockable via button)
+  const [isScreenLocked, setIsScreenLocked] = useState<boolean>(false);
   const [lockPinInput, setLockPinInput] = useState<string>('');
   const [lockPinError, setLockPinError] = useState<string>('');
 
@@ -344,24 +344,36 @@ export const CashierPOS: React.FC = () => {
       const storedLockedId = getLockedRestaurantId();
 
       // If URL explicitly requested a restaurant, that is our primary target. Otherwise use stored locked ID.
-      const initialCandidateId = targetParamId || storedLockedId;
+      const initialCandidateId = targetParamId || storedLockedId || 'qrieta-pos-offline';
       
-      // 1. Immediate Offline Cache Load: Render instantly if cache is available for this candidate!
-      if (initialCandidateId) {
-        const cached = getCachedRestaurantData(initialCandidateId);
-        if (cached && cached.restaurant) {
-          setSelectedRestaurant(cached.restaurant);
-          setRestaurantGeofence(cached.geofence);
-          setCategories(cached.categories);
+      // 1. Immediate Load: Render cache or seed data instantly so UI is never blank
+      const cached = getCachedRestaurantData(initialCandidateId);
+      if (cached && cached.restaurant) {
+        setSelectedRestaurant(cached.restaurant);
+        setRestaurantGeofence(cached.geofence);
+        if (cached.categories?.length) setCategories(cached.categories);
+        if (cached.products?.length) {
           setProducts(cached.products);
-          setTables(cached.tables);
           const initialStock: Record<string, number> = {};
           cached.products.forEach((p, idx) => {
             initialStock[p.id] = (idx % 4 === 0) ? 6 : (idx % 7 === 0) ? 2 : 30;
           });
           setStockMap(initialStock);
-          setOfflineQueue(getOfflineOrdersQueue(initialCandidateId));
         }
+        if (cached.tables?.length) setTables(cached.tables);
+        setOfflineQueue(getOfflineOrdersQueue(initialCandidateId));
+      } else {
+        const fallback = getInitialOfflineFallbackData(initialCandidateId);
+        setSelectedRestaurant(fallback.restaurant);
+        setCategories(fallback.categories);
+        setProducts(fallback.products);
+        setTables(fallback.tables);
+        const initialStock: Record<string, number> = {};
+        fallback.products.forEach((p, idx) => {
+          initialStock[p.id] = (idx % 4 === 0) ? 6 : (idx % 7 === 0) ? 2 : 30;
+        });
+        setStockMap(initialStock);
+        setLockedRestaurantId(initialCandidateId);
       }
 
       // 2. Fetch Latest from Server if Online
@@ -373,7 +385,9 @@ export const CashierPOS: React.FC = () => {
           ]);
 
           const loadedRestaurants = restRes.data || [];
-          setRestaurants(loadedRestaurants);
+          if (loadedRestaurants.length > 0) {
+            setRestaurants(loadedRestaurants);
+          }
 
           let targetRest: Restaurant | null = null;
 
@@ -411,20 +425,12 @@ export const CashierPOS: React.FC = () => {
             const geo = geofences[targetRest.id] || null;
             setRestaurantGeofence(geo);
             await loadRestaurantDetails(targetRest.id, geo, targetRest);
+          } else {
+            // If candidate exists, ensure details are loaded
+            await loadRestaurantDetails(initialCandidateId, null, null);
           }
         } catch (netErr) {
-          console.warn('Network load failed, falling back to cache:', netErr);
-        }
-      } else {
-        // Pure Offline Mode with no existing cache? Use rich seed data!
-        if (!selectedRestaurant) {
-          const fallbackId = targetParamId || storedLockedId || 'qrieta-pos-offline';
-          const fallback = getInitialOfflineFallbackData(fallbackId);
-          setSelectedRestaurant(fallback.restaurant);
-          setCategories(fallback.categories);
-          setProducts(fallback.products);
-          setTables(fallback.tables);
-          setLockedRestaurantId(fallbackId);
+          console.warn('Network load failed, keeping cache/fallback:', netErr);
         }
       }
     } catch (err) {
@@ -437,26 +443,62 @@ export const CashierPOS: React.FC = () => {
   const loadRestaurantDetails = async (restaurantId: string, geo?: RestaurantGeofence | null, restObj?: Restaurant | null) => {
     try {
       if (navigator.onLine) {
-        const [catsRes, itemsRes, tablesRes, ordersRes] = await Promise.all([
-          supabase.from('categories').select('*').eq('restaurant_id', restaurantId).order('name_ar'),
-          supabase.from('products').select('*').eq('restaurant_id', restaurantId),
-          supabase.from('tables').select('*').eq('restaurant_id', restaurantId).order('table_number'),
-          supabase.from('orders').select('*, order_items(*, products(*)), tables(table_number)').eq('restaurant_id', restaurantId).order('created_at', { ascending: false }).limit(60)
-        ]);
+        let loadedCats: Category[] = [];
+        let loadedItems: Product[] = [];
+        let loadedTables: Table[] = [];
+        let loadedOrders: any[] = [];
 
-        const loadedCats = catsRes.data || [];
-        const loadedItems = itemsRes.data || [];
-        const loadedTables = tablesRes.data || [];
-        const loadedOrders = ordersRes.data || [];
+        try {
+          const catsRes = await supabase.from('categories').select('*').eq('restaurant_id', restaurantId).order('sort_order');
+          if (catsRes.data && catsRes.data.length > 0) {
+            loadedCats = catsRes.data;
+          }
+        } catch (e) {
+          console.warn('Categories query error:', e);
+        }
 
-        setCategories(loadedCats);
-        setProducts(loadedItems);
+        try {
+          const itemsRes = await supabase.from('products').select('*').eq('restaurant_id', restaurantId);
+          if (itemsRes.data && itemsRes.data.length > 0) {
+            loadedItems = itemsRes.data;
+          }
+        } catch (e) {
+          console.warn('Products query error:', e);
+        }
+
+        try {
+          const tablesRes = await supabase.from('tables').select('*').eq('restaurant_id', restaurantId).order('table_number');
+          if (tablesRes.data && tablesRes.data.length > 0) {
+            loadedTables = tablesRes.data;
+          }
+        } catch (e) {
+          console.warn('Tables query error:', e);
+        }
+
+        try {
+          const ordersRes = await supabase.from('orders').select('*, order_items(*), tables(table_number)').eq('restaurant_id', restaurantId).order('created_at', { ascending: false }).limit(60);
+          if (ordersRes.data) {
+            loadedOrders = ordersRes.data;
+          }
+        } catch (e) {
+          console.warn('Orders query error:', e);
+        }
+
+        // Guarantee fallback data if server returns 0 categories or products
+        const fallback = getInitialOfflineFallbackData(restaurantId);
+        const finalCats = loadedCats.length > 0 ? loadedCats : fallback.categories;
+        const finalItems = loadedItems.length > 0 ? loadedItems : fallback.products;
+        const finalTables = loadedTables.length > 0 ? loadedTables : fallback.tables;
+
+        setCategories(finalCats);
+        setProducts(finalItems);
         const initialStock: Record<string, number> = {};
-        loadedItems.forEach((p, idx) => {
+        finalItems.forEach((p, idx) => {
           initialStock[p.id] = (idx % 4 === 0) ? 6 : (idx % 7 === 0) ? 2 : 30;
         });
         setStockMap(initialStock);
-        setTables(loadedTables);
+        setTables(finalTables);
+
         if (loadedOrders.length > 0) {
           const formattedOrders = loadedOrders.map((ord: any) => {
             const dailyNum = getDisplayOrderNumber(ord);
@@ -523,11 +565,11 @@ export const CashierPOS: React.FC = () => {
 
         // Save fresh snapshot to offline cache
         saveCachedRestaurantData(restaurantId, {
-          restaurant: restObj || selectedRestaurant,
+          restaurant: restObj || selectedRestaurant || fallback.restaurant,
           geofence: geo !== undefined ? geo : restaurantGeofence,
-          categories: loadedCats,
-          products: loadedItems,
-          tables: loadedTables,
+          categories: finalCats,
+          products: finalItems,
+          tables: finalTables,
         });
       } else {
         // Load from local storage cache
@@ -538,6 +580,12 @@ export const CashierPOS: React.FC = () => {
           setTables(cached.tables);
           if (cached.restaurant) setSelectedRestaurant(cached.restaurant);
           if (cached.geofence) setRestaurantGeofence(cached.geofence);
+        } else {
+          const fallback = getInitialOfflineFallbackData(restaurantId);
+          setSelectedRestaurant(fallback.restaurant);
+          setCategories(fallback.categories);
+          setProducts(fallback.products);
+          setTables(fallback.tables);
         }
       }
 
@@ -1524,37 +1572,6 @@ export const CashierPOS: React.FC = () => {
     );
   }
 
-  // 🚫 Access Restriction: If Cashier POS is disabled for this restaurant
-  if (restaurantServices && restaurantServices.pos_enabled === false) {
-    return (
-      <div className="h-screen w-full bg-slate-950 text-white flex flex-col items-center justify-center p-6 text-center select-none" dir="rtl">
-        <div className="w-20 h-20 rounded-3xl bg-amber-500/20 text-amber-400 flex items-center justify-center mb-5 border border-amber-500/30 shadow-2xl">
-          <MonitorCheck size={40} />
-        </div>
-        <h1 className="text-2xl md:text-3xl font-black mb-3 text-white">نظام الكاشير (POS) غير مفعل لهذا المتجر</h1>
-        <p className="text-slate-400 max-w-md text-sm md:text-base mb-6 leading-relaxed">
-          تم ضبط باقة تشغيل مطعم <span className="text-amber-400 font-bold">{selectedRestaurant?.name}</span> على نمط لا يتضمن شاشة الكاشير المباشرة (مثل: منيو وتوصيل أونلاين فقط).
-        </p>
-        <div className="flex flex-wrap items-center justify-center gap-3">
-          <Link 
-            to="/" 
-            className="px-6 py-3 rounded-2xl bg-slate-800 hover:bg-slate-700 text-sm font-bold text-slate-200 transition-all"
-          >
-            الرئيسية
-          </Link>
-          {selectedRestaurant?.slug && (
-            <a 
-              href={`/r/${selectedRestaurant.slug}`} 
-              className="px-6 py-3 rounded-2xl bg-amber-500 hover:bg-amber-600 text-sm font-black text-slate-950 shadow-lg shadow-amber-500/20 transition-all"
-            >
-              فتح تطبيق الطلبات والدليفري
-            </a>
-          )}
-        </div>
-      </div>
-    );
-  }
-
   const effectivePreset = selectedRestaurant?.business_type_preset || (
     restaurantServices.pos_enabled && restaurantServices.kitchen_enabled && !restaurantServices.tables_enabled ? 'cloud_kitchen' :
     restaurantServices.pos_enabled && !restaurantServices.kitchen_enabled && !restaurantServices.tables_enabled ? 'fast_counter' :
@@ -1754,6 +1771,26 @@ export const CashierPOS: React.FC = () => {
           </button>
         </div>
       </header>
+
+      {/* Notice if POS preset was marked disabled */}
+      {restaurantServices && restaurantServices.pos_enabled === false && (
+        <div className="bg-amber-50 border-b border-amber-200 text-amber-900 px-4 py-2 text-xs font-bold flex items-center justify-between shrink-0 shadow-xs">
+          <div className="flex items-center gap-2">
+            <AlertCircle size={15} className="text-amber-600 shrink-0" />
+            <span>تنبيه: باقة هذا المتجر مضبوطة على خدمة محددة. شاشة الكاشير متاحة لك كمسؤول/كاشير بكامل ميزاتها.</span>
+          </div>
+          {selectedRestaurant?.slug && (
+            <a 
+              href={`/r/${selectedRestaurant.slug}`} 
+              target="_blank" 
+              rel="noreferrer" 
+              className="underline hover:text-amber-950 text-[11px] font-bold"
+            >
+              فتح تطبيق الطلبات للزبائن
+            </a>
+          )}
+        </div>
+      )}
 
       {/* 📱 MAIN WORKSPACE: Grid Layout (Products 65% | Cart & Settlement 35%) */}
       <div className="flex-1 flex overflow-hidden">
