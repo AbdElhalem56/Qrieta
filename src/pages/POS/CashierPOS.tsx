@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
-import { useSearchParams, useNavigate, Link } from 'react-router-dom';
+import { useSearchParams, useNavigate, Link, useParams } from 'react-router-dom';
 import { 
   supabase, 
   Restaurant, 
@@ -100,7 +100,8 @@ import {
   ChevronLeft,
   Boxes,
   Zap,
-  MonitorCheck
+  MonitorCheck,
+  Building2
 } from 'lucide-react';
 import { 
   getNextDailyOrderNumber, 
@@ -120,6 +121,7 @@ import {
 
 export const CashierPOS: React.FC = () => {
   const [searchParams] = useSearchParams();
+  const params = useParams<{ restaurantSlug?: string }>();
   const navigate = useNavigate();
 
   // Selected Restaurant & Settings
@@ -127,6 +129,7 @@ export const CashierPOS: React.FC = () => {
   const [selectedRestaurant, setSelectedRestaurant] = useState<Restaurant | null>(null);
   const [restaurantGeofence, setRestaurantGeofence] = useState<RestaurantGeofence | null>(null);
   const [loading, setLoading] = useState<boolean>(true);
+  const [isBranchModalOpen, setIsBranchModalOpen] = useState<boolean>(false);
 
   // Menu, Tables & Orders Data
   const [categories, setCategories] = useState<Category[]>([]);
@@ -302,19 +305,50 @@ export const CashierPOS: React.FC = () => {
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [isScreenLocked, lockPinInput]);
 
-  // 1. Initial Load: Offline First with Locked Restaurant Enforcement
+  // 1. Initial Load: Priority for Explicit URL Restaurant Target, with Offline Cache & Locked Fallback
   useEffect(() => {
     loadInitialData();
-  }, []);
+  }, [
+    searchParams.get('restaurant_id'),
+    searchParams.get('restaurantId'),
+    searchParams.get('restaurant'),
+    searchParams.get('id'),
+    searchParams.get('restaurant_slug'),
+    searchParams.get('slug'),
+    params.restaurantSlug
+  ]);
+
+  const handleSwitchRestaurant = async (newRestaurant: Restaurant) => {
+    if (newRestaurant.id === selectedRestaurant?.id) return;
+    setLockedRestaurantId(newRestaurant.id);
+    setSelectedRestaurant(newRestaurant);
+    setCart([]);
+    setSelectedTable(null);
+    setCustomerName('');
+    setCustomerPhone('');
+    setCustomerAddress('');
+    setOrderNotes('');
+    setCustomerLiveOrders([]);
+    setActiveTab('pos');
+
+    navigate(`/pos?restaurant_id=${newRestaurant.id}&restaurant_slug=${newRestaurant.slug || ''}`, { replace: true });
+    await loadRestaurantDetails(newRestaurant.id, restaurantGeofence, newRestaurant);
+  };
 
   const loadInitialData = async () => {
     setLoading(true);
     try {
-      const lockedId = getLockedRestaurantId() || searchParams.get('restaurantId');
+      // 0. Extract explicit target restaurant from URL parameters (HIGHEST PRIORITY)
+      const targetParamId = searchParams.get('restaurant_id') || searchParams.get('restaurantId') || searchParams.get('restaurant') || searchParams.get('id');
+      const targetParamSlug = params.restaurantSlug || searchParams.get('restaurant_slug') || searchParams.get('slug');
+      const storedLockedId = getLockedRestaurantId();
+
+      // If URL explicitly requested a restaurant, that is our primary target. Otherwise use stored locked ID.
+      const initialCandidateId = targetParamId || storedLockedId;
       
-      // 1. Immediate Offline Cache Load: Render instantly without waiting for network!
-      if (lockedId) {
-        const cached = getCachedRestaurantData(lockedId);
+      // 1. Immediate Offline Cache Load: Render instantly if cache is available for this candidate!
+      if (initialCandidateId) {
+        const cached = getCachedRestaurantData(initialCandidateId);
         if (cached && cached.restaurant) {
           setSelectedRestaurant(cached.restaurant);
           setRestaurantGeofence(cached.geofence);
@@ -326,7 +360,7 @@ export const CashierPOS: React.FC = () => {
             initialStock[p.id] = (idx % 4 === 0) ? 6 : (idx % 7 === 0) ? 2 : 30;
           });
           setStockMap(initialStock);
-          setOfflineQueue(getOfflineOrdersQueue(lockedId));
+          setOfflineQueue(getOfflineOrdersQueue(initialCandidateId));
         }
       }
 
@@ -342,17 +376,37 @@ export const CashierPOS: React.FC = () => {
           setRestaurants(loadedRestaurants);
 
           let targetRest: Restaurant | null = null;
-          if (lockedId) {
-            targetRest = loadedRestaurants.find(r => r.id === lockedId) || null;
+
+          // Priority 1: Match by explicit URL restaurant ID
+          if (targetParamId) {
+            targetRest = loadedRestaurants.find(r => r.id === targetParamId) || null;
           }
-          
-          // If device is not yet locked to any restaurant, lock to the first one
+          // Priority 2: Match by explicit URL slug
+          if (!targetRest && targetParamSlug) {
+            targetRest = loadedRestaurants.find(r => r.slug === targetParamSlug) || null;
+          }
+          // Priority 3: Fallback to previously locked restaurant on this device
+          if (!targetRest && storedLockedId) {
+            targetRest = loadedRestaurants.find(r => r.id === storedLockedId) || null;
+          }
+          // Priority 4: Fallback to the first available restaurant
           if (!targetRest && loadedRestaurants.length > 0) {
             targetRest = loadedRestaurants[0];
-            setLockedRestaurantId(targetRest.id);
           }
 
           if (targetRest) {
+            // If switching from another restaurant, reset cart & current inputs
+            if (selectedRestaurant && selectedRestaurant.id !== targetRest.id) {
+              setCart([]);
+              setSelectedTable(null);
+              setCustomerName('');
+              setCustomerPhone('');
+              setCustomerAddress('');
+              setOrderNotes('');
+              setCustomerLiveOrders([]);
+            }
+
+            setLockedRestaurantId(targetRest.id);
             setSelectedRestaurant(targetRest);
             const geo = geofences[targetRest.id] || null;
             setRestaurantGeofence(geo);
@@ -364,7 +418,7 @@ export const CashierPOS: React.FC = () => {
       } else {
         // Pure Offline Mode with no existing cache? Use rich seed data!
         if (!selectedRestaurant) {
-          const fallbackId = lockedId || 'qrieta-pos-offline';
+          const fallbackId = targetParamId || storedLockedId || 'qrieta-pos-offline';
           const fallback = getInitialOfflineFallbackData(fallbackId);
           setSelectedRestaurant(fallback.restaurant);
           setCategories(fallback.categories);
@@ -395,16 +449,14 @@ export const CashierPOS: React.FC = () => {
         const loadedTables = tablesRes.data || [];
         const loadedOrders = ordersRes.data || [];
 
-        if (loadedCats.length > 0) setCategories(loadedCats);
-        if (loadedItems.length > 0) {
-          setProducts(loadedItems);
-          const initialStock: Record<string, number> = {};
-          loadedItems.forEach((p, idx) => {
-            initialStock[p.id] = (idx % 4 === 0) ? 6 : (idx % 7 === 0) ? 2 : 30;
-          });
-          setStockMap(initialStock);
-        }
-        if (loadedTables.length > 0) setTables(loadedTables);
+        setCategories(loadedCats);
+        setProducts(loadedItems);
+        const initialStock: Record<string, number> = {};
+        loadedItems.forEach((p, idx) => {
+          initialStock[p.id] = (idx % 4 === 0) ? 6 : (idx % 7 === 0) ? 2 : 30;
+        });
+        setStockMap(initialStock);
+        setTables(loadedTables);
         if (loadedOrders.length > 0) {
           const formattedOrders = loadedOrders.map((ord: any) => {
             const dailyNum = getDisplayOrderNumber(ord);
@@ -463,16 +515,10 @@ export const CashierPOS: React.FC = () => {
               };
             });
 
-          if (customerOrdersFromDb.length > 0) {
-            setCustomerLiveOrders(prev => {
-              const map = new Map<string, LiveOrder>();
-              customerOrdersFromDb.forEach(co => map.set(String(co.id), co));
-              prev.forEach(po => map.set(String(po.id), po));
-              return Array.from(map.values()).sort(
-                (a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
-              );
-            });
-          }
+          setCustomerLiveOrders(customerOrdersFromDb);
+        } else {
+          setActiveOrders([]);
+          setCustomerLiveOrders([]);
         }
 
         // Save fresh snapshot to offline cache
@@ -1534,22 +1580,34 @@ export const CashierPOS: React.FC = () => {
             </div>
           </div>
 
-          {/* 🔒 Locked Restaurant Badge (مقيد بالفرع بدون أي إمكانية للتبديل) */}
+          {/* 🔒 Active / Locked Restaurant Badge with Branch Switcher */}
           <div className="flex items-center gap-2 bg-slate-50 border border-slate-200 px-3 py-1 rounded-xl shadow-sm">
             <div className="w-2 h-2 rounded-full bg-emerald-500" />
             <div className="leading-tight text-right">
               <div className="flex items-center gap-1.5">
-                <span className="font-bold text-xs text-slate-800 block">
+                <span className="font-bold text-xs text-slate-800 block max-w-[120px] sm:max-w-[180px] truncate" title={selectedRestaurant?.name || ''}>
                   {selectedRestaurant?.name || 'مطعم كريتا'}
                 </span>
                 <span className="bg-slate-900 text-white text-[9px] font-black px-1.5 py-0.2 rounded-md">
                   {currentPresetInfo.titleAr}
                 </span>
               </div>
-              <span className="text-[10px] text-slate-500 font-mono flex items-center gap-1">
-                <Lock size={10} className="text-amber-500 inline" />
-                فرع معتمد ومقفل للجهاز
-              </span>
+              <div className="flex items-center gap-1">
+                <span className="text-[10px] text-slate-500 font-mono flex items-center gap-1">
+                  <Lock size={10} className="text-amber-500 inline" />
+                  فرع معتمد
+                </span>
+                {restaurants.length > 1 && (
+                  <button
+                    type="button"
+                    onClick={() => setIsBranchModalOpen(true)}
+                    className="text-[10px] text-amber-600 hover:text-amber-700 font-bold underline cursor-pointer mr-1"
+                    title="تبديل المتجر أو الفرع"
+                  >
+                    تبديل الفرع
+                  </button>
+                )}
+              </div>
             </div>
           </div>
 
@@ -3118,6 +3176,78 @@ export const CashierPOS: React.FC = () => {
                 </button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {/* 10. Quick Branch Switcher Modal */}
+      {isBranchModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm animate-in fade-in duration-200" dir="rtl">
+          <div className="bg-white rounded-3xl shadow-2xl border border-slate-200 w-full max-w-md p-6 overflow-hidden">
+            <div className="flex items-center justify-between pb-4 border-b border-slate-100 mb-4">
+              <div className="flex items-center gap-2.5">
+                <div className="w-10 h-10 rounded-2xl bg-amber-100 text-amber-600 flex items-center justify-center font-bold">
+                  <Building2 size={20} />
+                </div>
+                <div>
+                  <h3 className="font-black text-slate-900 text-base">تبديل فرع الكاشير</h3>
+                  <p className="text-xs text-slate-500">اختر المطعم أو الفرع للعمل عليه في هذه الجلسة</p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setIsBranchModalOpen(false)}
+                className="w-8 h-8 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-600 flex items-center justify-center cursor-pointer transition-colors"
+              >
+                <X size={18} />
+              </button>
+            </div>
+
+            <div className="space-y-2 max-h-80 overflow-y-auto pr-1">
+              {restaurants.map((res) => {
+                const isCurrent = res.id === selectedRestaurant?.id;
+                const presetDef = getRestaurantPresetDef(res.service_preset || 'full_dine_in');
+                return (
+                  <button
+                    key={res.id}
+                    type="button"
+                    onClick={() => {
+                      setIsBranchModalOpen(false);
+                      handleSwitchRestaurant(res);
+                    }}
+                    className={`w-full flex items-center justify-between p-3.5 rounded-2xl border text-right transition-all cursor-pointer ${
+                      isCurrent 
+                        ? 'bg-amber-500 text-white border-amber-600 shadow-md shadow-amber-500/20' 
+                        : 'bg-slate-50 hover:bg-slate-100 border-slate-200 text-slate-800'
+                    }`}
+                  >
+                    <div className="flex items-center gap-3">
+                      <div className={`w-10 h-10 rounded-xl flex items-center justify-center font-bold text-sm ${
+                        isCurrent ? 'bg-white/20 text-white' : 'bg-white text-slate-700 shadow-sm'
+                      }`}>
+                        {res.name?.slice(0, 2) || 'مط'}
+                      </div>
+                      <div>
+                        <div className="font-black text-sm">{res.name}</div>
+                        <div className={`text-[11px] flex items-center gap-1.5 ${isCurrent ? 'text-amber-100' : 'text-slate-500'}`}>
+                          <span>{res.slug ? `/r/${res.slug}` : res.id.slice(0, 8)}</span>
+                          <span className={`text-[9px] px-1.5 py-0.5 rounded-md font-bold ${
+                            isCurrent ? 'bg-black/20 text-white' : 'bg-slate-200 text-slate-700'
+                          }`}>
+                            {presetDef.titleAr}
+                          </span>
+                        </div>
+                      </div>
+                    </div>
+                    {isCurrent && (
+                      <span className="bg-white/30 text-white text-[10px] font-black px-2 py-0.5 rounded-lg">
+                        الفرع الحالي
+                      </span>
+                    )}
+                  </button>
+                );
+              })}
+            </div>
           </div>
         </div>
       )}

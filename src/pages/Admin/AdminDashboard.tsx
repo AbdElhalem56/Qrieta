@@ -2425,7 +2425,7 @@ export default function AdminDashboard() {
 
                       {restaurant?.id && (
                         <a
-                          href={`/pos?restaurant=${restaurant.id}`}
+                          href={`/pos?restaurant_id=${restaurant.id}&restaurant_slug=${restaurant.slug || ''}`}
                           target="_blank"
                           rel="noreferrer"
                           className="px-4 py-3.5 bg-slate-900 hover:bg-black text-white text-xs font-bold rounded-xl shadow-sm transition-all flex items-center gap-1.5 whitespace-nowrap"
@@ -2750,7 +2750,7 @@ export default function AdminDashboard() {
                     </button>
 
                     <a
-                      href={`/pos?restaurant=${restaurant.id}`}
+                      href={restaurant?.id ? `/pos?restaurant_id=${restaurant.id}&restaurant_slug=${restaurant.slug || ''}` : '/pos'}
                       target="_blank"
                       rel="noreferrer"
                       className="px-4 py-3.5 bg-slate-900 hover:bg-black text-white text-xs font-bold rounded-xl shadow-sm transition-all flex items-center gap-1.5 whitespace-nowrap"
