@@ -13,6 +13,7 @@ export interface LiveOrder {
   table_number?: string | number | null;
   customer_name?: string;
   customer_phone?: string;
+  customer_email?: string;
   delivery_address?: string;
   delivery_notes?: string;
   notes?: string;
@@ -421,6 +422,9 @@ export interface CustomerSavedOrder {
   restaurant_name?: string;
   order_type: 'dine_in' | 'delivery' | 'takeaway';
   table_number?: string | number | null;
+  customer_name?: string;
+  customer_phone?: string;
+  customer_email?: string;
   delivery_address?: string;
   items: Array<{
     name: string;
@@ -447,7 +451,7 @@ export function saveCustomerDeviceOrder(restaurantId: string, order: CustomerSav
     } else {
       existing.unshift(order);
     }
-    localStorage.setItem(key, JSON.stringify(existing.slice(0, 30)));
+    localStorage.setItem(key, JSON.stringify(existing.slice(0, 50)));
   } catch (e) {
     console.warn('Failed to persist customer device order:', e);
   }
@@ -488,11 +492,15 @@ export function syncCustomerDeviceOrdersWithLive(
   liveOrders: LiveOrder[],
   currentTableNumber?: string | number | null,
   currentTableId?: string | null,
-  customerPhone?: string | null
+  customerPhone?: string | null,
+  customerEmail?: string | null
 ): CustomerSavedOrder[] {
   const localOrders = getCustomerDeviceOrders(restaurantId);
   const localMap = new Map<string, CustomerSavedOrder>();
   localOrders.forEach(o => localMap.set(String(o.id), o));
+
+  const trimmedPhone = (customerPhone || '').trim();
+  const trimmedEmail = (customerEmail || '').trim().toLowerCase();
 
   if (Array.isArray(liveOrders)) {
     liveOrders.forEach(live => {
@@ -500,7 +508,9 @@ export function syncCustomerDeviceOrdersWithLive(
 
       const matchesTable = (currentTableNumber && live.table_number && String(live.table_number).trim() === String(currentTableNumber).trim()) ||
                             (currentTableId && live.table_id && String(live.table_id) === String(currentTableId));
-      const matchesPhone = customerPhone && live.customer_phone && String(live.customer_phone).trim() === String(customerPhone).trim();
+      const matchesPhone = trimmedPhone && live.customer_phone && String(live.customer_phone).trim() === trimmedPhone;
+      const matchesEmail = trimmedEmail && live.customer_email && String(live.customer_email).trim().toLowerCase() === trimmedEmail;
+      
       const existing = localMap.get(String(live.id)) || 
                        Array.from(localMap.values()).find(lo => lo.daily_order_number && Number(lo.daily_order_number) === Number(live.daily_order_number));
 
@@ -508,13 +518,19 @@ export function syncCustomerDeviceOrdersWithLive(
         existing.status = live.status;
         existing.payment_status = live.payment_status || existing.payment_status;
         if (live.daily_order_number) existing.daily_order_number = live.daily_order_number;
-      } else if (matchesTable || matchesPhone) {
+        if (live.customer_name && !existing.customer_name) existing.customer_name = live.customer_name;
+        if (live.customer_phone && !existing.customer_phone) existing.customer_phone = live.customer_phone;
+        if (live.customer_email && !existing.customer_email) existing.customer_email = live.customer_email;
+      } else if (matchesTable || matchesPhone || matchesEmail) {
         const newSavedOrder: CustomerSavedOrder = {
           id: live.id,
           daily_order_number: Number(live.daily_order_number) || 1,
           restaurant_id: live.restaurant_id,
           order_type: live.order_type,
           table_number: live.table_number,
+          customer_name: live.customer_name,
+          customer_phone: live.customer_phone,
+          customer_email: live.customer_email,
           delivery_address: live.delivery_address,
           total_price: live.total_price,
           status: live.status,
@@ -538,9 +554,84 @@ export function syncCustomerDeviceOrdersWithLive(
   );
 
   try {
-    localStorage.setItem(`qrieta_customer_orders_${restaurantId}`, JSON.stringify(result.slice(0, 30)));
+    localStorage.setItem(`qrieta_customer_orders_${restaurantId}`, JSON.stringify(result.slice(0, 50)));
   } catch (e) {}
 
   return result;
+}
+
+// 9. Fetch previous orders from server across sessions by Customer Email or Phone
+export async function fetchCustomerOrdersByEmailOrPhone(
+  restaurantId: string,
+  email?: string,
+  phone?: string
+): Promise<CustomerSavedOrder[]> {
+  const trimmedEmail = (email || '').trim().toLowerCase();
+  const trimmedPhone = (phone || '').trim();
+
+  if (!trimmedEmail && !trimmedPhone) {
+    return getCustomerDeviceOrders(restaurantId);
+  }
+
+  try {
+    const params = new URLSearchParams();
+    if (restaurantId) params.set('restaurant_id', restaurantId);
+    if (trimmedEmail) params.set('email', trimmedEmail);
+    if (trimmedPhone) params.set('phone', trimmedPhone);
+
+    const res = await fetch(`/api/customer/orders?${params.toString()}`);
+    if (res.ok) {
+      const data = await res.json();
+      if (data.success && Array.isArray(data.orders)) {
+        const local = getCustomerDeviceOrders(restaurantId);
+        const map = new Map<string, CustomerSavedOrder>();
+
+        data.orders.forEach((o: any) => {
+          map.set(String(o.id), {
+            id: o.id,
+            daily_order_number: Number(o.daily_order_number) || 1,
+            restaurant_id: o.restaurant_id || restaurantId,
+            restaurant_name: o.restaurant_name,
+            order_type: o.order_type || 'delivery',
+            table_number: o.table_number,
+            customer_name: o.customer_name,
+            customer_phone: o.customer_phone,
+            customer_email: o.customer_email || trimmedEmail,
+            delivery_address: o.delivery_address,
+            total_price: Number(o.total_price) || 0,
+            status: o.status || 'new',
+            payment_status: o.payment_status || 'unpaid',
+            is_prepaid: o.is_prepaid,
+            created_at: o.created_at,
+            items: (o.items || []).map((it: any) => ({
+              name: it.name,
+              quantity: it.quantity,
+              price: it.price,
+              notes: it.notes,
+              options: it.options
+            }))
+          });
+        });
+
+        // Retain any locally saved orders not returned by server
+        local.forEach(lo => {
+          if (!map.has(String(lo.id))) {
+            map.set(String(lo.id), lo);
+          }
+        });
+
+        const merged = Array.from(map.values()).sort(
+          (a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
+        );
+
+        localStorage.setItem(`qrieta_customer_orders_${restaurantId}`, JSON.stringify(merged.slice(0, 50)));
+        return merged;
+      }
+    }
+  } catch (e) {
+    console.warn('fetchCustomerOrdersByEmailOrPhone error:', e);
+  }
+
+  return getCustomerDeviceOrders(restaurantId);
 }
 

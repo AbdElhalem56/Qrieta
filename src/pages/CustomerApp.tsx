@@ -30,7 +30,11 @@ import {
   CreditCard,
   ReceiptText,
   Clock,
-  ChevronLeft
+  ChevronLeft,
+  Mail,
+  RotateCcw,
+  Sparkles,
+  Trash2
 } from 'lucide-react';
 import { cn, formatCurrency } from '../lib/utils';
 import { getLocalCategoryOptions, syncAllCategoryOptions, resolveProductOptions, calculateProductEffectivePrice, getProductPriceRange } from '../lib/optionsHelper';
@@ -45,8 +49,15 @@ import {
   syncCustomerDeviceOrdersWithLive, 
   CustomerSavedOrder, 
   fetchLiveOrders,
-  getDisplayOrderNumber
+  getDisplayOrderNumber,
+  fetchCustomerOrdersByEmailOrPhone
 } from '../lib/ordersService';
+import { 
+  getSavedCustomerProfile, 
+  saveCustomerProfile, 
+  clearCustomerProfile, 
+  CustomerProfile 
+} from '../lib/customerProfileService';
 import { updateProductStock } from '../lib/inventoryService';
 
 type CartItem = {
@@ -88,33 +99,53 @@ export default function CustomerApp() {
     selectedOptions: Record<string, string>;
     notes: string;
   }>({ sugar: 'none', selectedOptions: {}, notes: '' });
+
+  // 💾 Persistent Customer Profile: Auto-loads saved name, phone, email, address, and coordinates
   const [deliveryInfo, setDeliveryInfo] = useState<{
     customerName: string;
     phone: string;
+    email: string;
     address: string;
     buildingNumber: string;
     floor: string;
     apartmentNumber: string;
     notes: string;
-  }>({
-    customerName: '',
-    phone: '',
-    address: '',
-    buildingNumber: '',
-    floor: '',
-    apartmentNumber: '',
-    notes: ''
+  }>(() => {
+    const saved = getSavedCustomerProfile();
+    return {
+      customerName: saved.customerName || '',
+      phone: saved.phone || '',
+      email: saved.email || '',
+      address: saved.address || '',
+      buildingNumber: saved.buildingNumber || '',
+      floor: saved.floor || '',
+      apartmentNumber: saved.apartmentNumber || '',
+      notes: saved.notes || ''
+    };
   });
+
   const [deliveryLocation, setDeliveryLocation] = useState<{
     latitude: number;
     longitude: number;
     accuracy: number;
     mapsUrl: string;
-  } | null>(null);
+  } | null>(() => {
+    const saved = getSavedCustomerProfile();
+    return saved.deliveryLocation || null;
+  });
+
+  const [hasAutoFilledProfile, setHasAutoFilledProfile] = useState<boolean>(() => {
+    const saved = getSavedCustomerProfile();
+    return Boolean(saved.customerName || saved.phone || saved.email || saved.address);
+  });
+
   const [isLocatingDelivery, setIsLocatingDelivery] = useState(false);
   const [deliveryLocationError, setDeliveryLocationError] = useState<string | null>(null);
   const [deliveryZones, setDeliveryZones] = useState<DeliveryZone[]>(DEFAULT_DELIVERY_ZONES);
-  const [selectedZoneId, setSelectedZoneId] = useState<string>('dz_ps');
+  const [selectedZoneId, setSelectedZoneId] = useState<string>(() => {
+    const saved = getSavedCustomerProfile();
+    return saved.selectedZoneId || 'dz_ps';
+  });
   const [orderType, setOrderType] = useState<'delivery' | 'dine_in'>(
     (!tableId || tableId === 'delivery' || tableId === 'd') ? 'delivery' : 'dine_in'
   );
@@ -128,10 +159,18 @@ export default function CustomerApp() {
   const [customerOrders, setCustomerOrders] = useState<CustomerSavedOrder[]>([]);
   const [isMyOrdersOpen, setIsMyOrdersOpen] = useState<boolean>(false);
 
+  // Email & Previous Orders lookup state
+  const [emailSearchQuery, setEmailSearchQuery] = useState<string>(() => {
+    const saved = getSavedCustomerProfile();
+    return saved.email || '';
+  });
+  const [isFetchingCustomerOrders, setIsFetchingCustomerOrders] = useState<boolean>(false);
+  const [emailLookupFeedback, setEmailLookupFeedback] = useState<string | null>(null);
+
   // Delivery order is active when in delivery mode
   const isDeliveryOrder = orderType === 'delivery';
 
-  // Load and continuously sync customer orders from device and live server
+  // Load and continuously sync customer orders from device and live server by table, phone, and email
   useEffect(() => {
     if (!restaurant?.id) return;
 
@@ -141,6 +180,17 @@ export default function CustomerApp() {
     const initialOrders = getCustomerDeviceOrders(restaurant.id);
     setCustomerOrders(initialOrders);
 
+    // If customer has saved email or phone, fetch their server history automatically
+    if (deliveryInfo.email || deliveryInfo.phone) {
+      fetchCustomerOrdersByEmailOrPhone(restaurant.id, deliveryInfo.email, deliveryInfo.phone)
+        .then(orders => {
+          if (orders && orders.length > 0) {
+            setCustomerOrders(orders);
+          }
+        })
+        .catch(() => {});
+    }
+
     const syncOrders = async () => {
       try {
         const live = await fetchLiveOrders(restaurant.id);
@@ -149,7 +199,8 @@ export default function CustomerApp() {
           live, 
           currentTableNum, 
           currentTblId,
-          deliveryInfo.phone
+          deliveryInfo.phone,
+          deliveryInfo.email
         );
         setCustomerOrders(updated);
       } catch (e) {}
@@ -159,7 +210,7 @@ export default function CustomerApp() {
     const interval = setInterval(syncOrders, 3500);
 
     return () => clearInterval(interval);
-  }, [restaurant?.id, table?.id, table?.table_number, tableId, deliveryInfo.phone]);
+  }, [restaurant?.id, table?.id, table?.table_number, tableId, deliveryInfo.phone, deliveryInfo.email]);
 
   const activeCustomerOrders = useMemo(() => {
     return customerOrders.filter(o => o.status === 'new' || o.status === 'preparing');
@@ -528,6 +579,110 @@ export default function CustomerApp() {
     setDeliveryLocationError(null);
   };
 
+  // 🧹 Clear saved customer profile
+  const handleClearCustomerProfile = () => {
+    clearCustomerProfile(restaurant?.id);
+    setDeliveryInfo({
+      customerName: '',
+      phone: '',
+      email: '',
+      address: '',
+      buildingNumber: '',
+      floor: '',
+      apartmentNumber: '',
+      notes: ''
+    });
+    setDeliveryLocation(null);
+    setHasAutoFilledProfile(false);
+  };
+
+  // 🔍 Lookup customer orders across devices using their email or phone
+  const handleLookupOrdersByEmail = async (targetEmail?: string) => {
+    const queryEmail = (targetEmail !== undefined ? targetEmail : emailSearchQuery).trim();
+    if (!restaurant?.id) return;
+    if (!queryEmail && !deliveryInfo.phone) {
+      setEmailLookupFeedback(isRTL ? 'يرجى كتابة بريدك الإلكتروني للبحث' : 'Please enter your email to search');
+      return;
+    }
+
+    setIsFetchingCustomerOrders(true);
+    setEmailLookupFeedback(null);
+    try {
+      const orders = await fetchCustomerOrdersByEmailOrPhone(
+        restaurant.id, 
+        queryEmail || deliveryInfo.email, 
+        deliveryInfo.phone
+      );
+      setCustomerOrders(orders);
+      if (queryEmail) {
+        setDeliveryInfo(prev => {
+          const upd = { ...prev, email: queryEmail };
+          saveCustomerProfile(upd, restaurant.id);
+          return upd;
+        });
+      }
+      setEmailLookupFeedback(
+        orders.length > 0
+          ? (isRTL ? `تم العثور على ${orders.length} طلب سابق بنجاح ✅` : `Found ${orders.length} previous orders ✅`)
+          : (isRTL ? 'لم يتم العثور على طلبات سابقة مسجلة بهذا البريد' : 'No previous orders found for this email')
+      );
+    } catch (err) {
+      setEmailLookupFeedback(isRTL ? 'حدث خطأ أثناء جلب الطلبات، يرجى المحاولة ثانية' : 'Error fetching orders, please retry');
+    } finally {
+      setIsFetchingCustomerOrders(false);
+    }
+  };
+
+  // 🔁 Re-Order a previous order in 1-click
+  const handleReorder = (order: CustomerSavedOrder) => {
+    if (!order.items || order.items.length === 0) return;
+
+    const newCartItems: CartItem[] = [];
+
+    order.items.forEach(ordItem => {
+      // Find matching item in current catalog
+      const matchedProd = products.find(p => 
+        (p.name_ar && p.name_ar.trim() === ordItem.name.trim()) ||
+        (p.name_en && p.name_en.trim() === ordItem.name.trim()) ||
+        p.id === (ordItem as any).id
+      );
+
+      if (matchedProd) {
+        newCartItems.push({
+          product: matchedProd,
+          quantity: ordItem.quantity || 1,
+          notes: ordItem.notes || '',
+          sugar: 'none'
+        });
+      } else {
+        const fallbackProd: Product = {
+          id: (ordItem as any).id || `reorder_${Date.now()}_${Math.random()}`,
+          restaurant_id: restaurant?.id || '',
+          category_id: '',
+          name_ar: ordItem.name,
+          name_en: ordItem.name,
+          description_ar: '',
+          description_en: '',
+          image_url: '',
+          price: ordItem.price || 0,
+          availability: true
+        };
+        newCartItems.push({
+          product: fallbackProd,
+          quantity: ordItem.quantity || 1,
+          notes: ordItem.notes || '',
+          sugar: 'none'
+        });
+      }
+    });
+
+    if (newCartItems.length > 0) {
+      setCart(prev => [...prev, ...newCartItems]);
+      setIsMyOrdersOpen(false);
+      setIsCartOpen(true);
+    }
+  };
+
   const placeOrder = async () => {
     if (!restaurant || cart.length === 0) return;
 
@@ -636,10 +791,11 @@ export default function CustomerApp() {
       }
 
       const tableNumLabel = table?.table_number || (tableId && tableId !== 'delivery' && tableId !== 'd' ? tableId : null);
+      const emailPart = deliveryInfo.email.trim() ? ` | الايميل: ${deliveryInfo.email.trim()}` : '';
 
       const deliveryHeader = isDeliveryOrder
-        ? `[طلب زبون #${dailySeqNum} | 🛵 دليفري | ${zoneInfoStr} | الاسم: ${deliveryInfo.customerName.trim()} | هاتف: ${deliveryInfo.phone.trim()} | العنوان: ${fullAddressDetails}${deliveryLocation ? ` | لوكيشن: ${deliveryLocation.mapsUrl}` : ''}${deliveryInfo.notes.trim() ? ` | ملاحظات: ${deliveryInfo.notes.trim()}` : ''}]`
-        : `[طلب زبون #${dailySeqNum} | 🍽️ صالة - طاولة ${tableNumLabel || 'غير محددة'}]`;
+        ? `[طلب زبون #${dailySeqNum} | 🛵 دليفري | ${zoneInfoStr} | الاسم: ${deliveryInfo.customerName.trim()} | هاتف: ${deliveryInfo.phone.trim()}${emailPart} | العنوان: ${fullAddressDetails}${deliveryLocation ? ` | لوكيشن: ${deliveryLocation.mapsUrl}` : ''}${deliveryInfo.notes.trim() ? ` | ملاحظات: ${deliveryInfo.notes.trim()}` : ''}]`
+        : `[طلب زبون #${dailySeqNum} | 🍽️ صالة - طاولة ${tableNumLabel || 'غير محددة'}${emailPart}]`;
 
       // If DB order succeeded, insert line items to Supabase
       if (dbOrderCreated) {
@@ -705,8 +861,9 @@ export default function CustomerApp() {
         order_type: isDeliveryOrder ? 'delivery' : 'dine_in',
         table_id: validTableId,
         table_number: tableNumLabel,
-        customer_name: isDeliveryOrder ? deliveryInfo.customerName.trim() : undefined,
-        customer_phone: isDeliveryOrder ? deliveryInfo.phone.trim() : undefined,
+        customer_name: isDeliveryOrder ? deliveryInfo.customerName.trim() : (deliveryInfo.customerName.trim() || undefined),
+        customer_phone: isDeliveryOrder ? deliveryInfo.phone.trim() : (deliveryInfo.phone.trim() || undefined),
+        customer_email: deliveryInfo.email.trim() || undefined,
         delivery_address: isDeliveryOrder ? fullAddressDetails : undefined,
         delivery_notes: isDeliveryOrder ? deliveryInfo.notes.trim() : undefined,
         notes: deliveryHeader,
@@ -733,6 +890,9 @@ export default function CustomerApp() {
         restaurant_name: restaurant.name,
         order_type: isDeliveryOrder ? 'delivery' : 'dine_in',
         table_number: tableNumLabel,
+        customer_name: deliveryInfo.customerName.trim() || undefined,
+        customer_phone: deliveryInfo.phone.trim() || undefined,
+        customer_email: deliveryInfo.email.trim() || undefined,
         delivery_address: isDeliveryOrder ? fullAddressDetails : undefined,
         items: cart.map(item => ({
           name: item.product.name_ar || item.product.name_en,
@@ -749,6 +909,29 @@ export default function CustomerApp() {
       };
       saveCustomerDeviceOrder(restaurant.id, savedCustomerOrder);
       setCustomerOrders(prev => [savedCustomerOrder, ...prev.filter(o => String(o.id) !== String(finalOrderId))]);
+
+      // 4. Persist Customer Profile locally so they never have to re-enter their details again!
+      if (isDeliveryOrder) {
+        saveCustomerProfile({
+          customerName: deliveryInfo.customerName.trim(),
+          phone: deliveryInfo.phone.trim(),
+          email: deliveryInfo.email.trim(),
+          address: deliveryInfo.address.trim(),
+          buildingNumber: deliveryInfo.buildingNumber.trim(),
+          floor: deliveryInfo.floor.trim(),
+          apartmentNumber: deliveryInfo.apartmentNumber.trim(),
+          notes: deliveryInfo.notes.trim(),
+          selectedZoneId: selectedZoneId,
+          deliveryLocation: deliveryLocation
+        }, restaurant.id);
+        setHasAutoFilledProfile(true);
+      } else if (deliveryInfo.email || deliveryInfo.phone || deliveryInfo.customerName) {
+        saveCustomerProfile({
+          customerName: deliveryInfo.customerName.trim(),
+          phone: deliveryInfo.phone.trim(),
+          email: deliveryInfo.email.trim()
+        }, restaurant.id);
+      }
 
       // 4. Deduct stock from inventory
       cart.forEach(item => {
@@ -1823,6 +2006,22 @@ export default function CustomerApp() {
                     
                     {/* Clear, High-Contrast Delivery Customer Inputs */}
                     <div className="space-y-3 pt-1">
+                      {hasAutoFilledProfile && (
+                        <div className="p-3 bg-emerald-50 border border-emerald-200 rounded-2xl flex items-center justify-between gap-2 text-xs animate-in fade-in">
+                          <div className="flex items-center gap-2 text-emerald-900 font-bold">
+                            <Sparkles size={16} className="text-emerald-600 shrink-0" />
+                            <span>{isRTL ? '✨ تم ملء بياناتك وعنوانك تلقائياً من طلبك السابق' : '✨ Saved contact & address loaded automatically'}</span>
+                          </div>
+                          <button
+                            type="button"
+                            onClick={handleClearCustomerProfile}
+                            className="text-[11px] text-emerald-800 hover:text-red-600 underline font-bold shrink-0 cursor-pointer"
+                          >
+                            {isRTL ? 'مسح / عميل جديد' : 'Clear info'}
+                          </button>
+                        </div>
+                      )}
+
                       <div className="grid grid-cols-1 md:grid-cols-2 gap-3.5">
                         <div className="space-y-1.5">
                           <label className="block text-xs font-black text-gray-900 text-right">
@@ -1835,7 +2034,14 @@ export default function CustomerApp() {
                             <input
                               type="text"
                               value={deliveryInfo.customerName}
-                              onChange={(e) => setDeliveryInfo(prev => ({ ...prev, customerName: e.target.value }))}
+                              onChange={(e) => {
+                                const val = e.target.value;
+                                setDeliveryInfo(prev => {
+                                  const upd = { ...prev, customerName: val };
+                                  saveCustomerProfile(upd, restaurant?.id);
+                                  return upd;
+                                });
+                              }}
                               placeholder={isRTL ? "اكتب اسمك هنا" : "Enter your name here"}
                               className={cn(
                                 "w-full bg-white border-2 border-gray-300 hover:border-gray-400 focus:border-transparent rounded-2xl py-3 text-sm font-bold text-gray-900 placeholder:text-gray-400 placeholder:font-medium focus:outline-none focus:ring-2 shadow-xs transition-all",
@@ -1860,7 +2066,14 @@ export default function CustomerApp() {
                             <input
                               type="tel"
                               value={deliveryInfo.phone}
-                              onChange={(e) => setDeliveryInfo(prev => ({ ...prev, phone: e.target.value }))}
+                              onChange={(e) => {
+                                const val = e.target.value;
+                                setDeliveryInfo(prev => {
+                                  const upd = { ...prev, phone: val };
+                                  saveCustomerProfile(upd, restaurant?.id);
+                                  return upd;
+                                });
+                              }}
                               placeholder={isRTL ? "مثال: 01012345678" : "e.g. 01012345678"}
                               className={cn(
                                 "w-full bg-white border-2 border-gray-300 hover:border-gray-400 focus:border-transparent rounded-2xl py-3 text-sm font-bold text-gray-900 placeholder:text-gray-400 placeholder:font-medium focus:outline-none focus:ring-2 shadow-xs transition-all",
@@ -1872,6 +2085,44 @@ export default function CustomerApp() {
                               required
                             />
                           </div>
+                        </div>
+                      </div>
+
+                      {/* Email Address field for automatic saving and tracking previous orders */}
+                      <div className="space-y-1.5">
+                        <label className="block text-xs font-black text-gray-900 text-right flex items-center justify-between">
+                          <span className="flex items-center gap-1.5">
+                            <Mail size={14} className="text-gray-600" />
+                            <span>{isRTL ? 'البريد الإلكتروني' : 'Email Address'}</span>
+                          </span>
+                          <span className="text-[10px] text-gray-500 font-normal">
+                            {isRTL ? '(لحفظ طلباتك وعنوانك تلقائياً)' : '(To save orders & address automatically)'}
+                          </span>
+                        </label>
+                        <div className="relative">
+                          <div className={cn("absolute inset-y-0 flex items-center pointer-events-none text-gray-500", isRTL ? "right-3.5" : "left-3.5")}>
+                            <Mail size={16} />
+                          </div>
+                          <input
+                            type="email"
+                            value={deliveryInfo.email}
+                            onChange={(e) => {
+                              const val = e.target.value;
+                              setDeliveryInfo(prev => {
+                                const upd = { ...prev, email: val };
+                                saveCustomerProfile(upd, restaurant?.id);
+                                return upd;
+                              });
+                            }}
+                            placeholder={isRTL ? "مثال: name@example.com" : "e.g. name@example.com"}
+                            className={cn(
+                              "w-full bg-white border-2 border-gray-300 hover:border-gray-400 focus:border-transparent rounded-2xl py-3 text-sm font-bold text-gray-900 placeholder:text-gray-400 placeholder:font-medium focus:outline-none focus:ring-2 shadow-xs transition-all",
+                              isRTL ? "pr-10 pl-3.5" : "pl-10 pr-3.5"
+                            )}
+                            style={{ 
+                              '--tw-ring-color': primaryColor 
+                            } as React.CSSProperties}
+                          />
                         </div>
                       </div>
 
@@ -1887,7 +2138,14 @@ export default function CustomerApp() {
                           <input
                             type="text"
                             value={deliveryInfo.address}
-                            onChange={(e) => setDeliveryInfo(prev => ({ ...prev, address: e.target.value }))}
+                            onChange={(e) => {
+                              const val = e.target.value;
+                              setDeliveryInfo(prev => {
+                                const upd = { ...prev, address: val };
+                                saveCustomerProfile(upd, restaurant?.id);
+                                return upd;
+                              });
+                            }}
                             placeholder={isRTL ? "اسم المنطقة، الشارع الرئيسي، علامة مميزة..." : "Area, Street name, landmark..."}
                             className={cn(
                               "w-full bg-white border-2 border-gray-300 hover:border-gray-400 focus:border-transparent rounded-2xl py-3 text-sm font-bold text-gray-900 placeholder:text-gray-400 placeholder:font-medium focus:outline-none focus:ring-2 shadow-xs transition-all",
@@ -1910,7 +2168,14 @@ export default function CustomerApp() {
                           <input
                             type="text"
                             value={deliveryInfo.buildingNumber}
-                            onChange={(e) => setDeliveryInfo(prev => ({ ...prev, buildingNumber: e.target.value }))}
+                            onChange={(e) => {
+                              const val = e.target.value;
+                              setDeliveryInfo(prev => {
+                                const upd = { ...prev, buildingNumber: val };
+                                saveCustomerProfile(upd, restaurant?.id);
+                                return upd;
+                              });
+                            }}
                             placeholder={isRTL ? "عمارة 12" : "Bldg 12"}
                             className="w-full bg-white border-2 border-gray-300 hover:border-gray-400 focus:border-transparent rounded-2xl py-3 px-3 text-center text-sm font-bold text-gray-900 placeholder:text-gray-400 placeholder:font-medium focus:outline-none focus:ring-2 shadow-xs transition-all"
                             style={{ 
@@ -1926,7 +2191,14 @@ export default function CustomerApp() {
                           <input
                             type="text"
                             value={deliveryInfo.floor}
-                            onChange={(e) => setDeliveryInfo(prev => ({ ...prev, floor: e.target.value }))}
+                            onChange={(e) => {
+                              const val = e.target.value;
+                              setDeliveryInfo(prev => {
+                                const upd = { ...prev, floor: val };
+                                saveCustomerProfile(upd, restaurant?.id);
+                                return upd;
+                              });
+                            }}
                             placeholder={isRTL ? "الدور 3" : "Fl 3"}
                             className="w-full bg-white border-2 border-gray-300 hover:border-gray-400 focus:border-transparent rounded-2xl py-3 px-3 text-center text-sm font-bold text-gray-900 placeholder:text-gray-400 placeholder:font-medium focus:outline-none focus:ring-2 shadow-xs transition-all"
                             style={{ 
@@ -1942,7 +2214,14 @@ export default function CustomerApp() {
                           <input
                             type="text"
                             value={deliveryInfo.apartmentNumber}
-                            onChange={(e) => setDeliveryInfo(prev => ({ ...prev, apartmentNumber: e.target.value }))}
+                            onChange={(e) => {
+                              const val = e.target.value;
+                              setDeliveryInfo(prev => {
+                                const upd = { ...prev, apartmentNumber: val };
+                                saveCustomerProfile(upd, restaurant?.id);
+                                return upd;
+                              });
+                            }}
                             placeholder={isRTL ? "شقة 6" : "Apt 6"}
                             className="w-full bg-white border-2 border-gray-300 hover:border-gray-400 focus:border-transparent rounded-2xl py-3 px-3 text-center text-sm font-bold text-gray-900 placeholder:text-gray-400 placeholder:font-medium focus:outline-none focus:ring-2 shadow-xs transition-all"
                             style={{ 
@@ -1960,7 +2239,14 @@ export default function CustomerApp() {
                         <input
                           type="text"
                           value={deliveryInfo.notes}
-                          onChange={(e) => setDeliveryInfo(prev => ({ ...prev, notes: e.target.value }))}
+                          onChange={(e) => {
+                            const val = e.target.value;
+                            setDeliveryInfo(prev => {
+                              const upd = { ...prev, notes: val };
+                              saveCustomerProfile(upd, restaurant?.id);
+                              return upd;
+                            });
+                          }}
                           placeholder={isRTL ? "علامة مميزة، وقت معين، أو رن الجرس..." : "Landmarks, specific delivery timing, etc."}
                           className="w-full bg-white border-2 border-gray-300 hover:border-gray-400 focus:border-transparent rounded-2xl py-3 px-4 text-sm font-bold text-gray-900 placeholder:text-gray-400 placeholder:font-medium focus:outline-none focus:ring-2 shadow-xs transition-all"
                           style={{ 
@@ -2281,8 +2567,61 @@ export default function CustomerApp() {
 
               {/* Body */}
               <div className="flex-1 overflow-y-auto p-4 space-y-4">
+                {/* Email & Phone History Sync Card */}
+                <div className="bg-gradient-to-r from-orange-50 via-amber-50 to-orange-50/70 border border-orange-200/90 rounded-2xl p-3.5 space-y-2.5 shadow-xs">
+                  <div className="flex items-center justify-between gap-2">
+                    <div className="flex items-center gap-2">
+                      <div className="w-7 h-7 rounded-xl bg-orange-600 text-white flex items-center justify-center shrink-0 shadow-xs">
+                        <Mail size={14} />
+                      </div>
+                      <div>
+                        <h4 className="text-xs font-black text-gray-900">
+                          {isRTL ? 'حفظ واسترجاع الطلبات السابقة' : 'Save & Retrieve Past Orders'}
+                        </h4>
+                        <p className="text-[11px] text-gray-600">
+                          {isRTL ? 'اكتب بريدك الإلكتروني لعرض سجل طلباتك السابقة من أي جهاز' : 'Enter your email to view order history from any device'}
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="flex items-center gap-2">
+                    <div className="relative flex-1">
+                      <input
+                        type="email"
+                        value={emailSearchQuery}
+                        onChange={(e) => setEmailSearchQuery(e.target.value)}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter') handleLookupOrdersByEmail(emailSearchQuery);
+                        }}
+                        placeholder={isRTL ? "اكتب بريدك الإلكتروني هنا..." : "Enter your email here..."}
+                        className="w-full bg-white border border-gray-300 rounded-xl px-3 py-2 text-xs font-bold text-gray-900 placeholder:text-gray-400 focus:outline-none focus:ring-2 focus:ring-orange-500 shadow-xs"
+                      />
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => handleLookupOrdersByEmail(emailSearchQuery)}
+                      disabled={isFetchingCustomerOrders || (!emailSearchQuery.trim() && !deliveryInfo.phone)}
+                      className="bg-orange-600 hover:bg-orange-700 disabled:opacity-50 text-white text-xs font-black px-3.5 py-2 rounded-xl shadow-xs transition-all cursor-pointer flex items-center gap-1.5 shrink-0"
+                    >
+                      {isFetchingCustomerOrders ? (
+                        <RefreshCw size={13} className="animate-spin" />
+                      ) : (
+                        <Search size={13} />
+                      )}
+                      <span>{isRTL ? 'استرجاع الطلبات' : 'Fetch'}</span>
+                    </button>
+                  </div>
+
+                  {emailLookupFeedback && (
+                    <p className="text-[11px] font-bold text-orange-950 bg-orange-100/90 px-2.5 py-1 rounded-lg">
+                      {emailLookupFeedback}
+                    </p>
+                  )}
+                </div>
+
                 {customerOrders.length === 0 ? (
-                  <div className="py-12 text-center text-gray-400 space-y-3">
+                  <div className="py-10 text-center text-gray-400 space-y-3">
                     <div className="w-16 h-16 rounded-full bg-gray-100 flex items-center justify-center mx-auto text-gray-400">
                       <ReceiptText size={28} />
                     </div>
@@ -2290,7 +2629,7 @@ export default function CustomerApp() {
                       {isRTL ? 'لا توجد أي طلبات مسجلة على هذا الجهاز حتى الآن' : 'No orders found on this device yet'}
                     </p>
                     <p className="text-xs text-gray-400 max-w-xs mx-auto">
-                      {isRTL ? 'عند طلب أي وجبة ستظهر هنا برقمها الموحد وحالتها في المطبخ لحظة بلحظة' : 'Your placed orders will appear here with live updates.'}
+                      {isRTL ? 'عند طلب أي وجبة ستظهر هنا، أو اكتب بريدك الإلكتروني أعلاه لاسترجاع طلباتك السابقة' : 'Your placed orders will appear here, or enter your email above to fetch past orders.'}
                     </p>
                   </div>
                 ) : (
@@ -2382,6 +2721,29 @@ export default function CustomerApp() {
                               <span className="font-mono text-gray-500">{formatCurrency((it.price || 0) * it.quantity)}</span>
                             </div>
                           ))}
+                        </div>
+
+                        {/* Order footer: Date, delivery info, and 1-Click Reorder Button */}
+                        <div className="pt-1 border-t border-gray-100 flex flex-wrap items-center justify-between gap-2">
+                          <div className="space-y-0.5 text-[10px] text-gray-500">
+                            <span className="block font-medium">
+                              {new Date(ord.created_at).toLocaleDateString(isRTL ? 'ar-EG' : 'en-US', { month: 'short', day: 'numeric', year: 'numeric' })}
+                            </span>
+                            {ord.delivery_address && (
+                              <span className="block truncate max-w-[210px] text-gray-600 font-medium">
+                                📍 {ord.delivery_address}
+                              </span>
+                            )}
+                          </div>
+
+                          <button
+                            type="button"
+                            onClick={() => handleReorder(ord)}
+                            className="px-3.5 py-1.5 rounded-xl bg-orange-50 hover:bg-orange-100 text-orange-700 hover:text-orange-800 text-xs font-black flex items-center gap-1.5 transition-all active:scale-95 cursor-pointer border border-orange-200 shadow-xs"
+                          >
+                            <RotateCcw size={13} />
+                            <span>{isRTL ? 'إعادة طلب الوجبة' : 'Reorder'}</span>
+                          </button>
                         </div>
                       </div>
                     );

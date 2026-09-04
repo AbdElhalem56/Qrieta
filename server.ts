@@ -810,6 +810,116 @@ async function startServer() {
     res.status(200).json({ success: true, orders });
   });
 
+  // GET /api/customer/orders - Lookup previous customer orders by email or phone
+  app.get("/api/customer/orders", async (req, res) => {
+    const restaurantId = req.query.restaurant_id as string;
+    const email = ((req.query.email as string) || "").trim().toLowerCase();
+    const phone = ((req.query.phone as string) || "").trim();
+
+    if (!email && !phone) {
+      return res.status(400).json({ error: "البريد الإلكتروني أو رقم الهاتف مطلوب للبحث." });
+    }
+
+    try {
+      const matchedMap = new Map<string, any>();
+
+      // 1. Search in in-memory / persistent live orders
+      const restIds = restaurantId ? [restaurantId] : Object.keys(liveOrdersStore);
+      for (const rid of restIds) {
+        const orders = liveOrdersStore[rid] || [];
+        for (const ord of orders) {
+          const ordEmail = ((ord.customer_email as string) || "").trim().toLowerCase();
+          const ordPhone = ((ord.customer_phone as string) || "").trim();
+          const ordNotes = ((ord.notes as string) || "").toLowerCase();
+
+          const matchesEmail = email && (ordEmail === email || ordNotes.includes(email));
+          const matchesPhone = phone && (
+            ordPhone === phone || 
+            (ordPhone.length >= 8 && phone.includes(ordPhone)) || 
+            (phone.length >= 8 && ordPhone.includes(phone)) || 
+            ordNotes.includes(phone)
+          );
+
+          if (matchesEmail || matchesPhone) {
+            matchedMap.set(String(ord.id), ord);
+          }
+        }
+      }
+
+      // 2. Search in Supabase if configured
+      const supabaseUrl = process.env.VITE_SUPABASE_URL || process.env.SUPABASE_URL;
+      const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+      const anonKey = process.env.VITE_SUPABASE_ANON_KEY || process.env.SUPABASE_ANON_KEY;
+
+      if (supabaseUrl) {
+        try {
+          const client = serviceRoleKey
+            ? createClient(supabaseUrl, serviceRoleKey)
+            : createClient(supabaseUrl, anonKey || "");
+
+          let dbQuery = client
+            .from("orders")
+            .select("*, order_items(*, products(*)), tables(table_number)")
+            .order("created_at", { ascending: false })
+            .limit(100);
+
+          if (restaurantId) {
+            dbQuery = dbQuery.eq("restaurant_id", restaurantId);
+          }
+
+          const { data: dbOrders, error } = await dbQuery;
+
+          if (!error && dbOrders) {
+            dbOrders.forEach((dbo: any) => {
+              const firstItemNotes = ((dbo.order_items?.[0]?.notes as string) || "").toLowerCase();
+              const matchesEmail = email && firstItemNotes.includes(email);
+              const matchesPhone = phone && firstItemNotes.includes(phone);
+
+              if (matchesEmail || matchesPhone) {
+                if (!matchedMap.has(String(dbo.id))) {
+                  matchedMap.set(String(dbo.id), {
+                    id: dbo.id,
+                    daily_order_number: dbo.daily_order_number || dbo.id,
+                    restaurant_id: dbo.restaurant_id,
+                    source: "customer_app",
+                    order_type: firstItemNotes.includes("دليفري") ? "delivery" : "dine_in",
+                    table_id: dbo.table_id,
+                    table_number: dbo.tables?.table_number,
+                    total_price: dbo.total_price,
+                    status: dbo.status || "new",
+                    payment_status: dbo.payment_status || "unpaid",
+                    customer_email: email,
+                    customer_phone: phone,
+                    items: (dbo.order_items || []).map((it: any) => ({
+                      id: it.product_id,
+                      name: it.products?.name_ar || it.products?.name_en || "صنف",
+                      quantity: it.quantity,
+                      price: it.price_at_order || it.products?.price || 0,
+                      notes: it.notes,
+                      sugar_level: it.sugar_level
+                    })),
+                    created_at: dbo.created_at
+                  });
+                }
+              }
+            });
+          }
+        } catch (dbErr) {
+          console.warn("Customer orders DB lookup warning:", dbErr);
+        }
+      }
+
+      const sortedOrders = Array.from(matchedMap.values()).sort(
+        (a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
+      );
+
+      res.status(200).json({ success: true, orders: sortedOrders });
+    } catch (err: any) {
+      console.error("Customer orders lookup error:", err);
+      res.status(500).json({ error: err.message || "فشل في جلب طلبات الزبون" });
+    }
+  });
+
   // PATCH /api/orders/live/:id/status - Update status of an order
   app.patch("/api/orders/live/:id/status", async (req, res) => {
     const orderId = req.params.id;
