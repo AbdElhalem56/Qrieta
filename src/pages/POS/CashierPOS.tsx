@@ -782,8 +782,104 @@ export const CashierPOS: React.FC = () => {
 
   const handleCompleteCustomerOrder = async (order: LiveOrder) => {
     if (!selectedRestaurant) return;
-    await updateLiveOrderStatus(order.id, selectedRestaurant.id, 'completed', 'paid');
-    setCustomerLiveOrders(prev => prev.map(o => o.id === order.id ? { ...o, status: 'completed', payment_status: 'paid' } : o));
+
+    try {
+      // 1. Update status in live service, Supabase, and Server API
+      await updateLiveOrderStatus(order.id, selectedRestaurant.id, 'completed', 'paid');
+
+      // 2. Update local customer live orders state
+      setCustomerLiveOrders(prev => prev.map(o => o.id === order.id ? { ...o, status: 'completed', payment_status: 'paid' } : o));
+
+      // 3. Remove any corresponding held bill (from kitchen KOT sending)
+      const orderNumStr = String(order.daily_order_number || '');
+      setHeldBills(prev => prev.filter(b => {
+        if (orderNumStr && b.title.includes(`#${orderNumStr}`)) return false;
+        if (order.table_number && b.title.includes(`طاولة #${order.table_number}`)) return false;
+        return true;
+      }));
+
+      // 4. If this order was currently loaded in active cart, clear it
+      if (customOrderNumber === orderNumStr || (order.table_number && selectedTable?.table_number === order.table_number)) {
+        setCart([]);
+        setCustomOrderNumber('');
+        setOrderNotes('');
+        setSelectedTable(null);
+      }
+
+      // 5. Add to active orders (completed invoices)
+      const displayNum = getDisplayOrderNumber(order);
+      const invoiceNum = generateInvoiceNumber(
+        restaurantGeofence?.invoice_prefix || 'INV',
+        order.daily_order_number || activeOrders.length + 1
+      );
+
+      const completedInvoice: any = {
+        id: `ord-${order.id}`,
+        invoice_number: invoiceNum,
+        daily_order_number: order.daily_order_number || activeOrders.length + 1,
+        order_type: order.order_type,
+        table_number: order.table_number,
+        customer_name: order.customer_name,
+        customer_phone: order.customer_phone,
+        delivery_address: order.delivery_address,
+        total_amount: order.total_price,
+        payment_method: order.payment_status === 'paid' ? 'card' : 'cash',
+        payment_status: 'paid',
+        status: 'delivered',
+        items: order.items.map(it => ({
+          id: it.id,
+          name: it.name,
+          price: it.price,
+          quantity: it.quantity,
+          notes: it.notes,
+          options: it.options
+        })),
+        created_at: new Date().toISOString()
+      };
+
+      setActiveOrders(prev => {
+        const filtered = prev.filter(o => String(o.daily_order_number) !== orderNumStr && String(o.id) !== String(order.id));
+        return [completedInvoice, ...filtered];
+      });
+
+      // 6. Update Shift sales & order count
+      setShift(prev => ({
+        ...prev,
+        ordersCount: prev.ordersCount + 1,
+        totalSales: prev.totalSales + order.total_price,
+        cashSales: prev.cashSales + (order.payment_status === 'paid' ? 0 : order.total_price),
+        cardSales: prev.cardSales + (order.payment_status === 'paid' ? order.total_price : 0)
+      }));
+
+      // 7. Deduct inventory if not already deducted
+      order.items.forEach(it => {
+        if (it.id) {
+          updateProductStock(selectedRestaurant.id, {
+            productId: it.id,
+            productName: it.name,
+            delta: -it.quantity,
+            type: 'sale',
+            reason: `تسليم طلب زبون #${displayNum}`,
+            performedBy: shift.cashierName || 'كاشير'
+          }).catch(() => {});
+        }
+      });
+
+      // 8. Log shift audit
+      logShiftAuditRecord(selectedRestaurant.id, {
+        ...shift,
+        ordersCount: shift.ordersCount + 1,
+        totalSales: shift.totalSales + order.total_price,
+        cashSales: shift.cashSales + (order.payment_status === 'paid' ? 0 : order.total_price),
+        cardSales: shift.cardSales + (order.payment_status === 'paid' ? order.total_price : 0)
+      }).catch(() => {});
+
+      // 9. Alert confirmation
+      alert(`✅ تم إنهاء وتسليم الطلب #${displayNum} بنجاح!\nتم تحصيل المبلغ (${order.total_price.toFixed(2)} ج.م) وتسجيل الفاتورة في الوردية.`);
+    } catch (err: any) {
+      console.error('Error completing customer order:', err);
+      alert('حدث خطأ أثناء إنهاء الطلب: ' + (err?.message || 'يرجى المحاولة مرة أخرى'));
+    }
   };
 
   const handleCancelCustomerOrder = async (order: LiveOrder) => {
@@ -1181,11 +1277,6 @@ export const CashierPOS: React.FC = () => {
   const handleProcessPayment = async (overridePaymentMethod?: 'cash' | 'card' | 'wallet' | 'split', splitData?: any) => {
     if (cart.length === 0) {
       alert('السلة فارغة! يرجى إضافة أصناف أولاً.');
-      return;
-    }
-
-    if (orderType === 'dine_in' && !selectedTable) {
-      alert('يرجى تحديد رقم الطاولة لطلبات الصالة!');
       return;
     }
 
@@ -1690,25 +1781,8 @@ export const CashierPOS: React.FC = () => {
             </div>
             <div className="hidden sm:block">
               <span className="font-bold text-sm text-slate-800 tracking-tight">Qrieta POS</span>
-              <span className="text-[10px] text-amber-600 block font-mono leading-none font-bold">نظام الكاشير المكتبي</span>
-            </div>
-          </div>
-
-          {/* 🔒 Active Store Badge (Fixed Branch) */}
-          <div className="flex items-center gap-2 bg-slate-50 border border-slate-200 px-3 py-1 rounded-xl shadow-sm">
-            <div className="w-2 h-2 rounded-full bg-emerald-500" />
-            <div className="leading-tight text-right">
-              <div className="flex items-center gap-1.5">
-                <span className="font-bold text-xs text-slate-800 block max-w-[140px] sm:max-w-[200px] truncate" title={selectedRestaurant?.name || ''}>
-                  {selectedRestaurant?.name || 'مطعم كريتا'}
-                </span>
-                <span className="bg-slate-900 text-white text-[9px] font-black px-1.5 py-0.2 rounded-md">
-                  {currentPresetInfo.titleAr}
-                </span>
-              </div>
-              <span className="text-[10px] text-slate-500 font-mono flex items-center gap-1">
-                <Lock size={10} className="text-amber-500 inline" />
-                فرع معتمد
+              <span className="text-[10px] text-amber-600 block font-mono leading-none font-bold">
+                {selectedRestaurant?.name ? selectedRestaurant.name : 'نظام الكاشير المكتبي'}
               </span>
             </div>
           </div>
@@ -1882,23 +1956,6 @@ export const CashierPOS: React.FC = () => {
 
               {/* Layout Mode & Tab Controls */}
               <div className="flex items-center gap-1.5">
-                {/* Vertical Grouping Toggle */}
-                {activeTab === 'pos' && (
-                  <button
-                    type="button"
-                    onClick={() => setGroupByCategory(!groupByCategory)}
-                    className={`px-2.5 py-1.5 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 cursor-pointer border ${
-                      groupByCategory
-                        ? 'bg-amber-50 border-amber-300 text-amber-900 shadow-xs'
-                        : 'bg-slate-50 border-slate-200 text-slate-600 hover:bg-slate-100'
-                    }`}
-                    title="تقسيم الأصناف حسب الأقسام عمودياً لسهولة التصفح والتقليب"
-                  >
-                    <Layers size={14} className={groupByCategory ? "text-amber-600" : ""} />
-                    <span className="hidden sm:inline">عرض الأقسام رأسياً</span>
-                  </button>
-                )}
-
                 {/* Mode Tabs */}
                 <div className="flex items-center gap-1 bg-slate-100 p-1 rounded-xl border border-slate-200">
                   <button
@@ -2033,98 +2090,40 @@ export const CashierPOS: React.FC = () => {
                 }}
                 className="bg-white text-red-600 hover:bg-orange-50 font-black text-xs px-3 py-1.5 rounded-xl shadow cursor-pointer"
               >
-                عرض الطلبات الحية
+                عرض طلبات الزبائن
               </button>
             </div>
           )}
 
-          {/* Tab 1: Product Grid View */}
+          {/* Tab 1: Product Grid View (Items side-by-side) */}
           {activeTab === 'pos' && (
-            <div className="flex-1 overflow-y-auto p-3 sm:p-4 space-y-6">
-              {/* If search is active or specific category is selected, or grouping is turned off */}
-              {(!groupByCategory || selectedCategory !== 'all' || searchQuery.trim() !== '') ? (
-                <div>
-                  {selectedCategory !== 'all' && (
-                    <div className="flex items-center justify-between pb-2 mb-3 border-b border-slate-200">
-                      <div className="flex items-center gap-2">
-                        <span className="w-2.5 h-2.5 rounded-full bg-amber-500" />
-                        <h3 className="font-black text-sm text-slate-800">
-                          {categories.find(c => c.id === selectedCategory)?.name_ar || 
-                           categories.find(c => c.id === selectedCategory)?.name_en || 'القسم المختار'}
-                        </h3>
-                        <span className="text-[11px] font-mono font-bold text-amber-700 bg-amber-100 px-2 py-0.5 rounded-full">
-                          {filteredProducts.length} صنف
-                        </span>
-                      </div>
-                      <button
-                        onClick={() => setSelectedCategory('all')}
-                        className="text-xs text-amber-600 hover:text-amber-700 font-bold hover:underline cursor-pointer"
-                      >
-                        عرض جميع الأقسام
-                      </button>
-                    </div>
-                  )}
-
-                  <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-4 2xl:grid-cols-5 gap-3">
-                    {filteredProducts.map(renderProductCard)}
+            <div className="flex-1 overflow-y-auto p-3 sm:p-4 space-y-4">
+              {/* Category Filter Active Indicator if filtered */}
+              {selectedCategory !== 'all' && (
+                <div className="flex items-center justify-between pb-2 border-b border-slate-200">
+                  <div className="flex items-center gap-2">
+                    <span className="w-2.5 h-2.5 rounded-full bg-amber-500" />
+                    <h3 className="font-black text-sm text-slate-800">
+                      {categories.find(c => c.id === selectedCategory)?.name_ar || 
+                       categories.find(c => c.id === selectedCategory)?.name_en || 'القسم المختار'}
+                    </h3>
+                    <span className="text-[11px] font-mono font-bold text-amber-700 bg-amber-100 px-2 py-0.5 rounded-full">
+                      {filteredProducts.length} صنف
+                    </span>
                   </div>
-                </div>
-              ) : (
-                /* Grouped by Category with Vertical Scrolling - super easy to browse! */
-                <div className="space-y-6">
-                  {categories.map(cat => {
-                    const catProds = filteredProducts.filter(p => p.category_id === cat.id);
-                    if (catProds.length === 0) return null;
-                    return (
-                      <div key={cat.id} id={`category-sec-${cat.id}`} className="space-y-2.5">
-                        <div className="flex items-center justify-between sticky top-0 bg-slate-100/95 backdrop-blur-xs py-2 px-1 z-10 border-b border-slate-200">
-                          <div className="flex items-center gap-2">
-                            <span className="w-2.5 h-2.5 rounded-full bg-amber-500" />
-                            <h3 className="font-black text-sm text-slate-800">
-                              {cat.name_ar || cat.name_en || (cat as any).name}
-                            </h3>
-                            <span className="text-[11px] font-mono font-bold text-amber-700 bg-amber-100 px-2 py-0.5 rounded-full">
-                              {catProds.length} صنف
-                            </span>
-                          </div>
-                          <button
-                            onClick={() => setSelectedCategory(cat.id)}
-                            className="text-xs text-amber-600 hover:text-amber-700 font-bold hover:underline cursor-pointer"
-                          >
-                            تصفية هذا القسم فقط
-                          </button>
-                        </div>
-
-                        <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-4 2xl:grid-cols-5 gap-3">
-                          {catProds.map(renderProductCard)}
-                        </div>
-                      </div>
-                    );
-                  })}
-
-                  {/* Uncategorized items if any */}
-                  {(() => {
-                    const uncatProds = filteredProducts.filter(p => !p.category_id || !categories.some(c => c.id === p.category_id));
-                    if (uncatProds.length === 0) return null;
-                    return (
-                      <div className="space-y-2.5">
-                        <div className="flex items-center justify-between sticky top-0 bg-slate-100/95 backdrop-blur-xs py-2 px-1 z-10 border-b border-slate-200">
-                          <div className="flex items-center gap-2">
-                            <span className="w-2.5 h-2.5 rounded-full bg-slate-400" />
-                            <h3 className="font-black text-sm text-slate-800">أصناف أخرى</h3>
-                            <span className="text-[11px] font-mono font-bold text-slate-600 bg-slate-200 px-2 py-0.5 rounded-full">
-                              {uncatProds.length} صنف
-                            </span>
-                          </div>
-                        </div>
-                        <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-4 2xl:grid-cols-5 gap-3">
-                          {uncatProds.map(renderProductCard)}
-                        </div>
-                      </div>
-                    );
-                  })()}
+                  <button
+                    onClick={() => setSelectedCategory('all')}
+                    className="text-xs text-amber-600 hover:text-amber-700 font-bold hover:underline cursor-pointer"
+                  >
+                    عرض جميع الأصناف
+                  </button>
                 </div>
               )}
+
+              {/* Side-by-Side Products Grid */}
+              <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-4 2xl:grid-cols-5 gap-3">
+                {filteredProducts.map(renderProductCard)}
+              </div>
 
               {filteredProducts.length === 0 && (
                 <div className="text-center py-16 text-slate-400">
@@ -2661,7 +2660,7 @@ export const CashierPOS: React.FC = () => {
                     <span className="absolute -top-1 -right-1 w-2 h-2 rounded-full bg-red-500 animate-ping" />
                   )}
                 </div>
-                <span>طلبات الزبائن الحية</span>
+                <span>طلبات الزبائن</span>
                 <span className={`px-1.5 py-0.2 rounded-md font-mono text-[10px] font-bold ${
                   unhandledCustomerOrdersCount > 0 ? 'bg-red-600 text-white animate-pulse' : 'bg-slate-950 text-amber-400'
                 }`}>
@@ -2700,7 +2699,7 @@ export const CashierPOS: React.FC = () => {
                       <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
                       <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-emerald-500"></span>
                     </span>
-                    <span className="text-xs font-black text-slate-800">بث حي وتلقائي لطلبات الزبائن</span>
+                    <span className="text-xs font-black text-slate-800">بث تلقائي لطلبات الزبائن</span>
                   </div>
                   <div className="flex items-center gap-1">
                     <button
@@ -2880,24 +2879,37 @@ export const CashierPOS: React.FC = () => {
                           </div>
                         )}
 
-                        {/* Items List */}
-                        <div className="bg-slate-50 p-2 rounded-xl border border-slate-200 text-xs space-y-1 max-h-36 overflow-y-auto">
+                        {/* Items List - Spacious, clear and comfortable */}
+                        <div className="bg-slate-100/80 p-2.5 rounded-xl border border-slate-200 space-y-1.5 max-h-72 overflow-y-auto">
+                          <div className="flex items-center justify-between text-[11px] font-black text-slate-600 pb-1 border-b border-slate-200">
+                            <span>الأصناف المطلوبة ({ord.items.reduce((acc, it) => acc + (it.quantity || 1), 0)}):</span>
+                            <span className="text-[10px] text-slate-500 font-bold">السعر</span>
+                          </div>
                           {ord.items.map((item, idx) => (
-                            <div key={idx} className="flex items-start justify-between text-slate-800 border-b border-slate-100 pb-0.5 last:border-0 last:pb-0">
-                              <div>
-                                <span className="font-bold text-[11px]">{item.quantity}x {item.name}</span>
-                                {item.options && item.options.length > 0 && (
-                                  <div className="text-[9px] text-slate-500">
-                                    {item.options.map((o: any, oi: number) => (
-                                      <span key={oi} className="ml-1">+{o.name}</span>
-                                    ))}
-                                  </div>
-                                )}
-                                {item.notes && (
-                                  <div className="text-[9px] text-amber-700">ملاحظة: {item.notes}</div>
-                                )}
+                            <div key={idx} className="bg-white p-2 rounded-xl border border-slate-200 flex items-start justify-between gap-2 shadow-xs">
+                              <div className="flex items-start gap-2">
+                                <span className="w-5 h-5 rounded-md bg-amber-500 text-white font-mono font-black text-xs flex items-center justify-center shrink-0 mt-0.5 shadow-xs">
+                                  {item.quantity}
+                                </span>
+                                <div>
+                                  <p className="font-bold text-xs text-slate-900 leading-snug">{item.name}</p>
+                                  {item.options && item.options.length > 0 && (
+                                    <div className="flex flex-wrap gap-1 mt-1">
+                                      {item.options.map((o: any, oi: number) => (
+                                        <span key={oi} className="text-[10px] bg-blue-50 text-blue-700 border border-blue-200 px-1.5 py-0.2 rounded font-medium">
+                                          +{typeof o === 'string' ? o : (o.name || o.name_ar || o)}
+                                        </span>
+                                      ))}
+                                    </div>
+                                  )}
+                                  {item.notes && (
+                                    <p className="text-[10px] text-amber-800 bg-amber-50 px-1.5 py-0.5 rounded border border-amber-200 mt-1 font-medium">
+                                      📝 {item.notes}
+                                    </p>
+                                  )}
+                                </div>
                               </div>
-                              <span className="font-mono font-bold text-slate-600 text-[11px] shrink-0">
+                              <span className="font-mono font-black text-slate-700 text-xs shrink-0 mt-0.5">
                                 {((item.price || 0) * (item.quantity || 1)).toFixed(2)} ج.م
                               </span>
                             </div>
@@ -2972,35 +2984,19 @@ export const CashierPOS: React.FC = () => {
             <div className="flex-1 flex flex-col justify-between overflow-hidden">
               {/* Order Header / Configuration */}
               <div className="p-3 bg-white border-b border-slate-200 space-y-2">
-                {/* Order Type Tabs (Dynamically adapted to restaurant services) */}
+                {/* Order Type Tabs (Dine-in & Delivery) */}
                 <div className={`grid gap-1 bg-slate-100 p-1 rounded-xl border border-slate-200 ${
-                  restaurantServices.tables_enabled && restaurantServices.delivery_enabled
-                    ? 'grid-cols-3'
-                    : (restaurantServices.tables_enabled || restaurantServices.delivery_enabled)
-                    ? 'grid-cols-2'
-                    : 'grid-cols-1'
+                  restaurantServices.delivery_enabled ? 'grid-cols-2' : 'grid-cols-1'
                 }`}>
-                  {restaurantServices.tables_enabled && (
-                    <button
-                      type="button"
-                      onClick={() => setOrderType('dine_in')}
-                      className={`py-1.5 rounded-lg text-xs font-bold flex items-center justify-center gap-1 transition-all cursor-pointer ${
-                        orderType === 'dine_in' ? 'bg-amber-500 text-white shadow-sm' : 'text-slate-600 hover:text-slate-900'
-                      }`}
-                    >
-                      <UtensilsCrossed size={13} />
-                      <span>صالة</span>
-                    </button>
-                  )}
                   <button
                     type="button"
-                    onClick={() => setOrderType('takeaway')}
+                    onClick={() => setOrderType('dine_in')}
                     className={`py-1.5 rounded-lg text-xs font-bold flex items-center justify-center gap-1 transition-all cursor-pointer ${
-                      orderType === 'takeaway' ? 'bg-amber-500 text-white shadow-sm' : 'text-slate-600 hover:text-slate-900'
+                      orderType === 'dine_in' ? 'bg-amber-500 text-white shadow-sm' : 'text-slate-600 hover:text-slate-900'
                     }`}
                   >
-                    <ShoppingBag size={13} />
-                    <span>سفري</span>
+                    <UtensilsCrossed size={13} />
+                    <span>صالة</span>
                   </button>
                   {restaurantServices.delivery_enabled && (
                     <button
@@ -3019,16 +3015,19 @@ export const CashierPOS: React.FC = () => {
             {/* Conditional Sub-info: Table Picker / Customer Info */}
             {orderType === 'dine_in' ? (
               <div className="flex items-center justify-between bg-slate-50 p-2 rounded-xl border border-slate-200 text-xs">
-                <span className="text-slate-600 font-bold">رقم الطاولة:</span>
+                <div className="flex items-center gap-1.5 text-slate-700 font-bold">
+                  <UtensilsCrossed size={13} className="text-amber-600" />
+                  <span>الطاولة (اختياري):</span>
+                </div>
                 <select
                   value={selectedTable?.id || ''}
                   onChange={e => {
                     const tb = tables.find(t => t.id === e.target.value);
                     setSelectedTable(tb || null);
                   }}
-                  className="bg-white border border-slate-300 text-slate-800 rounded-lg px-2 py-1 outline-none font-bold text-xs shadow-sm"
+                  className="bg-white border border-slate-300 text-slate-800 rounded-lg px-2 py-1 outline-none font-bold text-xs shadow-xs"
                 >
-                  <option value="">اختر طاولة...</option>
+                  <option value="">بدون طاولة (طلب صالة عام)</option>
                   {tables.map(t => (
                     <option key={t.id} value={t.id}>طاولة #{t.table_number}</option>
                   ))}

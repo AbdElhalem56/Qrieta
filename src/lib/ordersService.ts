@@ -289,7 +289,8 @@ export async function updateLiveOrderStatus(
 
   // 2. Update Supabase directly
   try {
-    const updatePayload: any = { status };
+    const dbStatus = status === 'completed' ? 'delivered' : status;
+    const updatePayload: any = { status: dbStatus };
     if (status === 'preparing') updatePayload.preparing_at = new Date().toISOString();
     if (status === 'completed') updatePayload.delivered_at = new Date().toISOString();
     if (status === 'cancelled') updatePayload.cancelled_at = new Date().toISOString();
