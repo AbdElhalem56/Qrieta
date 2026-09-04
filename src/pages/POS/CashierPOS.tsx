@@ -144,9 +144,21 @@ export const CashierPOS: React.FC = () => {
   const [activeTab, setActiveTab] = useState<'pos' | 'orders' | 'shift' | 'tables' | 'inventory' | 'customer_orders'>('pos');
   const [customerLiveOrders, setCustomerLiveOrders] = useState<LiveOrder[]>([]);
   const [customerFilter, setCustomerFilter] = useState<'all' | 'new' | 'dine_in' | 'delivery' | 'completed'>('all');
+  const [sidebarView, setSidebarView] = useState<'customer_orders' | 'cart'>('customer_orders');
+  const [groupByCategory, setGroupByCategory] = useState<boolean>(true);
+  const categoryScrollRef = useRef<HTMLDivElement>(null);
   const [hasUnviewedCustomerAlert, setHasUnviewedCustomerAlert] = useState<boolean>(false);
   const [isSoundMuted, setIsSoundMuted] = useState<boolean>(false);
   const lastAlertedOrderIdRef = useRef<string | number | null>(null);
+
+  const scrollCategories = (direction: 'left' | 'right') => {
+    if (categoryScrollRef.current) {
+      categoryScrollRef.current.scrollBy({
+        left: direction === 'left' ? -200 : 200,
+        behavior: 'smooth'
+      });
+    }
+  };
 
   const [selectedCategory, setSelectedCategory] = useState<string>('all');
   const [searchQuery, setSearchQuery] = useState<string>('');
@@ -699,6 +711,16 @@ export const CashierPOS: React.FC = () => {
     return customerLiveOrders.find(o => o.status === 'new') || customerLiveOrders[0] || null;
   }, [customerLiveOrders]);
 
+  const filteredCustomerOrders = useMemo(() => {
+    return customerLiveOrders.filter(ord => {
+      if (customerFilter === 'new') return ord.status === 'new';
+      if (customerFilter === 'dine_in') return ord.order_type === 'dine_in';
+      if (customerFilter === 'delivery') return ord.order_type === 'delivery';
+      if (customerFilter === 'completed') return ord.status === 'completed';
+      return true;
+    });
+  }, [customerLiveOrders, customerFilter]);
+
   // Customer Order Handlers
   const handleAcceptCustomerOrder = async (order: LiveOrder) => {
     if (!selectedRestaurant) return;
@@ -754,6 +776,7 @@ export const CashierPOS: React.FC = () => {
       setOrderNotes(order.notes);
     }
 
+    setSidebarView('cart');
     setActiveTab('pos');
   };
 
@@ -848,6 +871,78 @@ export const CashierPOS: React.FC = () => {
   const cashNum = parseFloat(cashTendered) || 0;
   const changeDue = Math.max(0, cashNum - finalTotal);
 
+  // Render Product Card
+  const renderProductCard = (item: Product) => {
+    const currentStock = stockMap[item.id] ?? 20;
+    const isOutOfStock = currentStock <= 0;
+    const isLowStock = currentStock > 0 && currentStock <= 5;
+    const hasOptions = item.options && Array.isArray(item.options) && item.options.length > 0;
+
+    return (
+      <button
+        key={item.id}
+        onClick={() => handleProductClick(item)}
+        disabled={isOutOfStock}
+        className={`relative bg-white border rounded-2xl p-2.5 text-right flex flex-col justify-between transition-all group overflow-hidden ${
+          isOutOfStock 
+            ? 'opacity-40 border-slate-200 cursor-not-allowed bg-slate-50' 
+            : 'border-slate-200 hover:border-amber-400 hover:shadow-md active:scale-98 cursor-pointer shadow-xs'
+        }`}
+      >
+        {/* Image or placeholder */}
+        <div className="relative w-full h-24 bg-slate-100 rounded-xl overflow-hidden mb-2">
+          {item.image_url ? (
+            <img
+              src={item.image_url}
+              alt={item.name_ar || item.name_en || ''}
+              className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
+              loading="lazy"
+            />
+          ) : (
+            <div className="w-full h-full flex items-center justify-center text-slate-400">
+              <Coffee size={30} />
+            </div>
+          )}
+
+          {/* Stock Badge */}
+          <div className="absolute top-1.5 left-1.5">
+            {isOutOfStock ? (
+              <span className="bg-rose-500 text-white text-[10px] font-bold px-1.5 py-0.5 rounded-md shadow">
+                نفذ
+              </span>
+            ) : isLowStock ? (
+              <span className="bg-amber-500 text-white text-[10px] font-bold px-1.5 py-0.5 rounded-md shadow">
+                باقي {currentStock}
+              </span>
+            ) : null}
+          </div>
+
+          {/* Options Indicator */}
+          {hasOptions && (
+            <div className="absolute bottom-1.5 right-1.5 bg-slate-900/70 backdrop-blur-sm text-amber-300 text-[10px] font-bold px-1.5 py-0.5 rounded-md flex items-center gap-1">
+              <Sparkles size={10} />
+              <span>إضافات</span>
+            </div>
+          )}
+        </div>
+
+        <div>
+          <h4 className="font-bold text-xs text-slate-800 leading-tight line-clamp-1 group-hover:text-amber-600 transition-colors">
+            {item.name_ar || item.name_en || (item as any).name}
+          </h4>
+          <div className="flex items-center justify-between mt-1.5">
+            <span className="font-mono font-bold text-emerald-600 text-xs">
+              {item.price.toFixed(2)} <span className="text-[10px] font-sans">ج.م</span>
+            </span>
+            <span className="w-5 h-5 rounded-lg bg-slate-100 group-hover:bg-amber-500 group-hover:text-white text-slate-600 flex items-center justify-center text-xs font-bold transition-colors">
+              +
+            </span>
+          </div>
+        </div>
+      </button>
+    );
+  };
+
   // Click Product: If has options, open modifier modal, otherwise add directly
   const handleProductClick = (item: Product) => {
     const currentStock = stockMap[item.id] ?? 20;
@@ -855,6 +950,8 @@ export const CashierPOS: React.FC = () => {
       alert(`عذراً، الصنف "${item.name_ar || item.name_en}" غير متاح حالياً ونفذ من المخزون!`);
       return;
     }
+
+    setSidebarView('cart');
 
     if (item.options && Array.isArray(item.options) && item.options.length > 0) {
       setCustomizingItem(item);
@@ -1597,34 +1694,22 @@ export const CashierPOS: React.FC = () => {
             </div>
           </div>
 
-          {/* 🔒 Active / Locked Restaurant Badge with Branch Switcher */}
+          {/* 🔒 Active Store Badge (Fixed Branch) */}
           <div className="flex items-center gap-2 bg-slate-50 border border-slate-200 px-3 py-1 rounded-xl shadow-sm">
             <div className="w-2 h-2 rounded-full bg-emerald-500" />
             <div className="leading-tight text-right">
               <div className="flex items-center gap-1.5">
-                <span className="font-bold text-xs text-slate-800 block max-w-[120px] sm:max-w-[180px] truncate" title={selectedRestaurant?.name || ''}>
+                <span className="font-bold text-xs text-slate-800 block max-w-[140px] sm:max-w-[200px] truncate" title={selectedRestaurant?.name || ''}>
                   {selectedRestaurant?.name || 'مطعم كريتا'}
                 </span>
                 <span className="bg-slate-900 text-white text-[9px] font-black px-1.5 py-0.2 rounded-md">
                   {currentPresetInfo.titleAr}
                 </span>
               </div>
-              <div className="flex items-center gap-1">
-                <span className="text-[10px] text-slate-500 font-mono flex items-center gap-1">
-                  <Lock size={10} className="text-amber-500 inline" />
-                  فرع معتمد
-                </span>
-                {restaurants.length > 1 && (
-                  <button
-                    type="button"
-                    onClick={() => setIsBranchModalOpen(true)}
-                    className="text-[10px] text-amber-600 hover:text-amber-700 font-bold underline cursor-pointer mr-1"
-                    title="تبديل المتجر أو الفرع"
-                  >
-                    تبديل الفرع
-                  </button>
-                )}
-              </div>
+              <span className="text-[10px] text-slate-500 font-mono flex items-center gap-1">
+                <Lock size={10} className="text-amber-500 inline" />
+                فرع معتمد
+              </span>
             </div>
           </div>
 
@@ -1730,37 +1815,6 @@ export const CashierPOS: React.FC = () => {
             <span className="hidden sm:inline">هالك</span>
           </button>
 
-          {/* Customer App Orders Quick Indicator & Button */}
-          <button
-            onClick={() => {
-              setActiveTab('customer_orders');
-              setHasUnviewedCustomerAlert(false);
-            }}
-            className={`px-3 py-1.5 rounded-xl font-black text-xs flex items-center gap-2 border shadow-sm transition-all cursor-pointer ${
-              unhandledCustomerOrdersCount > 0
-                ? 'bg-gradient-to-r from-red-600 to-orange-600 text-white border-red-500 animate-pulse shadow-red-500/30 ring-2 ring-red-400'
-                : 'bg-orange-50 text-orange-800 border-orange-200 hover:bg-orange-100'
-            }`}
-            title="شاشة طلبات تطبيق الزبائن والدليفري الحية"
-          >
-            <div className="relative flex items-center">
-              <Smartphone size={15} className={unhandledCustomerOrdersCount > 0 ? "animate-bounce" : ""} />
-              {unhandledCustomerOrdersCount > 0 && (
-                <span className="absolute -top-1 -right-1 w-2 h-2 bg-yellow-300 rounded-full animate-ping" />
-              )}
-            </div>
-            <span>طلبات الزبائن</span>
-            {unhandledCustomerOrdersCount > 0 ? (
-              <span className="px-2 py-0.5 rounded-full bg-white text-red-600 font-black text-[10px] leading-none shadow-sm">
-                {unhandledCustomerOrdersCount} جديد
-              </span>
-            ) : (
-              <span className="px-1.5 py-0.5 rounded-md bg-orange-200/70 text-orange-900 text-[10px] font-bold">
-                {customerLiveOrders.length}
-              </span>
-            )}
-          </button>
-
           {/* Lock Screen */}
           <button
             onClick={() => setIsScreenLocked(true)}
@@ -1799,242 +1853,291 @@ export const CashierPOS: React.FC = () => {
         <div className="flex-1 flex flex-col overflow-hidden bg-slate-100 border-l border-slate-200">
           
           {/* Search & Category Filter Bar */}
-          <div className="p-3 bg-white border-b border-slate-200 flex items-center gap-2 shrink-0 shadow-sm">
-            {/* Barcode Search Box */}
-            <div className="relative flex-1 max-w-md">
-              <Search className="absolute right-3 top-2.5 text-slate-400" size={16} />
-              <input
-                ref={searchInputRef}
-                type="text"
-                placeholder="بحث بالاسم أو مسح الباركود (Scan Barcode)..."
-                value={searchQuery}
-                onChange={e => setSearchQuery(e.target.value)}
-                onKeyDown={handleBarcodeSearch}
-                className="w-full bg-slate-50 border border-slate-300 focus:border-amber-500 rounded-xl pr-9 pl-8 py-2 text-xs text-slate-800 placeholder-slate-400 outline-none font-medium shadow-inner"
-              />
-              <Barcode className="absolute left-2.5 top-2.5 text-slate-400" size={16} />
-            </div>
+          <div className="bg-white border-b border-slate-200 shrink-0 shadow-xs">
+            {/* Row 1: Search Box & Mode Tabs & Group Toggle */}
+            <div className="p-2.5 sm:p-3 flex flex-wrap items-center justify-between gap-2 border-b border-slate-100">
+              {/* Barcode Search Box */}
+              <div className="relative flex-1 min-w-[220px] max-w-md">
+                <Search className="absolute right-3 top-2.5 text-slate-400" size={16} />
+                <input
+                  ref={searchInputRef}
+                  type="text"
+                  placeholder="بحث باسم الصنف أو مسح الباركود..."
+                  value={searchQuery}
+                  onChange={e => setSearchQuery(e.target.value)}
+                  onKeyDown={handleBarcodeSearch}
+                  className="w-full bg-slate-50 border border-slate-300 focus:border-amber-500 rounded-xl pr-9 pl-8 py-2 text-xs text-slate-800 placeholder-slate-400 outline-none font-medium shadow-inner"
+                />
+                {searchQuery ? (
+                  <button 
+                    onClick={() => setSearchQuery('')}
+                    className="absolute left-2.5 top-2.5 text-slate-400 hover:text-slate-600 cursor-pointer"
+                  >
+                    <X size={15} />
+                  </button>
+                ) : (
+                  <Barcode className="absolute left-2.5 top-2.5 text-slate-400" size={16} />
+                )}
+              </div>
 
-            {/* Quick Category Chips */}
-            <div className="flex-1 flex items-center gap-1.5 overflow-x-auto no-scrollbar py-0.5">
-              <button
-                onClick={() => setSelectedCategory('all')}
-                className={`px-3 py-1.5 rounded-xl text-xs font-bold shrink-0 transition-all cursor-pointer ${
-                  selectedCategory === 'all'
-                    ? 'bg-amber-500 text-white shadow-md shadow-amber-500/20'
-                    : 'bg-slate-100 text-slate-700 hover:bg-slate-200'
-                }`}
-              >
-                الكل ({products.length})
-              </button>
-              {categories.map(cat => (
-                <button
-                  key={cat.id}
-                  onClick={() => setSelectedCategory(cat.id)}
-                  className={`px-3 py-1.5 rounded-xl text-xs font-bold shrink-0 transition-all cursor-pointer ${
-                    selectedCategory === cat.id
-                      ? 'bg-amber-500 text-white shadow-md shadow-amber-500/20'
-                      : 'bg-slate-100 text-slate-700 hover:bg-slate-200'
-                  }`}
-                >
-                  {cat.name_ar || cat.name_en || (cat as any).name}
-                </button>
-              ))}
-            </div>
+              {/* Layout Mode & Tab Controls */}
+              <div className="flex items-center gap-1.5">
+                {/* Vertical Grouping Toggle */}
+                {activeTab === 'pos' && (
+                  <button
+                    type="button"
+                    onClick={() => setGroupByCategory(!groupByCategory)}
+                    className={`px-2.5 py-1.5 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 cursor-pointer border ${
+                      groupByCategory
+                        ? 'bg-amber-50 border-amber-300 text-amber-900 shadow-xs'
+                        : 'bg-slate-50 border-slate-200 text-slate-600 hover:bg-slate-100'
+                    }`}
+                    title="تقسيم الأصناف حسب الأقسام عمودياً لسهولة التصفح والتقليب"
+                  >
+                    <Layers size={14} className={groupByCategory ? "text-amber-600" : ""} />
+                    <span className="hidden sm:inline">عرض الأقسام رأسياً</span>
+                  </button>
+                )}
 
-            {/* Mode Tabs (Sales / Orders History / Tables Map / Customer Live Orders) */}
-            <div className="flex items-center gap-1 bg-slate-100 p-1 rounded-xl border border-slate-200 shrink-0">
-              <button
-                onClick={() => setActiveTab('pos')}
-                className={`px-3 py-1 rounded-lg text-xs font-bold transition-all cursor-pointer ${
-                  activeTab === 'pos' ? 'bg-amber-500 text-white shadow-sm' : 'text-slate-600 hover:text-slate-900'
-                }`}
-              >
-                البيع
-              </button>
-              <button
-                onClick={() => setActiveTab('orders')}
-                className={`px-3 py-1 rounded-lg text-xs font-bold transition-all cursor-pointer ${
-                  activeTab === 'orders' ? 'bg-amber-500 text-white shadow-sm' : 'text-slate-600 hover:text-slate-900'
-                }`}
-              >
-                الفواتير ({activeOrders.length})
-              </button>
-              {restaurantServices.tables_enabled && (
-                <button
-                  onClick={() => setActiveTab('tables')}
-                  className={`px-3 py-1 rounded-lg text-xs font-bold transition-all cursor-pointer ${
-                    activeTab === 'tables' ? 'bg-amber-500 text-white shadow-sm' : 'text-slate-600 hover:text-slate-900'
-                  }`}
-                >
-                  الطاولات ({tables.length})
-                </button>
-              )}
-              {(restaurantServices.customer_app_enabled || restaurantServices.delivery_enabled) && (
-                <button
-                  onClick={() => {
-                    setActiveTab('customer_orders');
-                    setHasUnviewedCustomerAlert(false);
-                  }}
-                  className={`relative px-3.5 py-1.5 rounded-xl text-xs font-black transition-all flex items-center gap-2 cursor-pointer shadow-xs ${
-                    activeTab === 'customer_orders'
-                      ? 'bg-orange-600 text-white shadow-md shadow-orange-500/30 ring-2 ring-orange-400'
-                      : unhandledCustomerOrdersCount > 0
-                      ? 'bg-gradient-to-r from-red-600 to-orange-600 text-white animate-pulse shadow-md ring-2 ring-red-400'
-                      : 'bg-orange-50 text-orange-900 hover:bg-orange-100 border border-orange-200'
-                  }`}
-                >
-                  <Smartphone size={14} className={unhandledCustomerOrdersCount > 0 ? "animate-bounce" : ""} />
-                  <span>طلبات تطبيق الزبائن</span>
-                  {unhandledCustomerOrdersCount > 0 ? (
-                    <span className="px-2 py-0.5 rounded-full bg-white text-red-600 text-[10px] font-black leading-none shadow-xs">
-                      {unhandledCustomerOrdersCount} جديد!
-                    </span>
-                  ) : (
-                    <span className="px-1.5 py-0.2 rounded-md bg-orange-200/80 text-orange-950 text-[10px] font-bold">
-                      {customerLiveOrders.length}
-                    </span>
+                {/* Mode Tabs */}
+                <div className="flex items-center gap-1 bg-slate-100 p-1 rounded-xl border border-slate-200">
+                  <button
+                    onClick={() => setActiveTab('pos')}
+                    className={`px-3 py-1 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+                      activeTab === 'pos' ? 'bg-amber-500 text-white shadow-xs' : 'text-slate-600 hover:text-slate-900'
+                    }`}
+                  >
+                    قائمة الأصناف
+                  </button>
+                  <button
+                    onClick={() => setActiveTab('orders')}
+                    className={`px-3 py-1 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+                      activeTab === 'orders' ? 'bg-amber-500 text-white shadow-xs' : 'text-slate-600 hover:text-slate-900'
+                    }`}
+                  >
+                    الفواتير ({activeOrders.length})
+                  </button>
+                  {restaurantServices.tables_enabled && (
+                    <button
+                      onClick={() => setActiveTab('tables')}
+                      className={`px-3 py-1 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+                        activeTab === 'tables' ? 'bg-amber-500 text-white shadow-xs' : 'text-slate-600 hover:text-slate-900'
+                      }`}
+                    >
+                      الطاولات ({tables.length})
+                    </button>
                   )}
-                </button>
-              )}
+                </div>
+              </div>
             </div>
+
+            {/* Row 2: Categories Bar with Left & Right Scroll Buttons for Easy Flipping */}
+            {activeTab === 'pos' && (
+              <div className="px-2 py-1.5 bg-slate-50/80 flex items-center gap-1.5">
+                {/* Scroll Right Button (in RTL, Right = Previous) */}
+                <button
+                  type="button"
+                  onClick={() => scrollCategories('right')}
+                  className="w-7 h-7 rounded-lg bg-white hover:bg-amber-50 text-slate-600 hover:text-amber-700 border border-slate-200 flex items-center justify-center shrink-0 shadow-xs transition-colors cursor-pointer"
+                  title="الأقسام السابقة"
+                >
+                  <ChevronRight size={15} />
+                </button>
+
+                {/* Categories Chips Container */}
+                <div 
+                  ref={categoryScrollRef}
+                  className="flex-1 flex items-center gap-1.5 overflow-x-auto no-scrollbar py-0.5 scroll-smooth"
+                >
+                  <button
+                    onClick={() => setSelectedCategory('all')}
+                    className={`px-3 py-1.5 rounded-xl text-xs font-bold shrink-0 transition-all cursor-pointer ${
+                      selectedCategory === 'all'
+                        ? 'bg-amber-500 text-white shadow-sm shadow-amber-500/20'
+                        : 'bg-white text-slate-700 border border-slate-200 hover:bg-slate-100'
+                    }`}
+                  >
+                    الكل ({products.length})
+                  </button>
+                  {categories.map(cat => {
+                    const catCount = products.filter(p => p.category_id === cat.id).length;
+                    return (
+                      <button
+                        key={cat.id}
+                        onClick={() => {
+                          setSelectedCategory(cat.id);
+                          if (groupByCategory) {
+                            const elem = document.getElementById(`category-sec-${cat.id}`);
+                            if (elem) {
+                              elem.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                            }
+                          }
+                        }}
+                        className={`px-3 py-1.5 rounded-xl text-xs font-bold shrink-0 transition-all cursor-pointer flex items-center gap-1.5 ${
+                          selectedCategory === cat.id
+                            ? 'bg-amber-500 text-white shadow-sm shadow-amber-500/20'
+                            : 'bg-white text-slate-700 border border-slate-200 hover:bg-slate-100'
+                        }`}
+                      >
+                        <span>{cat.name_ar || cat.name_en || (cat as any).name}</span>
+                        <span className={`text-[10px] px-1.5 py-0.2 rounded-full font-mono ${
+                          selectedCategory === cat.id ? 'bg-amber-600/60 text-white' : 'bg-slate-100 text-slate-500'
+                        }`}>
+                          {catCount}
+                        </span>
+                      </button>
+                    );
+                  })}
+                </div>
+
+                {/* Scroll Left Button (in RTL, Left = Next) */}
+                <button
+                  type="button"
+                  onClick={() => scrollCategories('left')}
+                  className="w-7 h-7 rounded-lg bg-white hover:bg-amber-50 text-slate-600 hover:text-amber-700 border border-slate-200 flex items-center justify-center shrink-0 shadow-xs transition-colors cursor-pointer"
+                  title="الأقسام التالية"
+                >
+                  <ChevronLeft size={15} />
+                </button>
+              </div>
+            )}
           </div>
 
-          {/* 🔔 Highly Prominent, Unmissable Banner Alert for New Incoming Customer Orders */}
-          {unhandledCustomerOrdersCount > 0 && activeTab !== 'customer_orders' && (
+          {/* 🔔 Clean Banner Alert if new customer orders arrived while viewing Cart */}
+          {unhandledCustomerOrdersCount > 0 && sidebarView !== 'customer_orders' && (
             <div 
-              className="bg-gradient-to-r from-red-600 via-orange-600 to-amber-600 text-white p-3.5 mx-3 my-2 rounded-2xl flex flex-wrap items-center justify-between gap-3 shadow-2xl border-2 border-red-400/80 animate-pulse shrink-0"
+              onClick={() => setSidebarView('customer_orders')}
+              className="bg-gradient-to-r from-red-600 via-orange-600 to-amber-600 text-white px-4 py-2.5 mx-3 my-2 rounded-2xl flex items-center justify-between gap-3 shadow-lg border border-red-400 animate-pulse cursor-pointer shrink-0"
             >
-              <div className="flex items-center gap-3">
-                <div className="w-11 h-11 rounded-2xl bg-white text-red-600 flex items-center justify-center font-black text-xl shrink-0 shadow-md">
+              <div className="flex items-center gap-2.5">
+                <span className="w-8 h-8 rounded-xl bg-white text-red-600 flex items-center justify-center font-bold text-base">
                   🔔
-                </div>
+                </span>
                 <div>
-                  <div className="flex items-center gap-2">
-                    <span className="bg-slate-900 text-white font-mono font-black text-sm px-2.5 py-0.5 rounded-lg border border-white/30 shadow-xs">
+                  <p className="font-black text-xs sm:text-sm text-white flex items-center gap-1.5">
+                    <span>يوجد {unhandledCustomerOrdersCount} طلب زبائن جديد بالانتظار!</span>
+                    <span className="bg-slate-900 text-white font-mono text-[11px] px-2 py-0.2 rounded-md">
                       #{getDisplayOrderNumber(latestCustomerOrder)}
                     </span>
-                    <p className="font-black text-sm sm:text-base text-white">
-                      طلب زبون جديد ينتظر الاستلام! ({unhandledCustomerOrdersCount} بالانتظار)
-                    </p>
-                  </div>
-                  <p className="text-xs text-orange-100 mt-1 flex flex-wrap items-center gap-1.5 font-medium">
-                    {latestCustomerOrder?.order_type === 'delivery' 
-                      ? `🛵 دليفري: ${latestCustomerOrder?.customer_name || 'عميل'} (${latestCustomerOrder?.customer_phone || ''})`
-                      : `🍽️ صالة: طاولة #${latestCustomerOrder?.table_number || 'صالة'}`} 
-                    {' • '}
-                    <span className="font-mono font-bold bg-white/20 px-2 py-0.5 rounded-md">
-                      {latestCustomerOrder ? `${latestCustomerOrder.total_price.toFixed(2)} ج.م` : ''}
-                    </span>
-                    {' • '}
-                    <span>{latestCustomerOrder?.items?.length || 0} أصناف</span>
+                  </p>
+                  <p className="text-[11px] text-orange-100">
+                    {latestCustomerOrder?.order_type === 'delivery' ? '🛵 دليفري خارجي' : `🍽️ صالة - طاولة #${latestCustomerOrder?.table_number}`}
+                    {' • '}انقر هنا للتبديل لشاشة طلبات الزبائن فوراً
                   </p>
                 </div>
               </div>
-
-              <div className="flex items-center gap-2 mr-auto">
-                {latestCustomerOrder && (
-                  <button
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      handleAcceptCustomerOrder(latestCustomerOrder);
-                    }}
-                    className="bg-white hover:bg-orange-50 text-orange-700 font-black text-xs px-4 py-2.5 rounded-xl shadow-lg flex items-center gap-1.5 cursor-pointer active:scale-95 transition-all"
-                  >
-                    <Printer size={15} />
-                    <span>{restaurantServices.kitchen_enabled ? '⚡ قبول وطباعة KOT فوراً' : '⚡ قبول وتسليم فوري'}</span>
-                  </button>
-                )}
-                
-                <button
-                  onClick={() => {
-                    setActiveTab('customer_orders');
-                    setHasUnviewedCustomerAlert(false);
-                  }}
-                  className="bg-slate-900/80 hover:bg-slate-900 text-white font-bold text-xs px-3.5 py-2.5 rounded-xl border border-white/20 flex items-center gap-1 cursor-pointer active:scale-95 transition-all"
-                >
-                  <span>عرض الكل ({unhandledCustomerOrdersCount})</span>
-                  <ChevronLeft size={16} />
-                </button>
-              </div>
+              <button 
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setSidebarView('customer_orders');
+                }}
+                className="bg-white text-red-600 hover:bg-orange-50 font-black text-xs px-3 py-1.5 rounded-xl shadow cursor-pointer"
+              >
+                عرض الطلبات الحية
+              </button>
             </div>
           )}
 
           {/* Tab 1: Product Grid View */}
           {activeTab === 'pos' && (
-            <div className="flex-1 overflow-y-auto p-3">
-              <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-2.5">
-                {filteredProducts.map(item => {
-                  const currentStock = stockMap[item.id] ?? 20;
-                  const isOutOfStock = currentStock <= 0;
-                  const isLowStock = currentStock > 0 && currentStock <= 5;
-                  const hasOptions = item.options && Array.isArray(item.options) && item.options.length > 0;
+            <div className="flex-1 overflow-y-auto p-3 sm:p-4 space-y-6">
+              {/* If search is active or specific category is selected, or grouping is turned off */}
+              {(!groupByCategory || selectedCategory !== 'all' || searchQuery.trim() !== '') ? (
+                <div>
+                  {selectedCategory !== 'all' && (
+                    <div className="flex items-center justify-between pb-2 mb-3 border-b border-slate-200">
+                      <div className="flex items-center gap-2">
+                        <span className="w-2.5 h-2.5 rounded-full bg-amber-500" />
+                        <h3 className="font-black text-sm text-slate-800">
+                          {categories.find(c => c.id === selectedCategory)?.name_ar || 
+                           categories.find(c => c.id === selectedCategory)?.name_en || 'القسم المختار'}
+                        </h3>
+                        <span className="text-[11px] font-mono font-bold text-amber-700 bg-amber-100 px-2 py-0.5 rounded-full">
+                          {filteredProducts.length} صنف
+                        </span>
+                      </div>
+                      <button
+                        onClick={() => setSelectedCategory('all')}
+                        className="text-xs text-amber-600 hover:text-amber-700 font-bold hover:underline cursor-pointer"
+                      >
+                        عرض جميع الأقسام
+                      </button>
+                    </div>
+                  )}
 
-                  return (
-                    <button
-                      key={item.id}
-                      onClick={() => handleProductClick(item)}
-                      disabled={isOutOfStock}
-                      className={`relative bg-white border rounded-2xl p-2.5 text-right flex flex-col justify-between transition-all group overflow-hidden ${
-                        isOutOfStock 
-                          ? 'opacity-40 border-slate-200 cursor-not-allowed bg-slate-50' 
-                          : 'border-slate-200 hover:border-amber-400 hover:shadow-md active:scale-95 cursor-pointer shadow-sm'
-                      }`}
-                    >
-                      {/* Image or placeholder */}
-                      <div className="relative w-full h-24 bg-slate-100 rounded-xl overflow-hidden mb-2">
-                        {item.image_url ? (
-                          <img
-                            src={item.image_url}
-                            alt={item.name_ar || item.name_en || ''}
-                            className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
-                            loading="lazy"
-                          />
-                        ) : (
-                          <div className="w-full h-full flex items-center justify-center text-slate-400">
-                            <Coffee size={32} />
+                  <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-4 2xl:grid-cols-5 gap-3">
+                    {filteredProducts.map(renderProductCard)}
+                  </div>
+                </div>
+              ) : (
+                /* Grouped by Category with Vertical Scrolling - super easy to browse! */
+                <div className="space-y-6">
+                  {categories.map(cat => {
+                    const catProds = filteredProducts.filter(p => p.category_id === cat.id);
+                    if (catProds.length === 0) return null;
+                    return (
+                      <div key={cat.id} id={`category-sec-${cat.id}`} className="space-y-2.5">
+                        <div className="flex items-center justify-between sticky top-0 bg-slate-100/95 backdrop-blur-xs py-2 px-1 z-10 border-b border-slate-200">
+                          <div className="flex items-center gap-2">
+                            <span className="w-2.5 h-2.5 rounded-full bg-amber-500" />
+                            <h3 className="font-black text-sm text-slate-800">
+                              {cat.name_ar || cat.name_en || (cat as any).name}
+                            </h3>
+                            <span className="text-[11px] font-mono font-bold text-amber-700 bg-amber-100 px-2 py-0.5 rounded-full">
+                              {catProds.length} صنف
+                            </span>
                           </div>
-                        )}
-
-                        {/* Stock Badge */}
-                        <div className="absolute top-1.5 left-1.5">
-                          {isOutOfStock ? (
-                            <span className="bg-rose-500 text-white text-[10px] font-bold px-1.5 py-0.5 rounded-md shadow">
-                              نفذ
-                            </span>
-                          ) : isLowStock ? (
-                            <span className="bg-amber-500 text-white text-[10px] font-bold px-1.5 py-0.5 rounded-md shadow">
-                              باقي {currentStock}
-                            </span>
-                          ) : null}
+                          <button
+                            onClick={() => setSelectedCategory(cat.id)}
+                            className="text-xs text-amber-600 hover:text-amber-700 font-bold hover:underline cursor-pointer"
+                          >
+                            تصفية هذا القسم فقط
+                          </button>
                         </div>
 
-                        {/* Options Indicator */}
-                        {hasOptions && (
-                          <div className="absolute bottom-1.5 right-1.5 bg-slate-900/70 backdrop-blur-sm text-amber-300 text-[10px] font-bold px-1.5 py-0.5 rounded-md flex items-center gap-1">
-                            <Sparkles size={10} />
-                            <span>إضافات</span>
-                          </div>
-                        )}
-                      </div>
-
-                      <div>
-                        <h4 className="font-bold text-xs text-slate-800 leading-tight line-clamp-1 group-hover:text-amber-600 transition-colors">
-                          {item.name_ar || item.name_en || (item as any).name}
-                        </h4>
-                        <div className="flex items-center justify-between mt-1.5">
-                          <span className="font-mono font-bold text-emerald-600 text-xs">
-                            {item.price.toFixed(2)} <span className="text-[10px] font-sans">ج.م</span>
-                          </span>
-                          <span className="w-5 h-5 rounded-lg bg-slate-100 group-hover:bg-amber-500 group-hover:text-white text-slate-600 flex items-center justify-center text-xs font-bold transition-colors">
-                            +
-                          </span>
+                        <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-4 2xl:grid-cols-5 gap-3">
+                          {catProds.map(renderProductCard)}
                         </div>
                       </div>
-                    </button>
-                  );
-                })}
-              </div>
+                    );
+                  })}
+
+                  {/* Uncategorized items if any */}
+                  {(() => {
+                    const uncatProds = filteredProducts.filter(p => !p.category_id || !categories.some(c => c.id === p.category_id));
+                    if (uncatProds.length === 0) return null;
+                    return (
+                      <div className="space-y-2.5">
+                        <div className="flex items-center justify-between sticky top-0 bg-slate-100/95 backdrop-blur-xs py-2 px-1 z-10 border-b border-slate-200">
+                          <div className="flex items-center gap-2">
+                            <span className="w-2.5 h-2.5 rounded-full bg-slate-400" />
+                            <h3 className="font-black text-sm text-slate-800">أصناف أخرى</h3>
+                            <span className="text-[11px] font-mono font-bold text-slate-600 bg-slate-200 px-2 py-0.5 rounded-full">
+                              {uncatProds.length} صنف
+                            </span>
+                          </div>
+                        </div>
+                        <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-4 2xl:grid-cols-5 gap-3">
+                          {uncatProds.map(renderProductCard)}
+                        </div>
+                      </div>
+                    );
+                  })()}
+                </div>
+              )}
+
+              {filteredProducts.length === 0 && (
+                <div className="text-center py-16 text-slate-400">
+                  <Package size={44} className="mx-auto text-slate-300 mb-2" />
+                  <p className="font-bold text-sm text-slate-600">لا توجد أصناف مطابقة للبحث أو القسم المختار</p>
+                  <button
+                    onClick={() => { setSelectedCategory('all'); setSearchQuery(''); }}
+                    className="mt-3 px-3 py-1.5 bg-amber-500 text-white rounded-xl text-xs font-bold shadow cursor-pointer hover:bg-amber-600"
+                  >
+                    عرض جميع الأصناف
+                  </button>
+                </div>
+              )}
             </div>
           )}
 
@@ -2534,110 +2637,384 @@ export const CashierPOS: React.FC = () => {
           )}
         </div>
 
-        {/* 🧾 RIGHT SIDEBAR: Order Ticket, Cart, Modifiers & Settlement */}
-        <div className="w-80 md:w-96 bg-white border-r border-slate-200 flex flex-col justify-between shrink-0 shadow-lg">
+        {/* 🧾 LEFT 1/3 SIDEBAR: Dedicated Live Customer Orders Stream or Direct Cashier Cart */}
+        <div className="w-80 md:w-96 lg:w-[420px] xl:w-[460px] bg-white border-r border-slate-200 flex flex-col justify-between shrink-0 shadow-lg h-full overflow-hidden">
           
-          {/* Order Header / Configuration */}
-          <div className="p-3 bg-white border-b border-slate-200 space-y-2">
-            {/* 📱 Prominent Customer App Orders Card in Right Sidebar (Cart) */}
-            <button
-              type="button"
-              onClick={() => {
-                setActiveTab('customer_orders');
-                setHasUnviewedCustomerAlert(false);
-              }}
-              className={`w-full p-2.5 rounded-2xl flex items-center justify-between transition-all cursor-pointer shadow-sm text-right ${
-                unhandledCustomerOrdersCount > 0
-                  ? 'bg-gradient-to-r from-red-600 via-orange-600 to-amber-600 text-white ring-2 ring-red-400 animate-pulse'
-                  : customerLiveOrders.length > 0
-                  ? 'bg-orange-50 hover:bg-orange-100 text-orange-900 border-2 border-orange-300'
-                  : 'bg-slate-50 hover:bg-slate-100 text-slate-700 border border-slate-200'
-              }`}
-            >
-              <div className="flex items-center gap-2.5">
-                <div className={`w-8 h-8 rounded-xl flex items-center justify-center shrink-0 ${
-                  unhandledCustomerOrdersCount > 0 
-                    ? 'bg-white text-red-600' 
-                    : customerLiveOrders.length > 0
-                    ? 'bg-orange-500 text-white'
-                    : 'bg-slate-200 text-slate-600'
-                }`}>
-                  <Smartphone size={16} className={unhandledCustomerOrdersCount > 0 ? "animate-bounce" : ""} />
-                </div>
-                <div>
-                  <div className="flex items-center gap-1.5">
-                    <span className="text-xs font-black">طلبات تطبيق الزبائن</span>
-                    {unhandledCustomerOrdersCount > 0 && (
-                      <span className="w-2 h-2 rounded-full bg-yellow-300 animate-ping"></span>
-                    )}
-                  </div>
-                  <span className="text-[10px] block opacity-85 font-medium">
-                    {unhandledCustomerOrdersCount > 0 
-                      ? `⚠️ ${unhandledCustomerOrdersCount} أوردر جديد يحتاج استلام!`
-                      : customerLiveOrders.length > 0
-                      ? `${customerLiveOrders.length} طلبات مسجلة (عرض الشاشة)`
-                      : 'لا توجد طلبات جديدة'}
-                  </span>
-                </div>
-              </div>
-
-              <div className="flex items-center gap-1">
-                <span className={`px-2 py-0.5 rounded-lg text-xs font-mono font-black ${
-                  unhandledCustomerOrdersCount > 0 
-                    ? 'bg-white text-red-600' 
-                    : customerLiveOrders.length > 0
-                    ? 'bg-orange-200 text-orange-950'
-                    : 'bg-slate-200 text-slate-700'
-                }`}>
-                  {customerLiveOrders.length}
-                </span>
-                <ChevronLeft size={15} />
-              </div>
-            </button>
-
-            {/* Order Type Tabs (Dynamically adapted to restaurant services) */}
-            <div className={`grid gap-1 bg-slate-100 p-1 rounded-xl border border-slate-200 ${
-              restaurantServices.tables_enabled && restaurantServices.delivery_enabled
-                ? 'grid-cols-3'
-                : (restaurantServices.tables_enabled || restaurantServices.delivery_enabled)
-                ? 'grid-cols-2'
-                : 'grid-cols-1'
-            }`}>
-              {restaurantServices.tables_enabled && (
-                <button
-                  type="button"
-                  onClick={() => setOrderType('dine_in')}
-                  className={`py-1.5 rounded-lg text-xs font-bold flex items-center justify-center gap-1 transition-all cursor-pointer ${
-                    orderType === 'dine_in' ? 'bg-amber-500 text-white shadow-sm' : 'text-slate-600 hover:text-slate-900'
-                  }`}
-                >
-                  <UtensilsCrossed size={13} />
-                  <span>صالة</span>
-                </button>
-              )}
+          {/* Top Sidebar Switcher: Live Customer Orders Stream vs Direct Cashier Cart */}
+          <div className="p-2 bg-slate-900 text-white flex items-center justify-between gap-1 shrink-0 border-b border-slate-800">
+            <div className="grid grid-cols-2 gap-1.5 w-full">
               <button
                 type="button"
-                onClick={() => setOrderType('takeaway')}
-                className={`py-1.5 rounded-lg text-xs font-bold flex items-center justify-center gap-1 transition-all cursor-pointer ${
-                  orderType === 'takeaway' ? 'bg-amber-500 text-white shadow-sm' : 'text-slate-600 hover:text-slate-900'
+                onClick={() => {
+                  setSidebarView('customer_orders');
+                  setHasUnviewedCustomerAlert(false);
+                }}
+                className={`py-2 px-2.5 rounded-xl font-black text-xs flex items-center justify-center gap-1.5 transition-all cursor-pointer ${
+                  sidebarView === 'customer_orders'
+                    ? 'bg-amber-500 text-slate-950 shadow-md'
+                    : 'bg-slate-800 text-slate-300 hover:bg-slate-700'
                 }`}
               >
-                <ShoppingBag size={13} />
-                <span>سفري</span>
+                <div className="relative">
+                  <Smartphone size={15} />
+                  {unhandledCustomerOrdersCount > 0 && (
+                    <span className="absolute -top-1 -right-1 w-2 h-2 rounded-full bg-red-500 animate-ping" />
+                  )}
+                </div>
+                <span>طلبات الزبائن الحية</span>
+                <span className={`px-1.5 py-0.2 rounded-md font-mono text-[10px] font-bold ${
+                  unhandledCustomerOrdersCount > 0 ? 'bg-red-600 text-white animate-pulse' : 'bg-slate-950 text-amber-400'
+                }`}>
+                  {unhandledCustomerOrdersCount > 0 ? `${unhandledCustomerOrdersCount} جديد` : customerLiveOrders.length}
+                </span>
               </button>
-              {restaurantServices.delivery_enabled && (
-                <button
-                  type="button"
-                  onClick={() => setOrderType('delivery')}
-                  className={`py-1.5 rounded-lg text-xs font-bold flex items-center justify-center gap-1 transition-all cursor-pointer ${
-                    orderType === 'delivery' ? 'bg-amber-500 text-white shadow-sm' : 'text-slate-600 hover:text-slate-900'
-                  }`}
-                >
-                  <Bike size={13} />
-                  <span>دليفري</span>
-                </button>
-              )}
+
+              <button
+                type="button"
+                onClick={() => setSidebarView('cart')}
+                className={`py-2 px-2.5 rounded-xl font-black text-xs flex items-center justify-center gap-1.5 transition-all cursor-pointer ${
+                  sidebarView === 'cart'
+                    ? 'bg-amber-500 text-slate-950 shadow-md'
+                    : 'bg-slate-800 text-slate-300 hover:bg-slate-700'
+                }`}
+              >
+                <ShoppingCart size={15} />
+                <span>سلة البيع المباشر</span>
+                {cart.length > 0 && (
+                  <span className="px-1.5 py-0.2 rounded-md bg-emerald-500 text-white font-mono text-[10px] font-bold">
+                    {cart.length}
+                  </span>
+                )}
+              </button>
             </div>
+          </div>
+
+          {/* VIEW 1: LIVE CUSTOMER ORDERS STREAM (Delivery & Dine-In Tables) */}
+          {sidebarView === 'customer_orders' ? (
+            <div className="flex-1 flex flex-col overflow-hidden bg-slate-50">
+              {/* Live Stream Controls Header */}
+              <div className="p-2.5 bg-white border-b border-slate-200 shrink-0 space-y-2">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <span className="flex h-2.5 w-2.5 relative">
+                      <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+                      <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-emerald-500"></span>
+                    </span>
+                    <span className="text-xs font-black text-slate-800">بث حي وتلقائي لطلبات الزبائن</span>
+                  </div>
+                  <div className="flex items-center gap-1">
+                    <button
+                      type="button"
+                      onClick={() => setIsSoundMuted(!isSoundMuted)}
+                      className={`p-1.5 rounded-lg border text-xs cursor-pointer ${
+                        isSoundMuted ? 'bg-rose-50 text-rose-600 border-rose-200' : 'bg-slate-100 text-slate-700 border-slate-200'
+                      }`}
+                      title={isSoundMuted ? 'الصوت مكتوم' : 'الصوت مفعل عند وصول أوردر جديد'}
+                    >
+                      {isSoundMuted ? <VolumeX size={14} /> : <Volume2 size={14} />}
+                    </button>
+                  </div>
+                </div>
+
+                {/* Filter Tabs: الكل, جديدة, صالة, دليفري, مكتملة */}
+                <div className="flex items-center gap-1 overflow-x-auto no-scrollbar py-0.5">
+                  <button
+                    onClick={() => setCustomerFilter('all')}
+                    className={`px-2.5 py-1 rounded-lg text-[11px] font-bold shrink-0 transition-all cursor-pointer ${
+                      customerFilter === 'all'
+                        ? 'bg-slate-900 text-white shadow-xs'
+                        : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                    }`}
+                  >
+                    الكل ({customerLiveOrders.length})
+                  </button>
+                  <button
+                    onClick={() => setCustomerFilter('new')}
+                    className={`px-2.5 py-1 rounded-lg text-[11px] font-bold shrink-0 transition-all cursor-pointer flex items-center gap-1 ${
+                      customerFilter === 'new'
+                        ? 'bg-red-600 text-white shadow-xs'
+                        : 'bg-red-50 text-red-700 border border-red-200 hover:bg-red-100'
+                    }`}
+                  >
+                    {unhandledCustomerOrdersCount > 0 && <span className="w-1.5 h-1.5 rounded-full bg-white animate-ping" />}
+                    <span>جديدة ({unhandledCustomerOrdersCount})</span>
+                  </button>
+                  <button
+                    onClick={() => setCustomerFilter('dine_in')}
+                    className={`px-2.5 py-1 rounded-lg text-[11px] font-bold shrink-0 transition-all cursor-pointer ${
+                      customerFilter === 'dine_in'
+                        ? 'bg-blue-600 text-white shadow-xs'
+                        : 'bg-blue-50 text-blue-700 border border-blue-200 hover:bg-blue-100'
+                    }`}
+                  >
+                    طاولات ({customerLiveOrders.filter(o => o.order_type === 'dine_in').length})
+                  </button>
+                  <button
+                    onClick={() => setCustomerFilter('delivery')}
+                    className={`px-2.5 py-1 rounded-lg text-[11px] font-bold shrink-0 transition-all cursor-pointer ${
+                      customerFilter === 'delivery'
+                        ? 'bg-purple-600 text-white shadow-xs'
+                        : 'bg-purple-50 text-purple-700 border border-purple-200 hover:bg-purple-100'
+                    }`}
+                  >
+                    دليفري ({customerLiveOrders.filter(o => o.order_type === 'delivery').length})
+                  </button>
+                  <button
+                    onClick={() => setCustomerFilter('completed')}
+                    className={`px-2.5 py-1 rounded-lg text-[11px] font-bold shrink-0 transition-all cursor-pointer ${
+                      customerFilter === 'completed'
+                        ? 'bg-emerald-600 text-white shadow-xs'
+                        : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                    }`}
+                  >
+                    مكتملة ({customerLiveOrders.filter(o => o.status === 'completed').length})
+                  </button>
+                </div>
+              </div>
+
+              {/* Live Orders List Stream */}
+              <div className="flex-1 overflow-y-auto p-2.5 space-y-2.5">
+                {filteredCustomerOrders.length === 0 ? (
+                  <div className="bg-white rounded-2xl border border-slate-200 p-8 text-center space-y-2 my-auto">
+                    <div className="w-12 h-12 rounded-xl bg-orange-50 text-orange-500 mx-auto flex items-center justify-center">
+                      <Smartphone size={24} />
+                    </div>
+                    <h4 className="font-bold text-slate-800 text-xs sm:text-sm">لا توجد طلبات في هذا القسم حالياً</h4>
+                    <p className="text-[11px] text-slate-500 leading-relaxed">
+                      ستظهر طلبات الدليفري وطلبات مسح باركود الطاولات هنا تلقائياً فور إرسالها من الزبائن مع تنبيه صوتي فوري
+                    </p>
+                  </div>
+                ) : (
+                  filteredCustomerOrders.map(ord => {
+                    const isNew = ord.status === 'new';
+                    const isDelivery = ord.order_type === 'delivery';
+                    const formattedDate = new Date(ord.created_at).toLocaleTimeString('ar-EG', {
+                      hour: '2-digit',
+                      minute: '2-digit'
+                    });
+
+                    return (
+                      <div
+                        key={ord.id}
+                        className={`bg-white rounded-2xl p-3 space-y-2.5 shadow-sm border-2 transition-all ${
+                          isNew 
+                            ? 'border-red-500 shadow-red-500/10 ring-1 ring-red-400 animate-pulse' 
+                            : ord.status === 'preparing'
+                            ? 'border-amber-400 bg-amber-50/20'
+                            : 'border-slate-200 hover:border-slate-300'
+                        }`}
+                      >
+                        {/* Card Header */}
+                        <div className="flex items-start justify-between gap-1.5 border-b border-slate-100 pb-2">
+                          <div>
+                            <div className="flex items-center gap-1.5">
+                              <span className="px-2 py-0.5 rounded-lg bg-slate-900 text-white font-mono font-black text-xs">
+                                #{getDisplayOrderNumber(ord)}
+                              </span>
+                              {isDelivery ? (
+                                <span className="px-2 py-0.5 bg-purple-100 text-purple-800 border border-purple-200 rounded-md text-[10px] font-black flex items-center gap-1">
+                                  <Bike size={11} />
+                                  <span>دليفري</span>
+                                </span>
+                              ) : (
+                                <span className="px-2 py-0.5 bg-blue-100 text-blue-800 border border-blue-200 rounded-md text-[10px] font-black flex items-center gap-1">
+                                  <UtensilsCrossed size={11} />
+                                  <span>طاولة #{ord.table_number || 'صالة'}</span>
+                                </span>
+                              )}
+                            </div>
+                            <p className="text-[10px] text-slate-400 font-mono mt-0.5 flex items-center gap-1">
+                              <Clock size={10} />
+                              <span>{formattedDate}</span>
+                              <span>• تطبيق الزبائن</span>
+                            </p>
+                          </div>
+
+                          <div>
+                            {isNew ? (
+                              <span className="px-2 py-0.5 bg-red-500 text-white rounded-lg text-[10px] font-black inline-block animate-pulse">
+                                🔴 جديد ينتظر
+                              </span>
+                            ) : ord.status === 'preparing' ? (
+                              <span className="px-2 py-0.5 bg-amber-500 text-white rounded-lg text-[10px] font-black inline-block">
+                                🍳 قيد التحضير
+                              </span>
+                            ) : ord.status === 'completed' ? (
+                              <span className="px-2 py-0.5 bg-emerald-600 text-white rounded-lg text-[10px] font-black inline-block">
+                                🟢 مكتمل ومسلم
+                              </span>
+                            ) : (
+                              <span className="px-2 py-0.5 bg-slate-600 text-white rounded-lg text-[10px] font-black inline-block">
+                                ⚫ ملغي
+                              </span>
+                            )}
+                          </div>
+                        </div>
+
+                        {/* Delivery info if delivery */}
+                        {isDelivery && (
+                          <div className="bg-purple-50/70 p-2 rounded-xl border border-purple-100 text-[11px] space-y-1 text-purple-950">
+                            <div className="flex items-center justify-between">
+                              <p className="font-bold flex items-center gap-1">
+                                <User size={11} className="text-purple-700" />
+                                <span>{ord.customer_name || 'عميل دليفري'}</span>
+                              </p>
+                              {ord.customer_phone && (
+                                <a href={`tel:${ord.customer_phone}`} className="font-mono text-purple-800 flex items-center gap-1 underline font-bold">
+                                  <Phone size={11} className="text-purple-700" />
+                                  <span>{ord.customer_phone}</span>
+                                </a>
+                              )}
+                            </div>
+                            {ord.delivery_address && (
+                              <p className="text-[10px] text-purple-900 flex items-start gap-1 leading-tight">
+                                <MapPin size={11} className="text-purple-700 shrink-0 mt-0.5" />
+                                <span>{ord.delivery_address}</span>
+                              </p>
+                            )}
+                            {ord.notes && (
+                              <p className="text-[10px] text-purple-800 bg-white/70 p-1 rounded border border-purple-200/50">
+                                ملاحظة: {ord.notes}
+                              </p>
+                            )}
+                          </div>
+                        )}
+
+                        {/* Items List */}
+                        <div className="bg-slate-50 p-2 rounded-xl border border-slate-200 text-xs space-y-1 max-h-36 overflow-y-auto">
+                          {ord.items.map((item, idx) => (
+                            <div key={idx} className="flex items-start justify-between text-slate-800 border-b border-slate-100 pb-0.5 last:border-0 last:pb-0">
+                              <div>
+                                <span className="font-bold text-[11px]">{item.quantity}x {item.name}</span>
+                                {item.options && item.options.length > 0 && (
+                                  <div className="text-[9px] text-slate-500">
+                                    {item.options.map((o: any, oi: number) => (
+                                      <span key={oi} className="ml-1">+{o.name}</span>
+                                    ))}
+                                  </div>
+                                )}
+                                {item.notes && (
+                                  <div className="text-[9px] text-amber-700">ملاحظة: {item.notes}</div>
+                                )}
+                              </div>
+                              <span className="font-mono font-bold text-slate-600 text-[11px] shrink-0">
+                                {((item.price || 0) * (item.quantity || 1)).toFixed(2)} ج.م
+                              </span>
+                            </div>
+                          ))}
+                        </div>
+
+                        {/* Total Price & Payment Status */}
+                        <div className="flex items-center justify-between pt-1 border-t border-slate-100">
+                          <span className="text-[11px] text-slate-500">الإجمالي:</span>
+                          <span className="font-mono font-black text-emerald-600 text-sm">
+                            {ord.total_price.toFixed(2)} ج.م
+                          </span>
+                          <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-slate-100 text-slate-600">
+                            {ord.payment_status === 'paid' ? 'مدفوع مسبقاً' : 'دفع عند الاستلام'}
+                          </span>
+                        </div>
+
+                        {/* Quick Actions */}
+                        <div className="grid grid-cols-2 gap-1.5 pt-1 border-t border-slate-100">
+                          {isNew ? (
+                            <button
+                              onClick={() => handleAcceptCustomerOrder(ord)}
+                              className="col-span-2 py-2 bg-red-600 hover:bg-red-700 text-white rounded-xl text-xs font-black flex items-center justify-center gap-1 shadow-md shadow-red-500/20 cursor-pointer transition-all"
+                            >
+                              <CheckCircle2 size={14} />
+                              <span>⚡ قبول وتحضير الطلب</span>
+                            </button>
+                          ) : ord.status === 'preparing' ? (
+                            <button
+                              onClick={() => handleCompleteCustomerOrder(ord)}
+                              className="col-span-2 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-black flex items-center justify-center gap-1 shadow cursor-pointer transition-all"
+                            >
+                              <Check size={14} />
+                              <span>✅ إنهاء وتسليم الطلب</span>
+                            </button>
+                          ) : null}
+
+                          <button
+                            onClick={() => handleLoadCustomerOrderToCart(ord)}
+                            className="py-1.5 bg-amber-500 hover:bg-amber-600 text-white rounded-xl text-xs font-bold flex items-center justify-center gap-1 cursor-pointer transition-all shadow-xs"
+                          >
+                            <ShoppingCart size={13} />
+                            <span>تحميل للكاشير</span>
+                          </button>
+
+                          <button
+                            onClick={() => handlePrintCustomerKOT(ord)}
+                            className="py-1.5 bg-slate-800 hover:bg-slate-900 text-white rounded-xl text-xs font-bold flex items-center justify-center gap-1 cursor-pointer transition-all shadow-xs"
+                          >
+                            <Printer size={13} />
+                            <span>طباعة بون</span>
+                          </button>
+
+                          {ord.status !== 'cancelled' && (
+                            <button
+                              onClick={() => handleCancelCustomerOrder(ord)}
+                              className="col-span-2 py-1 bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 rounded-xl text-[11px] font-bold flex items-center justify-center gap-1 cursor-pointer transition-all"
+                            >
+                              <X size={12} />
+                              <span>إلغاء الطلب</span>
+                            </button>
+                          )}
+                        </div>
+                      </div>
+                    );
+                  })
+                )}
+              </div>
+            </div>
+          ) : (
+            /* VIEW 2: DIRECT CASHIER CART & SETTLEMENT */
+            <div className="flex-1 flex flex-col justify-between overflow-hidden">
+              {/* Order Header / Configuration */}
+              <div className="p-3 bg-white border-b border-slate-200 space-y-2">
+                {/* Order Type Tabs (Dynamically adapted to restaurant services) */}
+                <div className={`grid gap-1 bg-slate-100 p-1 rounded-xl border border-slate-200 ${
+                  restaurantServices.tables_enabled && restaurantServices.delivery_enabled
+                    ? 'grid-cols-3'
+                    : (restaurantServices.tables_enabled || restaurantServices.delivery_enabled)
+                    ? 'grid-cols-2'
+                    : 'grid-cols-1'
+                }`}>
+                  {restaurantServices.tables_enabled && (
+                    <button
+                      type="button"
+                      onClick={() => setOrderType('dine_in')}
+                      className={`py-1.5 rounded-lg text-xs font-bold flex items-center justify-center gap-1 transition-all cursor-pointer ${
+                        orderType === 'dine_in' ? 'bg-amber-500 text-white shadow-sm' : 'text-slate-600 hover:text-slate-900'
+                      }`}
+                    >
+                      <UtensilsCrossed size={13} />
+                      <span>صالة</span>
+                    </button>
+                  )}
+                  <button
+                    type="button"
+                    onClick={() => setOrderType('takeaway')}
+                    className={`py-1.5 rounded-lg text-xs font-bold flex items-center justify-center gap-1 transition-all cursor-pointer ${
+                      orderType === 'takeaway' ? 'bg-amber-500 text-white shadow-sm' : 'text-slate-600 hover:text-slate-900'
+                    }`}
+                  >
+                    <ShoppingBag size={13} />
+                    <span>سفري</span>
+                  </button>
+                  {restaurantServices.delivery_enabled && (
+                    <button
+                      type="button"
+                      onClick={() => setOrderType('delivery')}
+                      className={`py-1.5 rounded-lg text-xs font-bold flex items-center justify-center gap-1 transition-all cursor-pointer ${
+                        orderType === 'delivery' ? 'bg-amber-500 text-white shadow-sm' : 'text-slate-600 hover:text-slate-900'
+                      }`}
+                    >
+                      <Bike size={13} />
+                      <span>دليفري</span>
+                    </button>
+                  )}
+                </div>
 
             {/* Conditional Sub-info: Table Picker / Customer Info */}
             {orderType === 'dine_in' ? (
@@ -2970,7 +3347,9 @@ export const CashierPOS: React.FC = () => {
             </div>
           </div>
         </div>
-      </div>
+      )}
+    </div>
+  </div>
 
       {/* 🛠️ MODALS INTEGRATION */}
 
