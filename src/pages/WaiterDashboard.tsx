@@ -24,7 +24,7 @@ import {
   ExternalLink
 } from 'lucide-react';
 import { formatCurrency, cn, parseOrderDeliveryInfo, cleanItemNotes } from '../lib/utils';
-import { getDisplayOrderNumber } from '../lib/ordersService';
+import { getDisplayOrderNumber, updateLiveOrderStatus } from '../lib/ordersService';
 
 export default function WaiterDashboard() {
   const { profile, signOut, loading: authLoading } = useAuth();
@@ -250,11 +250,13 @@ export default function WaiterDashboard() {
     }
   };
 
-  const updateStatus = async (orderId: string, status: Order['status']) => {
+  const updateStatus = async (orderId: string, status: 'new' | 'preparing' | 'ready' | 'delivered' | 'completed' | 'cancelled') => {
     const updateData: any = { status };
-    if (status === 'delivered') {
+    if (status === 'delivered' || status === 'completed') {
       updateData.waiter_id = profile?.id;
       updateData.delivered_at = new Date().toISOString();
+    } else if (status === 'ready') {
+      updateData.ready_at = new Date().toISOString();
     } else if (status === 'preparing') {
       updateData.preparing_at = new Date().toISOString();
     } else if (status === 'cancelled') {
@@ -266,6 +268,11 @@ export default function WaiterDashboard() {
       .from('orders')
       .update(updateData)
       .eq('id', orderId);
+
+    const restId = profile?.restaurant_id;
+    if (restId) {
+      updateLiveOrderStatus(orderId, restId, status).catch(() => {});
+    }
 
     if (status === 'cancelled') {
       setCancellingOrder(null);
@@ -385,23 +392,27 @@ export default function WaiterDashboard() {
   const statusColors = {
     new: 'border-blue-500 bg-blue-50 text-blue-700',
     preparing: 'border-orange-500 bg-orange-50 text-orange-700',
+    ready: 'border-amber-500 bg-amber-50 text-amber-700',
     delivered: 'border-green-500 bg-green-50 text-green-700',
+    completed: 'border-green-500 bg-green-50 text-green-700',
     cancelled: 'border-gray-500 bg-gray-50 text-gray-700'
   };
 
   const statusLabels = {
     new: 'جديد',
     preparing: 'قيد التحضير',
+    ready: 'جاهز للتسليم',
     delivered: 'تم التوصيل',
+    completed: 'تم التوصيل',
     cancelled: 'ملغي'
   };
 
   const filteredOrders = orders.filter((order) => {
     if (filterTab === 'active') {
-      return order.status === 'new' || order.status === 'preparing';
+      return order.status === 'new' || order.status === 'preparing' || order.status === 'ready';
     }
     if (filterTab === 'completed') {
-      return order.status === 'delivered';
+      return order.status === 'delivered' || order.status === 'completed';
     }
     return true; // 'all'
   });
@@ -808,15 +819,33 @@ export default function WaiterDashboard() {
                             </button>
                         )}
                         {order.status === 'preparing' && (
+                          <div className="col-span-2 grid grid-cols-2 gap-2">
+                            <button 
+                              onClick={() => updateStatus(order.id, 'ready')}
+                              className="bg-amber-500 text-white py-3 rounded-xl font-bold flex items-center justify-center gap-1.5 hover:bg-amber-600 transition-colors shadow-md"
+                            >
+                              <CheckCircle size={16} />
+                              جاهز للتسليم
+                            </button>
+                            <button 
+                              onClick={() => updateStatus(order.id, 'delivered')}
+                              className="bg-green-600 text-white py-3 rounded-xl font-bold flex items-center justify-center gap-1.5 hover:bg-green-700 transition-colors shadow-md"
+                            >
+                              <CheckCircle size={16} />
+                              {delivery.isDelivery ? 'تم التسليم' : 'تم التوصيل'}
+                            </button>
+                          </div>
+                        )}
+                        {order.status === 'ready' && (
                           <button 
                             onClick={() => updateStatus(order.id, 'delivered')}
                             className="col-span-2 bg-green-600 text-white py-3 rounded-xl font-bold flex items-center justify-center gap-2 hover:bg-green-700 transition-colors shadow-md"
                           >
                             <CheckCircle size={18} />
-                            {delivery.isDelivery ? 'جاهز / تم التسليم للدليفري' : 'تم التوصيل للطاولة'}
+                            {delivery.isDelivery ? 'تم تسليم الدليفري ✅' : 'تم التوصيل للطاولة ✅'}
                           </button>
                         )}
-                        {['new', 'preparing'].includes(order.status) && (
+                        {['new', 'preparing', 'ready'].includes(order.status) && (
                           <button 
                             onClick={() => setCancellingOrder(order.id)}
                             className="col-span-2 mt-2 bg-red-50 text-red-600 py-3 rounded-xl font-bold flex items-center justify-center gap-2 hover:bg-red-100 transition-colors"
@@ -824,9 +853,9 @@ export default function WaiterDashboard() {
                             إلغاء الطلب
                           </button>
                         )}
-                        {(order.status === 'delivered' || order.status === 'cancelled') && (
+                        {(order.status === 'delivered' || order.status === 'completed' || order.status === 'cancelled') && (
                            <div className="col-span-2 text-center py-2 font-bold uppercase tracking-widest text-sm opacity-50">
-                             {statusLabels[order.status as keyof typeof statusLabels]}
+                             {statusLabels[order.status as keyof typeof statusLabels] || 'تم'}
                            </div>
                         )}
                       </div>

@@ -18,7 +18,7 @@ export interface LiveOrder {
   delivery_notes?: string;
   notes?: string;
   total_price: number;
-  status: 'new' | 'preparing' | 'completed' | 'cancelled';
+  status: 'new' | 'preparing' | 'ready' | 'delivered' | 'completed' | 'cancelled';
   payment_status: 'paid' | 'unpaid';
   payment_method?: string;
   items: Array<{
@@ -220,7 +220,7 @@ export async function fetchLiveOrders(restaurantId: string): Promise<LiveOrder[]
             delivery_address: addrMatch ? addrMatch[1].trim() : undefined,
             notes: firstNote,
             total_price: Number(dbo.total_price || 0),
-            status: dbo.status || 'new',
+            status: dbo.status === 'delivered' ? 'completed' : (dbo.status || 'new'),
             payment_status: 'unpaid',
             items: (dbo.order_items || []).map((it: any) => ({
               id: it.product_id,
@@ -269,7 +269,7 @@ export async function fetchLiveOrders(restaurantId: string): Promise<LiveOrder[]
 export async function updateLiveOrderStatus(
   orderId: string | number,
   restaurantId: string,
-  status: 'new' | 'preparing' | 'completed' | 'cancelled',
+  status: 'new' | 'preparing' | 'ready' | 'delivered' | 'completed' | 'cancelled',
   paymentStatus?: 'paid' | 'unpaid'
 ): Promise<void> {
   // 1. Update local cache
@@ -289,10 +289,11 @@ export async function updateLiveOrderStatus(
 
   // 2. Update Supabase directly
   try {
-    const dbStatus = status === 'completed' ? 'delivered' : status;
+    const dbStatus = (status === 'completed' || status === 'delivered') ? 'delivered' : status;
     const updatePayload: any = { status: dbStatus };
     if (status === 'preparing') updatePayload.preparing_at = new Date().toISOString();
-    if (status === 'completed') updatePayload.delivered_at = new Date().toISOString();
+    if (status === 'ready') updatePayload.ready_at = new Date().toISOString();
+    if (status === 'completed' || status === 'delivered') updatePayload.delivered_at = new Date().toISOString();
     if (status === 'cancelled') updatePayload.cancelled_at = new Date().toISOString();
 
     const numId = parseInt(String(orderId), 10);
@@ -435,7 +436,7 @@ export interface CustomerSavedOrder {
     options?: any;
   }>;
   total_price: number;
-  status: 'new' | 'preparing' | 'completed' | 'cancelled';
+  status: 'new' | 'preparing' | 'ready' | 'delivered' | 'completed' | 'cancelled';
   payment_status: 'paid' | 'unpaid';
   is_prepaid?: boolean;
   created_at: string;

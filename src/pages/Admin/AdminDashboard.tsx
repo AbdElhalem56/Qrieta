@@ -1697,11 +1697,13 @@ export default function AdminDashboard() {
                                   "px-2.5 py-1 rounded-full text-[10px] font-black",
                                   order.status === 'new' ? "bg-amber-100 text-amber-800 animate-pulse" :
                                   order.status === 'preparing' ? "bg-blue-100 text-blue-800" :
-                                  order.status === 'completed' ? "bg-emerald-100 text-emerald-800" : "bg-gray-100 text-gray-600"
+                                  order.status === 'ready' ? "bg-purple-100 text-purple-800 animate-pulse" :
+                                  (order.status === 'completed' || order.status === 'delivered') ? "bg-emerald-100 text-emerald-800" : "bg-gray-100 text-gray-600"
                                 )}>
                                   {order.status === 'new' ? 'جديد' :
                                    order.status === 'preparing' ? 'جاري التحضير' :
-                                   order.status === 'completed' ? 'تم التسليم' : 'ملغي'}
+                                   order.status === 'ready' ? 'جاهز للتسليم' :
+                                   (order.status === 'completed' || order.status === 'delivered') ? 'تم التسليم' : 'ملغي'}
                                 </span>
 
                                 {order.status === 'new' && (
@@ -1715,6 +1717,25 @@ export default function AdminDashboard() {
                                 )}
 
                                 {order.status === 'preparing' && (
+                                  <div className="flex items-center gap-1">
+                                    <button
+                                      onClick={() => handleAdminUpdateOrderStatus(order.id, 'ready')}
+                                      disabled={isUpdatingOrderStatus === String(order.id)}
+                                      className="px-2 py-1 bg-amber-500 hover:bg-amber-600 text-white rounded-lg text-[11px] font-bold transition-all shadow-sm cursor-pointer"
+                                    >
+                                      جاهز للتسليم
+                                    </button>
+                                    <button
+                                      onClick={() => handleAdminUpdateOrderStatus(order.id, 'completed')}
+                                      disabled={isUpdatingOrderStatus === String(order.id)}
+                                      className="px-2 py-1 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-[11px] font-bold transition-all shadow-sm cursor-pointer"
+                                    >
+                                      تسليم
+                                    </button>
+                                  </div>
+                                )}
+
+                                {order.status === 'ready' && (
                                   <button
                                     onClick={() => handleAdminUpdateOrderStatus(order.id, 'completed')}
                                     disabled={isUpdatingOrderStatus === String(order.id)}
@@ -1724,7 +1745,7 @@ export default function AdminDashboard() {
                                   </button>
                                 )}
 
-                                {order.status !== 'cancelled' && order.status !== 'completed' && (
+                                {order.status !== 'cancelled' && order.status !== 'completed' && order.status !== 'delivered' && (
                                   <button
                                     onClick={() => {
                                       if (confirm('هل أنت متأكد من إلغاء هذا الطلب؟')) {

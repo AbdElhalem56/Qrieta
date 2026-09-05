@@ -716,7 +716,7 @@ export const CashierPOS: React.FC = () => {
       if (customerFilter === 'new') return ord.status === 'new';
       if (customerFilter === 'dine_in') return ord.order_type === 'dine_in';
       if (customerFilter === 'delivery') return ord.order_type === 'delivery';
-      if (customerFilter === 'completed') return ord.status === 'completed';
+      if (customerFilter === 'completed') return ord.status === 'completed' || ord.status === 'delivered';
       return true;
     });
   }, [customerLiveOrders, customerFilter]);
@@ -729,6 +729,16 @@ export const CashierPOS: React.FC = () => {
     
     // Auto prompt to print KOT
     handlePrintCustomerKOT(order);
+  };
+
+  const handleSetOrderReady = async (order: LiveOrder) => {
+    if (!selectedRestaurant) return;
+    try {
+      await updateLiveOrderStatus(order.id, selectedRestaurant.id, 'ready');
+      setCustomerLiveOrders(prev => prev.map(o => o.id === order.id ? { ...o, status: 'ready' } : o));
+    } catch (err: any) {
+      console.warn('Error marking order ready:', err);
+    }
   };
 
   const handlePrintCustomerKOT = (order: LiveOrder) => {
@@ -2416,7 +2426,7 @@ export const CashierPOS: React.FC = () => {
                       : 'bg-white text-slate-700 border border-slate-200 hover:bg-slate-50'
                   }`}
                 >
-                  مكتملة ومسلمة ({customerLiveOrders.filter(o => o.status === 'completed').length})
+                  مكتملة ومسلمة ({customerLiveOrders.filter(o => o.status === 'completed' || o.status === 'delivered').length})
                 </button>
               </div>
 
@@ -2438,7 +2448,7 @@ export const CashierPOS: React.FC = () => {
                       if (customerFilter === 'new') return ord.status === 'new';
                       if (customerFilter === 'dine_in') return ord.order_type === 'dine_in';
                       if (customerFilter === 'delivery') return ord.order_type === 'delivery';
-                      if (customerFilter === 'completed') return ord.status === 'completed';
+                      if (customerFilter === 'completed') return ord.status === 'completed' || ord.status === 'delivered';
                       return true;
                     })
                     .map(ord => {
@@ -2457,6 +2467,8 @@ export const CashierPOS: React.FC = () => {
                               ? 'border-red-500 shadow-red-500/10 animate-in fade-in zoom-in-95' 
                               : ord.status === 'preparing'
                               ? 'border-blue-400'
+                              : ord.status === 'ready'
+                              ? 'border-amber-400 shadow-amber-500/10'
                               : 'border-slate-200 hover:border-slate-300'
                           }`}
                         >
@@ -2495,13 +2507,21 @@ export const CashierPOS: React.FC = () => {
                                 <span className="px-2.5 py-1 bg-blue-500 text-white rounded-xl text-[11px] font-black inline-block">
                                   🔵 قيد التحضير
                                 </span>
-                              ) : ord.status === 'completed' ? (
+                              ) : ord.status === 'ready' ? (
+                                <span className="px-2.5 py-1 bg-amber-500 text-white rounded-xl text-[11px] font-black inline-block animate-pulse">
+                                  🔔 جاهز للتسليم
+                                </span>
+                              ) : (ord.status === 'completed' || ord.status === 'delivered') ? (
                                 <span className="px-2.5 py-1 bg-emerald-600 text-white rounded-xl text-[11px] font-black inline-block">
                                   🟢 مكتمل ومستلم
                                 </span>
-                              ) : (
+                              ) : ord.status === 'cancelled' ? (
                                 <span className="px-2.5 py-1 bg-slate-600 text-white rounded-xl text-[11px] font-black inline-block">
                                   ⚫ ملغي
+                                </span>
+                              ) : (
+                                <span className="px-2.5 py-1 bg-slate-400 text-white rounded-xl text-[11px] font-black inline-block">
+                                  {ord.status}
                                 </span>
                               )}
                             </div>
@@ -2592,12 +2612,30 @@ export const CashierPOS: React.FC = () => {
                                 <span>قبول وتحضير</span>
                               </button>
                             ) : ord.status === 'preparing' ? (
+                              <div className="flex items-center gap-1">
+                                <button
+                                  onClick={() => handleSetOrderReady(ord)}
+                                  className="px-2 py-1.5 bg-amber-500 hover:bg-amber-600 text-white rounded-xl text-xs font-bold flex items-center justify-center gap-1 transition-all cursor-pointer shadow-sm"
+                                  title="تحديث حالة الطلب إلى جاهز للتسليم"
+                                >
+                                  <Bell size={13} />
+                                  <span>جاهز للتسليم</span>
+                                </button>
+                                <button
+                                  onClick={() => handleCompleteCustomerOrder(ord)}
+                                  className="px-2 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold flex items-center justify-center gap-1 transition-all cursor-pointer shadow-sm"
+                                >
+                                  <Check size={13} />
+                                  <span>تسليم</span>
+                                </button>
+                              </div>
+                            ) : ord.status === 'ready' ? (
                               <button
                                 onClick={() => handleCompleteCustomerOrder(ord)}
                                 className="px-2.5 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold flex items-center justify-center gap-1 transition-all cursor-pointer shadow-sm"
                               >
                                 <Check size={13} />
-                                <span>إنهاء وتسليم</span>
+                                <span>إنهاء وتسليم الطلب</span>
                               </button>
                             ) : (
                               <button
@@ -2800,6 +2838,8 @@ export const CashierPOS: React.FC = () => {
                             ? 'border-red-500 shadow-red-500/10 ring-1 ring-red-400 animate-pulse' 
                             : ord.status === 'preparing'
                             ? 'border-amber-400 bg-amber-50/20'
+                            : ord.status === 'ready'
+                            ? 'border-blue-400 bg-blue-50/20'
                             : 'border-slate-200 hover:border-slate-300'
                         }`}
                       >
@@ -2838,13 +2878,21 @@ export const CashierPOS: React.FC = () => {
                               <span className="px-2 py-0.5 bg-amber-500 text-white rounded-lg text-[10px] font-black inline-block">
                                 🍳 قيد التحضير
                               </span>
-                            ) : ord.status === 'completed' ? (
+                            ) : ord.status === 'ready' ? (
+                              <span className="px-2 py-0.5 bg-blue-600 text-white rounded-lg text-[10px] font-black inline-block animate-pulse">
+                                🔔 جاهز للتسليم
+                              </span>
+                            ) : (ord.status === 'completed' || ord.status === 'delivered') ? (
                               <span className="px-2 py-0.5 bg-emerald-600 text-white rounded-lg text-[10px] font-black inline-block">
                                 🟢 مكتمل ومسلم
                               </span>
-                            ) : (
+                            ) : ord.status === 'cancelled' ? (
                               <span className="px-2 py-0.5 bg-slate-600 text-white rounded-lg text-[10px] font-black inline-block">
                                 ⚫ ملغي
+                              </span>
+                            ) : (
+                              <span className="px-2 py-0.5 bg-slate-500 text-white rounded-lg text-[10px] font-black inline-block">
+                                {ord.status}
                               </span>
                             )}
                           </div>
@@ -2938,6 +2986,24 @@ export const CashierPOS: React.FC = () => {
                               <span>⚡ قبول وتحضير الطلب</span>
                             </button>
                           ) : ord.status === 'preparing' ? (
+                            <div className="col-span-2 grid grid-cols-2 gap-1.5">
+                              <button
+                                onClick={() => handleSetOrderReady(ord)}
+                                className="py-2 bg-amber-500 hover:bg-amber-600 text-white rounded-xl text-xs font-black flex items-center justify-center gap-1 shadow-sm cursor-pointer transition-all"
+                                title="إشعار بأن الطلب جاهز للتسليم للزبون"
+                              >
+                                <Bell size={13} />
+                                <span>🛎️ جاهز للتسليم</span>
+                              </button>
+                              <button
+                                onClick={() => handleCompleteCustomerOrder(ord)}
+                                className="py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-black flex items-center justify-center gap-1 shadow cursor-pointer transition-all"
+                              >
+                                <Check size={13} />
+                                <span>✅ إنهاء وتسليم</span>
+                              </button>
+                            </div>
+                          ) : ord.status === 'ready' ? (
                             <button
                               onClick={() => handleCompleteCustomerOrder(ord)}
                               className="col-span-2 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-black flex items-center justify-center gap-1 shadow cursor-pointer transition-all"

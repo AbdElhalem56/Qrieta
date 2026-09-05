@@ -213,7 +213,7 @@ export default function CustomerApp() {
   }, [restaurant?.id, table?.id, table?.table_number, tableId, deliveryInfo.phone, deliveryInfo.email]);
 
   const activeCustomerOrders = useMemo(() => {
-    return customerOrders.filter(o => o.status === 'new' || o.status === 'preparing');
+    return customerOrders.filter(o => o.status === 'new' || o.status === 'preparing' || o.status === 'ready');
   }, [customerOrders]);
 
   const latestActiveOrder = activeCustomerOrders[0] || null;
@@ -2637,7 +2637,7 @@ export default function CustomerApp() {
                     const isNew = ord.status === 'new';
                     const isPreparing = ord.status === 'preparing';
                     const isReady = ord.status === 'ready';
-                    const isCompleted = ord.status === 'completed';
+                    const isCompleted = ord.status === 'completed' || ord.status === 'delivered';
                     const isCancelled = ord.status === 'cancelled';
 
                     // Progress step (0=new, 1=preparing, 2=ready/delivering, 3=completed)

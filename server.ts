@@ -770,7 +770,7 @@ async function startServer() {
               delivery_address: addrMatch ? addrMatch[1].trim() : undefined,
               notes: firstNote,
               total_price: Number(dbo.total_price || 0),
-              status: dbo.status || 'new',
+              status: dbo.status === 'delivered' ? 'completed' : (dbo.status || 'new'),
               payment_status: 'unpaid',
               items: (dbo.order_items || []).map((it: any) => ({
                 id: it.product_id,
@@ -949,9 +949,10 @@ async function startServer() {
             ? createClient(supabaseUrl, serviceRoleKey)
             : createClient(supabaseUrl, anonKey || "");
 
-          const dbStatus = status === 'completed' ? 'delivered' : status;
+          const dbStatus = (status === 'completed' || status === 'delivered') ? 'delivered' : status;
           const updatePayload: any = { status: dbStatus };
           if (status === 'preparing') updatePayload.preparing_at = new Date().toISOString();
+          if (status === 'ready') updatePayload.ready_at = new Date().toISOString();
           if (status === 'completed' || status === 'delivered') updatePayload.delivered_at = new Date().toISOString();
           if (status === 'cancelled') updatePayload.cancelled_at = new Date().toISOString();
 
