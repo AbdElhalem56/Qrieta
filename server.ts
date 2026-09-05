@@ -738,12 +738,21 @@ async function startServer() {
           // First add existing in-memory live orders
           orders.forEach((o: any) => mergedMap.set(String(o.id), o));
 
+          const STATUS_RANK: Record<string, number> = {
+            new: 1,
+            preparing: 2,
+            ready: 3,
+            delivered: 4,
+            completed: 4,
+            cancelled: 5
+          };
+
           // Then map dbOrders
           dbOrders.forEach((dbo: any) => {
             const firstNote = dbo.order_items?.[0]?.notes || '';
             const isCustomer = firstNote.includes('[طلب زبون') || (!dbo.waiter_id && (dbo.status === 'new' || dbo.status === 'preparing'));
             const numMatch = firstNote.match(/#(\d+)/);
-            const dailyNum = numMatch ? parseInt(numMatch[1], 10) : dbo.id;
+            const dailyNum = numMatch ? parseInt(numMatch[1], 10) : (dbo.daily_order_number || dbo.id);
 
             let orderType = 'dine_in';
             if (firstNote.includes('دليفري')) orderType = 'delivery';
@@ -771,7 +780,7 @@ async function startServer() {
               notes: firstNote,
               total_price: Number(dbo.total_price || 0),
               status: dbo.status === 'delivered' ? 'completed' : (dbo.status || 'new'),
-              payment_status: 'unpaid',
+              payment_status: dbo.payment_status || 'unpaid',
               items: (dbo.order_items || []).map((it: any) => ({
                 id: it.product_id,
                 name: it.products?.name_ar || it.products?.name_en || 'صنف',
@@ -783,20 +792,53 @@ async function startServer() {
               created_at: dbo.created_at
             };
 
-            const existing = mergedMap.get(String(dbo.id));
+            const existing = mergedMap.get(String(dbo.id)) || 
+                             Array.from(mergedMap.values()).find(
+                               (o: any) => o.daily_order_number && Number(o.daily_order_number) === Number(dailyNum)
+                             );
+
             if (!existing) {
               mergedMap.set(String(dbo.id), mappedOrder);
             } else {
-              // Merge status if db has newer status
-              mergedMap.set(String(dbo.id), {
+              // Merge status: never downgrade from ready or preparing back to new!
+              const existingRank = STATUS_RANK[existing.status] || 1;
+              const dbNormStatus = dbo.status === 'delivered' ? 'completed' : (dbo.status || 'new');
+              const dbRank = STATUS_RANK[dbNormStatus] || 1;
+
+              const mergedStatus = existingRank >= dbRank ? existing.status : dbNormStatus;
+              const mergedPayment = (existing.payment_status === 'paid' || dbo.payment_status === 'paid') ? 'paid' : 'unpaid';
+
+              const mergedObj = {
                 ...mappedOrder,
                 ...existing,
-                status: dbo.status || existing.status
-              });
+                status: mergedStatus,
+                payment_status: mergedPayment
+              };
+
+              mergedMap.set(String(dbo.id), mergedObj);
+              if (existing.id && String(existing.id) !== String(dbo.id)) {
+                mergedMap.set(String(existing.id), mergedObj);
+              }
             }
           });
 
-          orders = Array.from(mergedMap.values()).sort(
+          // Deduplicate by daily_order_number or id
+          const uniqueOrdersMap = new Map<string, any>();
+          Array.from(mergedMap.values()).forEach((ord: any) => {
+            const key = ord.daily_order_number ? `seq-${ord.daily_order_number}` : `id-${ord.id}`;
+            if (!uniqueOrdersMap.has(key)) {
+              uniqueOrdersMap.set(key, ord);
+            } else {
+              const existingOrd = uniqueOrdersMap.get(key);
+              const exRank = STATUS_RANK[existingOrd.status] || 1;
+              const ordRank = STATUS_RANK[ord.status] || 1;
+              if (ordRank > exRank) {
+                uniqueOrdersMap.set(key, ord);
+              }
+            }
+          });
+
+          orders = Array.from(uniqueOrdersMap.values()).sort(
             (a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
           );
           liveOrdersStore[restaurantId] = orders;
@@ -929,16 +971,33 @@ async function startServer() {
     }
 
     try {
-      const orders = liveOrdersStore[restaurant_id] || [];
-      const order = orders.find((o: any) => String(o.id) === String(orderId));
+      if (!liveOrdersStore[restaurant_id]) {
+        liveOrdersStore[restaurant_id] = [];
+      }
+      const orders = liveOrdersStore[restaurant_id];
+      const order = orders.find((o: any) => 
+        String(o.id) === String(orderId) || 
+        (o.daily_order_number && String(o.daily_order_number) === String(orderId))
+      );
+
       if (order) {
         if (status) order.status = status;
         if (payment_status) order.payment_status = payment_status;
         order.updated_at = new Date().toISOString();
         persistLiveOrders();
+      } else {
+        // Record status change in memory so polling retains it
+        orders.unshift({
+          id: orderId,
+          restaurant_id,
+          status: status || 'new',
+          payment_status: payment_status || 'unpaid',
+          updated_at: new Date().toISOString()
+        });
+        persistLiveOrders();
       }
 
-      // Also update Supabase orders table
+      // Also update Supabase orders table safely (no non-existent columns)
       const supabaseUrl = process.env.VITE_SUPABASE_URL || process.env.SUPABASE_URL;
       const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
       const anonKey = process.env.VITE_SUPABASE_ANON_KEY || process.env.SUPABASE_ANON_KEY;
@@ -949,26 +1008,27 @@ async function startServer() {
             ? createClient(supabaseUrl, serviceRoleKey)
             : createClient(supabaseUrl, anonKey || "");
 
-          const dbStatus = (status === 'completed' || status === 'delivered') ? 'delivered' : status;
+          // Supabase check constraint only allows ('new', 'preparing', 'delivered', 'cancelled')
+          const dbStatus = (status === 'completed' || status === 'delivered') 
+            ? 'delivered' 
+            : (status === 'ready' ? 'preparing' : status);
+
           const updatePayload: any = { status: dbStatus };
           if (status === 'preparing') updatePayload.preparing_at = new Date().toISOString();
-          if (status === 'ready') updatePayload.ready_at = new Date().toISOString();
           if (status === 'completed' || status === 'delivered') updatePayload.delivered_at = new Date().toISOString();
-          if (status === 'cancelled') updatePayload.cancelled_at = new Date().toISOString();
 
           const numId = parseInt(orderId, 10);
-          if (!isNaN(numId)) {
+          if (!isNaN(numId) && String(numId) === String(orderId).trim()) {
             await client.from("orders").update(updatePayload).eq("id", numId);
-          } else {
-            await client.from("orders").update(updatePayload).eq("id", orderId);
           }
         } catch (dbErr) {
           console.warn("DB status update error:", dbErr);
         }
       }
 
-      res.status(200).json({ success: true, order });
+      res.status(200).json({ success: true, orderId, status });
     } catch (err: any) {
+      console.error("Order status update error:", err);
       res.status(500).json({ error: err.message || "فشل في تحديث حالة الطلب" });
     }
   });

@@ -249,11 +249,32 @@ export async function fetchLiveOrders(restaurantId: string): Promise<LiveOrder[]
       return localList;
     }
 
+    const STATUS_RANK: Record<string, number> = {
+      new: 1,
+      preparing: 2,
+      ready: 3,
+      delivered: 4,
+      completed: 4,
+      cancelled: 5
+    };
+
     const mergedMap = new Map<string, LiveOrder>();
     serverOrders.forEach(o => mergedMap.set(String(o.id), o));
-    localList.forEach(o => {
-      if (!mergedMap.has(String(o.id))) {
-        mergedMap.set(String(o.id), o);
+    localList.forEach(lo => {
+      const existing = mergedMap.get(String(lo.id)) || 
+                       Array.from(mergedMap.values()).find(so => 
+                         so.daily_order_number && lo.daily_order_number && Number(so.daily_order_number) === Number(lo.daily_order_number)
+                       );
+
+      if (!existing) {
+        mergedMap.set(String(lo.id), lo);
+      } else {
+        const loRank = STATUS_RANK[lo.status] || 1;
+        const exRank = STATUS_RANK[existing.status] || 1;
+        if (loRank > exRank) {
+          existing.status = lo.status;
+        }
+        if (lo.payment_status === 'paid') existing.payment_status = 'paid';
       }
     });
 
@@ -272,13 +293,16 @@ export async function updateLiveOrderStatus(
   status: 'new' | 'preparing' | 'ready' | 'delivered' | 'completed' | 'cancelled',
   paymentStatus?: 'paid' | 'unpaid'
 ): Promise<void> {
-  // 1. Update local cache
+  // 1. Update local live orders cache
   try {
     const key = `qrieta_live_orders_${restaurantId}`;
     const raw = localStorage.getItem(key);
     if (raw) {
       const list: LiveOrder[] = JSON.parse(raw);
-      const target = list.find(o => String(o.id) === String(orderId));
+      const target = list.find(o => 
+        String(o.id) === String(orderId) || 
+        (o.daily_order_number && String(o.daily_order_number) === String(orderId))
+      );
       if (target) {
         target.status = status;
         if (paymentStatus) target.payment_status = paymentStatus;
@@ -287,20 +311,43 @@ export async function updateLiveOrderStatus(
     }
   } catch (e) {}
 
-  // 2. Update Supabase directly
+  // 1b. Also update customer device orders directly in localStorage
   try {
-    const dbStatus = (status === 'completed' || status === 'delivered') ? 'delivered' : status;
+    const custKey = `qrieta_customer_orders_${restaurantId}`;
+    const custRaw = localStorage.getItem(custKey);
+    if (custRaw) {
+      const custOrders: CustomerSavedOrder[] = JSON.parse(custRaw);
+      let changed = false;
+      custOrders.forEach(co => {
+        if (
+          String(co.id) === String(orderId) || 
+          (co.daily_order_number && String(co.daily_order_number) === String(orderId))
+        ) {
+          co.status = status;
+          if (paymentStatus) co.payment_status = paymentStatus;
+          changed = true;
+        }
+      });
+      if (changed) {
+        localStorage.setItem(custKey, JSON.stringify(custOrders));
+        window.dispatchEvent(new Event('qrieta_orders_updated'));
+      }
+    }
+  } catch (e) {}
+
+  // 2. Update Supabase directly (safe payload without non-existent columns)
+  try {
+    const dbStatus = (status === 'completed' || status === 'delivered') 
+      ? 'delivered' 
+      : (status === 'ready' ? 'preparing' : status);
+    
     const updatePayload: any = { status: dbStatus };
     if (status === 'preparing') updatePayload.preparing_at = new Date().toISOString();
-    if (status === 'ready') updatePayload.ready_at = new Date().toISOString();
     if (status === 'completed' || status === 'delivered') updatePayload.delivered_at = new Date().toISOString();
-    if (status === 'cancelled') updatePayload.cancelled_at = new Date().toISOString();
 
     const numId = parseInt(String(orderId), 10);
-    if (!isNaN(numId)) {
+    if (!isNaN(numId) && String(numId) === String(orderId).trim()) {
       await supabase.from('orders').update(updatePayload).eq('id', numId);
-    } else {
-      await supabase.from('orders').update(updatePayload).eq('id', orderId);
     }
   } catch (e) {
     console.warn('Supabase status update error:', e);
@@ -504,26 +551,47 @@ export function syncCustomerDeviceOrdersWithLive(
   const trimmedPhone = (customerPhone || '').trim();
   const trimmedEmail = (customerEmail || '').trim().toLowerCase();
 
+  const STATUS_RANK: Record<string, number> = {
+    new: 1,
+    preparing: 2,
+    ready: 3,
+    delivered: 4,
+    completed: 4,
+    cancelled: 5
+  };
+
   if (Array.isArray(liveOrders)) {
     liveOrders.forEach(live => {
-      if (live.source !== 'customer_app') return;
-
-      const matchesTable = (currentTableNumber && live.table_number && String(live.table_number).trim() === String(currentTableNumber).trim()) ||
-                            (currentTableId && live.table_id && String(live.table_id) === String(currentTableId));
-      const matchesPhone = trimmedPhone && live.customer_phone && String(live.customer_phone).trim() === trimmedPhone;
-      const matchesEmail = trimmedEmail && live.customer_email && String(live.customer_email).trim().toLowerCase() === trimmedEmail;
-      
+      // 1. Look for match in existing customer device orders first
       const existing = localMap.get(String(live.id)) || 
-                       Array.from(localMap.values()).find(lo => lo.daily_order_number && Number(lo.daily_order_number) === Number(live.daily_order_number));
+                       Array.from(localMap.values()).find(lo => 
+                         (lo.daily_order_number && live.daily_order_number && Number(lo.daily_order_number) === Number(live.daily_order_number)) ||
+                         (String(lo.id) === String(live.id))
+                       );
 
       if (existing) {
-        existing.status = live.status;
+        const existingRank = STATUS_RANK[existing.status] || 1;
+        const liveRank = STATUS_RANK[live.status] || 1;
+
+        // Never downgrade unless cancelled
+        if (live.status === 'cancelled' || liveRank >= existingRank) {
+          existing.status = live.status;
+        }
         existing.payment_status = live.payment_status || existing.payment_status;
         if (live.daily_order_number) existing.daily_order_number = live.daily_order_number;
         if (live.customer_name && !existing.customer_name) existing.customer_name = live.customer_name;
         if (live.customer_phone && !existing.customer_phone) existing.customer_phone = live.customer_phone;
         if (live.customer_email && !existing.customer_email) existing.customer_email = live.customer_email;
-      } else if (matchesTable || matchesPhone || matchesEmail) {
+        return;
+      }
+
+      // 2. If not already in localMap, adopt if it matches customer table, phone, or email
+      const matchesTable = (currentTableNumber && live.table_number && String(live.table_number).trim() === String(currentTableNumber).trim()) ||
+                            (currentTableId && live.table_id && String(live.table_id) === String(currentTableId));
+      const matchesPhone = trimmedPhone && live.customer_phone && String(live.customer_phone).trim() === trimmedPhone;
+      const matchesEmail = trimmedEmail && live.customer_email && String(live.customer_email).trim().toLowerCase() === trimmedEmail;
+
+      if ((matchesTable || matchesPhone || matchesEmail) && (live.source === 'customer_app' || !live.source)) {
         const newSavedOrder: CustomerSavedOrder = {
           id: live.id,
           daily_order_number: Number(live.daily_order_number) || 1,

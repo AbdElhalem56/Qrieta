@@ -207,9 +207,20 @@ export default function CustomerApp() {
     };
 
     syncOrders();
-    const interval = setInterval(syncOrders, 3500);
+    const interval = setInterval(syncOrders, 3000);
 
-    return () => clearInterval(interval);
+    const handleExternalUpdate = () => {
+      syncOrders();
+    };
+
+    window.addEventListener('storage', handleExternalUpdate);
+    window.addEventListener('qrieta_orders_updated', handleExternalUpdate);
+
+    return () => {
+      clearInterval(interval);
+      window.removeEventListener('storage', handleExternalUpdate);
+      window.removeEventListener('qrieta_orders_updated', handleExternalUpdate);
+    };
   }, [restaurant?.id, table?.id, table?.table_number, tableId, deliveryInfo.phone, deliveryInfo.email]);
 
   const activeCustomerOrders = useMemo(() => {
@@ -2501,10 +2512,12 @@ export default function CustomerApp() {
               <div className="flex items-center gap-1.5">
                 <span className="text-xs font-black text-white">
                   {latestActiveOrder.status === 'new' 
-                    ? (isRTL ? 'تم استلام طلبك (جديد)' : 'Order Received')
+                    ? (isRTL ? 'تم استلام طلبك وبانتظار المطبخ 📥' : 'Order Received')
                     : latestActiveOrder.status === 'preparing'
-                    ? (isRTL ? 'الشيف يجهز طلبك الآن 👨‍🍳' : 'Preparing...')
-                    : (isRTL ? 'جاهز / تم التوصيل ✅' : 'Ready / Delivered')}
+                    ? (isRTL ? 'الشيف يجهز وجبتك الآن 👨‍🍳🔥' : 'Kitchen is Preparing...')
+                    : latestActiveOrder.status === 'ready'
+                    ? (isRTL ? 'طلبك جاهز للتسليم الآن! 🔔' : 'Order Ready!')
+                    : (isRTL ? 'تم التسليم بنجاح ✅' : 'Delivered')}
                 </span>
                 <span className="w-2 h-2 rounded-full bg-emerald-400 animate-ping"></span>
               </div>
@@ -2677,26 +2690,55 @@ export default function CustomerApp() {
 
                         {/* Status Stepper */}
                         {!isCancelled ? (
-                          <div className="bg-slate-50 p-3 rounded-xl border border-slate-100">
-                            <div className="flex items-center justify-between text-[11px] font-bold mb-2">
-                              <span className={currentStep >= 0 ? "text-orange-600 font-black" : "text-gray-400"}>
-                                1. تم الاستلام
+                          <div className="bg-slate-50 p-3.5 rounded-2xl border border-slate-200/80 space-y-2.5">
+                            <div className="flex items-center justify-between text-[11px] font-bold">
+                              <span className={currentStep >= 0 ? "text-orange-600 font-black flex items-center gap-1" : "text-gray-400 flex items-center gap-1"}>
+                                <span className={`w-4 h-4 rounded-full flex items-center justify-center text-[9px] ${currentStep >= 0 ? 'bg-orange-600 text-white font-black' : 'bg-gray-200 text-gray-500'}`}>1</span>
+                                {isRTL ? 'تم الاستلام 📥' : 'Received'}
                               </span>
-                              <span className={currentStep >= 1 ? "text-orange-600 font-black" : "text-gray-400"}>
-                                2. بالمطبخ 👨‍🍳
+                              <span className={currentStep >= 1 ? "text-orange-600 font-black flex items-center gap-1" : "text-gray-400 flex items-center gap-1"}>
+                                <span className={`w-4 h-4 rounded-full flex items-center justify-center text-[9px] ${currentStep >= 1 ? 'bg-orange-600 text-white font-black' : 'bg-gray-200 text-gray-500'}`}>2</span>
+                                {isRTL ? 'بالمطبخ 👨‍🍳' : 'Kitchen'}
                               </span>
-                              <span className={currentStep >= 2 ? "text-orange-600 font-black" : "text-gray-400"}>
-                                3. جاهز للتسليم
+                              <span className={currentStep >= 2 ? "text-blue-600 font-black flex items-center gap-1" : "text-gray-400 flex items-center gap-1"}>
+                                <span className={`w-4 h-4 rounded-full flex items-center justify-center text-[9px] ${currentStep >= 2 ? 'bg-blue-600 text-white font-black animate-pulse' : 'bg-gray-200 text-gray-500'}`}>3</span>
+                                {isRTL ? 'جاهز للتسليم 🔔' : 'Ready'}
                               </span>
-                              <span className={currentStep >= 3 ? "text-emerald-600 font-black" : "text-gray-400"}>
-                                4. تم الاستلام ✅
+                              <span className={currentStep >= 3 ? "text-emerald-600 font-black flex items-center gap-1" : "text-gray-400 flex items-center gap-1"}>
+                                <span className={`w-4 h-4 rounded-full flex items-center justify-center text-[9px] ${currentStep >= 3 ? 'bg-emerald-600 text-white font-black' : 'bg-gray-200 text-gray-500'}`}>4</span>
+                                {isRTL ? 'تم التسليم ✅' : 'Delivered'}
                               </span>
                             </div>
-                            <div className="h-2 bg-gray-200 rounded-full overflow-hidden flex">
+                            <div className="h-2.5 bg-gray-200 rounded-full overflow-hidden flex p-0.5">
                               <div 
-                                className="h-full bg-gradient-to-r from-orange-500 to-amber-500 transition-all duration-500" 
+                                className={`h-full rounded-full transition-all duration-500 ${
+                                  currentStep === 3 
+                                    ? 'bg-emerald-500' 
+                                    : currentStep === 2
+                                    ? 'bg-gradient-to-r from-orange-500 via-amber-500 to-blue-500'
+                                    : 'bg-gradient-to-r from-orange-500 to-amber-500'
+                                }`} 
                                 style={{ width: `${Math.max(25, (currentStep + 1) * 25)}%` }}
                               />
+                            </div>
+                            {/* Helpful stage alert */}
+                            <div className={`text-[11px] font-bold text-center py-1 px-2.5 rounded-xl border ${
+                              currentStep === 0 
+                                ? 'bg-amber-50/90 text-amber-800 border-amber-200' 
+                                : currentStep === 1 
+                                ? 'bg-orange-50/90 text-orange-800 border-orange-200' 
+                                : currentStep === 2 
+                                ? 'bg-blue-50 text-blue-800 border-blue-200 animate-pulse' 
+                                : 'bg-emerald-50 text-emerald-800 border-emerald-200'
+                            }`}>
+                              {currentStep === 0 && (isRTL ? 'تم استلام طلبك وبانتظار بدء التجهيز في المطبخ ⏳' : 'Order received and waiting for kitchen')}
+                              {currentStep === 1 && (isRTL ? 'الشيف يجهز وجبتك الآن بعناية فائقة 👨‍🍳🔥' : 'Chef is preparing your meal')}
+                              {currentStep === 2 && (
+                                ord.order_type === 'delivery' 
+                                  ? (isRTL ? '🔔 وجبتك جاهزة للتسليم والدليفري في طريقه إليك!' : 'Ready! Driver on the way') 
+                                  : (isRTL ? '🔔 وجبتك جاهزة تماماً للاستلام الآن!' : 'Ready for pickup!')
+                              )}
+                              {currentStep === 3 && (isRTL ? 'تم تسليم الطلب بنجاح، بالهناء والشفاء! 🎉' : 'Delivered! Enjoy your meal')}
                             </div>
                           </div>
                         ) : (
