@@ -307,17 +307,31 @@ export default function AdminDashboard() {
                      Number(lo.daily_order_number) === Number(o.daily_order_number)
                    );
 
+      const isCustomerApp = live?.source === 'customer_app' || 
+                            o.source === 'customer_app' || 
+                            Boolean(o.notes && o.notes.includes('تطبيق الزبائن'));
+
+      const cashierName = live?.cashier_name || 
+                          (o as any).cashier_name || 
+                          (isCustomerApp ? 'طلب أونلاين' : 'كاشير الفرع');
+
+      const paymentMethod = live?.payment_method || 
+                            (o as any).payment_method || 
+                            'cash';
+
       map.set(String(o.id), {
         ...o,
         daily_order_number: o.daily_order_number || live?.daily_order_number || getDisplayOrderNumber(o),
         status: live?.status || o.status,
-        source: live?.source || (o.notes?.includes('تطبيق الزبائن') ? 'customer_app' : 'cashier_pos'),
+        source: isCustomerApp ? 'customer_app' : 'cashier_pos',
+        cashier_name: cashierName,
+        payment_method: paymentMethod,
         order_type: live?.order_type || (o.tables ? 'dine_in' : (o.notes?.includes('دليفري') ? 'delivery' : 'takeaway')),
-        customer_name: live?.customer_name || '',
-        customer_phone: live?.customer_phone || '',
-        delivery_address: live?.delivery_address || '',
+        customer_name: live?.customer_name || (o as any).customer_name || '',
+        customer_phone: live?.customer_phone || (o as any).customer_phone || '',
+        delivery_address: live?.delivery_address || (o as any).delivery_address || '',
         live_items: live?.items,
-        payment_status: live?.payment_status || (o.status === 'delivered' ? 'paid' : 'unpaid')
+        payment_status: live?.payment_status || (o.status === 'delivered' || o.status === 'completed' ? 'paid' : 'unpaid')
       });
     });
 
@@ -329,6 +343,7 @@ export default function AdminDashboard() {
       });
 
       if (!existingKey) {
+        const isCustomerApp = lo.source === 'customer_app' || Boolean(lo.notes && lo.notes.includes('تطبيق الزبائن'));
         map.set(String(lo.id), {
           id: lo.id,
           daily_order_number: lo.daily_order_number,
@@ -336,12 +351,15 @@ export default function AdminDashboard() {
           status: lo.status,
           total_price: lo.total_price,
           created_at: lo.created_at,
-          source: lo.source,
+          source: isCustomerApp ? 'customer_app' : 'cashier_pos',
+          cashier_name: lo.cashier_name || (isCustomerApp ? 'طلب أونلاين' : 'كاشير الفرع'),
+          payment_method: lo.payment_method || 'cash',
           order_type: lo.order_type,
           customer_name: lo.customer_name,
           customer_phone: lo.customer_phone,
           delivery_address: lo.delivery_address,
           tables: lo.table_number ? { table_number: lo.table_number } : null,
+          table_number: lo.table_number,
           order_items: (lo.items || []).map(it => ({
             quantity: it.quantity,
             unit_price: it.price,
@@ -360,7 +378,7 @@ export default function AdminDashboard() {
     if (ordersSourceFilter === 'customer_app') {
       list = list.filter(o => o.source === 'customer_app');
     } else if (ordersSourceFilter === 'cashier_pos') {
-      list = list.filter(o => o.source === 'cashier_pos');
+      list = list.filter(o => o.source === 'cashier_pos' || o.source === 'pos' || o.source !== 'customer_app');
     } else if (ordersSourceFilter === 'delivery') {
       list = list.filter(o => o.order_type === 'delivery');
     } else if (ordersSourceFilter === 'dine_in') {
@@ -2057,6 +2075,7 @@ export default function AdminDashboard() {
                         <tr>
                           <th className="px-5 py-3.5">رقم الطلب والوقت</th>
                           <th className="px-5 py-3.5">المصدر والنوع</th>
+                          <th className="px-5 py-3.5">الكاشير المسؤول والدفع</th>
                           <th className="px-5 py-3.5">العميل / التوصيل</th>
                           <th className="px-5 py-3.5">الأصناف والكميات</th>
                           <th className="px-5 py-3.5">قيمة الفاتورة</th>
@@ -2141,6 +2160,37 @@ export default function AdminDashboard() {
                                     ) : (
                                       <span className="inline-flex items-center gap-1 bg-gray-100 text-gray-700 px-2 py-0.5 rounded-lg text-[10px] font-black">
                                         <span>سفري (تيك أواي)</span>
+                                      </span>
+                                    )}
+                                  </div>
+                                </div>
+                              </td>
+
+                              {/* 2.5. Cashier & Payment Method */}
+                              <td className="px-5 py-3.5 align-middle">
+                                <div className="space-y-1">
+                                  <div className="flex items-center gap-1.5 text-xs font-black text-gray-800">
+                                    <span className="text-amber-600 text-sm">👤</span>
+                                    <span className="truncate max-w-[130px]" title={order.cashier_name || 'كاشير الفرع'}>
+                                      {order.cashier_name || 'كاشير الفرع'}
+                                    </span>
+                                  </div>
+                                  <div>
+                                    {order.payment_method === 'card' ? (
+                                      <span className="inline-flex items-center gap-1 bg-blue-50 text-blue-700 border border-blue-200/70 px-2 py-0.5 rounded-lg text-[10px] font-black">
+                                        <span>💳 فيزا</span>
+                                      </span>
+                                    ) : order.payment_method === 'wallet' ? (
+                                      <span className="inline-flex items-center gap-1 bg-purple-50 text-purple-700 border border-purple-200/70 px-2 py-0.5 rounded-lg text-[10px] font-black">
+                                        <span>📱 إنستاباي</span>
+                                      </span>
+                                    ) : order.payment_method === 'split' ? (
+                                      <span className="inline-flex items-center gap-1 bg-orange-50 text-orange-700 border border-orange-200/70 px-2 py-0.5 rounded-lg text-[10px] font-black">
+                                        <span>🔄 مقسّم</span>
+                                      </span>
+                                    ) : (
+                                      <span className="inline-flex items-center gap-1 bg-emerald-50 text-emerald-700 border border-emerald-200/70 px-2 py-0.5 rounded-lg text-[10px] font-black">
+                                        <span>💵 كاش</span>
                                       </span>
                                     )}
                                   </div>
@@ -2353,6 +2403,20 @@ export default function AdminDashboard() {
                         <span className="text-gray-500 font-bold">المصدر:</span>
                         <span className="font-black text-gray-800">
                           {selectedOrderForDetails.source === 'customer_app' ? '📱 تطبيق الزبائن (أونلاين)' : '🏬 كاشير الفرع (POS)'}
+                        </span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span className="text-gray-500 font-bold">الكاشير المسؤول:</span>
+                        <span className="font-black text-amber-700">
+                          👤 {selectedOrderForDetails.cashier_name || 'كاشير الفرع'}
+                        </span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span className="text-gray-500 font-bold">طريقة الدفع:</span>
+                        <span className="font-black text-gray-900">
+                          {selectedOrderForDetails.payment_method === 'card' ? '💳 بطاقة بنكية / فيزا' :
+                           selectedOrderForDetails.payment_method === 'wallet' ? '📱 إنستاباي / محفظة إلكترونية' :
+                           selectedOrderForDetails.payment_method === 'split' ? '🔄 دفع مجزأ (مقسم)' : '💵 نقداً (كاش)'}
                         </span>
                       </div>
                       <div className="flex justify-between">
@@ -3282,6 +3346,8 @@ export default function AdminDashboard() {
             <ShiftsReportsTab
               restaurantId={restaurant.id}
               restaurantName={restaurant.name || 'المطعم'}
+              orders={orders}
+              liveOrders={adminLiveOrders}
             />
           )}
           {/* Settings View */}

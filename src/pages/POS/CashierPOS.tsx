@@ -54,7 +54,8 @@ import {
   getCashierShiftConfigs, 
   CashierShiftConfig, 
   saveStoredActiveShift, 
-  getStoredActiveShift 
+  getStoredActiveShift,
+  saveStoredShiftReport 
 } from '../../lib/shiftsStore';
 import { 
   Search, 
@@ -231,6 +232,30 @@ export const CashierPOS: React.FC = () => {
     ordersCount: 0,
     transactions: [],
   });
+
+  // Calculate order counts for each payment method in the active shift (without exposing monetary figures)
+  const shiftPaymentCounts = useMemo(() => {
+    let cash = 0;
+    let card = 0;
+    let wallet = 0;
+    const list = Array.isArray(shift.orders) && shift.orders.length > 0 
+      ? shift.orders 
+      : activeOrders;
+
+    list.forEach((ord: any) => {
+      const pm = ord.payment_method || 'cash';
+      if (pm === 'cash') cash++;
+      else if (pm === 'card') card++;
+      else if (pm === 'wallet') wallet++;
+    });
+
+    return {
+      cash,
+      card,
+      wallet,
+      total: (cash + card + wallet) || shift.ordersCount || 0
+    };
+  }, [shift.orders, activeOrders, shift.ordersCount]);
 
   // Held Bills (Parked Orders) with Persistent LocalStorage
   const [heldBills, setHeldBills] = useState<HeldBill[]>(() => {
@@ -1789,6 +1814,8 @@ export const CashierPOS: React.FC = () => {
         payment_status: 'paid',
         payment_method: currentPayMethod,
         order_type: orderType,
+        source: 'cashier_pos',
+        cashier_name: shift.cashierName || 'كاشير الفرع',
         customer_name: customerName.trim() || undefined,
         customer_phone: customerPhone.trim() || undefined,
         delivery_address: customerAddress.trim() || undefined,
@@ -1882,7 +1909,8 @@ export const CashierPOS: React.FC = () => {
           id: createdOrder?.id || `pos-${Date.now()}`,
           daily_order_number: dailyOrderNum,
           restaurant_id: selectedRestaurant.id,
-          source: 'pos',
+          source: 'cashier_pos',
+          cashier_name: shift.cashierName || 'كاشير الفرع',
           order_type: orderType,
           table_id: selectedTable?.id || null,
           table_number: selectedTable?.table_number || null,
@@ -1929,9 +1957,12 @@ export const CashierPOS: React.FC = () => {
       }
 
       // Update local activeOrders list immediately
-      const newSavedOrder: any = createdOrder || {
-        ...orderPayload,
-        id: `ord-${Date.now()}`,
+      const newSavedOrder: any = {
+        ...(createdOrder || orderPayload),
+        id: createdOrder?.id || `pos-${Date.now()}`,
+        source: 'cashier_pos',
+        cashier_name: shift.cashierName || 'كاشير الفرع',
+        payment_method: currentPayMethod,
         table_number: selectedTable?.table_number,
       };
       setActiveOrders(prev => [newSavedOrder, ...prev]);
@@ -1946,13 +1977,28 @@ export const CashierPOS: React.FC = () => {
         return next;
       });
 
-      // Update Shift Record
+      // Update Shift Record with new order breakdown
+      const newShiftOrderSummary = {
+        id: newSavedOrder.id,
+        daily_order_number: dailyOrderNum,
+        order_type: orderType,
+        table_number: selectedTable?.table_number || null,
+        customer_name: customerName.trim() || undefined,
+        total_price: finalTotal,
+        total: finalTotal,
+        total_amount: finalTotal,
+        payment_method: currentPayMethod,
+        cashier_name: shift.cashierName || 'كاشير الفرع',
+        status: 'completed',
+        created_at: new Date().toISOString()
+      };
+
       setShift(prev => {
         const cashAdd = currentPayMethod === 'cash' ? finalTotal : (splitData?.cash || 0);
         const cardAdd = currentPayMethod === 'card' ? finalTotal : (splitData?.card || 0);
         const walletAdd = currentPayMethod === 'wallet' ? finalTotal : (splitData?.wallet || 0);
 
-        return {
+        const updatedShift: ShiftRecord = {
           ...prev,
           ordersCount: prev.ordersCount + 1,
           totalSales: prev.totalSales + finalTotal,
@@ -1963,7 +2009,14 @@ export const CashierPOS: React.FC = () => {
           totalServiceFee: prev.totalServiceFee + serviceFeeAmount,
           totalDiscounts: prev.totalDiscounts + discountAmount,
           totalTips: prev.totalTips + (splitData?.tipAmount || tipsAmount),
+          orders: [newShiftOrderSummary, ...(prev.orders || [])],
         };
+
+        if (selectedRestaurant?.id) {
+          saveStoredActiveShift(selectedRestaurant.id, updatedShift);
+        }
+
+        return updatedShift;
       });
 
       // Prepare Thermal Tax Receipt
@@ -2076,18 +2129,30 @@ export const CashierPOS: React.FC = () => {
     const expected = shift.startingCash + shift.cashSales + totalCashIn - totalCashOut;
     const diff = actualCash - expected;
 
-    setShift(prev => ({
-      ...prev,
+    const shiftOrdersList = Array.isArray(shift.orders) && shift.orders.length > 0
+      ? shift.orders
+      : activeOrders;
+
+    const closedShift: ShiftRecord = {
+      ...shift,
       isOpen: false,
       closedAt: new Date().toISOString(),
       closingCashActual: actualCash,
       closingCashExpected: expected,
       difference: diff,
       notes: notes,
-    }));
+      orders: shiftOrdersList,
+    };
+
+    setShift(closedShift);
+
+    if (selectedRestaurant?.id) {
+      saveStoredActiveShift(selectedRestaurant.id, closedShift);
+      saveStoredShiftReport(selectedRestaurant.id, 'Z', closedShift, 'وردية الكاشير الرئيسية');
+    }
 
     addAuditLog('close_shift', `تم إغلاق الوردية. النقدية الفعلية: ${actualCash} ج.م، الفارق: ${diff.toFixed(2)} ج.م`);
-    alert(`تم إغلاق وردية الكاشير بنجاح! تم حفظ تقرير الـ Z-Report.`);
+    alert(`تم إغلاق وردية الكاشير بنجاح! تم حفظ تقرير الـ Z-Report مع سجل كافة فواتير الوردية.`);
   };
 
   const addAuditLog = (action: POSAuditLog['action'], description: string) => {
@@ -2356,17 +2421,26 @@ export const CashierPOS: React.FC = () => {
             )}
           </div>
 
-          {/* Shift Live Counter Badge */}
-          <div className="hidden lg:flex items-center gap-2 bg-slate-50 border border-slate-200 px-3 py-1 rounded-xl text-xs shadow-sm">
+          {/* Shift Live Counter Badge - Showing only order counts per payment method, money amounts hidden */}
+          <div className="hidden lg:flex items-center gap-2 bg-slate-50 border border-slate-200 px-3 py-1.5 rounded-xl text-xs shadow-xs">
             <div className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
-            <span className="text-slate-500">الوردية الحالية:</span>
-            <span className="font-mono font-bold text-slate-800">{shift.cashSales.toFixed(0)} كاش</span>
+            <span className="text-slate-600 font-bold">الطلبات المسددة:</span>
+            <span className="inline-flex items-center gap-1 font-bold text-slate-800 bg-white px-2 py-0.5 rounded-lg border border-slate-200 shadow-2xs">
+              <span>💵 كاش:</span>
+              <span className="font-mono font-black text-emerald-700">{shiftPaymentCounts.cash}</span>
+            </span>
+            <span className="inline-flex items-center gap-1 font-bold text-blue-800 bg-blue-50/70 px-2 py-0.5 rounded-lg border border-blue-200 shadow-2xs">
+              <span>💳 فيزا:</span>
+              <span className="font-mono font-black text-blue-700">{shiftPaymentCounts.card}</span>
+            </span>
+            <span className="inline-flex items-center gap-1 font-bold text-purple-800 bg-purple-50/70 px-2 py-0.5 rounded-lg border border-purple-200 shadow-2xs">
+              <span>📱 إنستاباي:</span>
+              <span className="font-mono font-black text-purple-700">{shiftPaymentCounts.wallet}</span>
+            </span>
             <span className="text-slate-300">|</span>
-            <span className="font-mono font-bold text-blue-600">{shift.cardSales.toFixed(0)} فيزا</span>
-            <span className="text-slate-300">|</span>
-            <span className="font-mono font-bold text-purple-600">{(shift.walletSales || 0).toFixed(0)} انستاباي</span>
-            <span className="text-slate-300">|</span>
-            <span className="font-mono font-bold text-amber-600">({shift.ordersCount}) طلب</span>
+            <span className="font-mono font-bold text-amber-800 bg-amber-50 px-2 py-0.5 rounded-lg border border-amber-200">
+              إجمالي: {shiftPaymentCounts.total} طلب
+            </span>
           </div>
         </div>
 
@@ -4300,6 +4374,7 @@ export const CashierPOS: React.FC = () => {
           onClose={() => setShiftReportType(null)}
           reportType={shiftReportType}
           shift={shift}
+          orders={Array.isArray(shift.orders) && shift.orders.length > 0 ? shift.orders : activeOrders}
           restaurantName={selectedRestaurant?.name || ''}
           onCloseShiftConfirm={handleCloseShiftConfirm}
         />

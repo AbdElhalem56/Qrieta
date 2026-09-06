@@ -73,6 +73,7 @@ export interface ShiftRecord {
   ordersCount: number;
   transactions: CashTransaction[];
   notes?: string;
+  orders?: any[];
 }
 
 export interface WasteRecord {

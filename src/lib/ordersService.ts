@@ -7,7 +7,7 @@ export interface LiveOrder {
   id: string | number;
   daily_order_number: number;
   restaurant_id: string;
-  source: 'pos' | 'customer_app';
+  source: 'pos' | 'customer_app' | 'cashier_pos';
   order_type: 'dine_in' | 'takeaway' | 'delivery';
   table_id?: string | null;
   table_number?: string | number | null;
@@ -21,6 +21,8 @@ export interface LiveOrder {
   status: 'new' | 'preparing' | 'ready' | 'delivered' | 'completed' | 'cancelled';
   payment_status: 'paid' | 'unpaid';
   payment_method?: string;
+  cashier_name?: string;
+  cashier_id?: string;
   items: Array<{
     id?: string;
     name: string;

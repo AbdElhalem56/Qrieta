@@ -42,11 +42,15 @@ import { printThermalElement } from '../../lib/printHelper';
 interface ShiftsReportsTabProps {
   restaurantId: string;
   restaurantName: string;
+  orders?: any[];
+  liveOrders?: any[];
 }
 
 export const ShiftsReportsTab: React.FC<ShiftsReportsTabProps> = ({
   restaurantId,
-  restaurantName
+  restaurantName,
+  orders = [],
+  liveOrders = []
 }) => {
   const [shiftConfigs, setShiftConfigs] = useState<CashierShiftConfig[]>([]);
   const [activeShift, setActiveShift] = useState<ShiftRecord | null>(null);
@@ -79,6 +83,24 @@ export const ShiftsReportsTab: React.FC<ShiftsReportsTabProps> = ({
 
   // Success / Notice message
   const [toastMessage, setToastMessage] = useState<string | null>(null);
+
+  // Cashier orders aggregation from props
+  const cashierOrders = React.useMemo(() => {
+    const all = [...(liveOrders || []), ...(orders || [])];
+    const seen = new Set<string>();
+    const res: any[] = [];
+    all.forEach(o => {
+      const id = String(o.id);
+      if (!seen.has(id)) {
+        seen.add(id);
+        const isCustomerApp = o.source === 'customer_app' || Boolean(o.notes && o.notes.includes('تطبيق الزبائن'));
+        if (!isCustomerApp) {
+          res.push(o);
+        }
+      }
+    });
+    return res;
+  }, [orders, liveOrders]);
 
   // Load data
   useEffect(() => {
@@ -759,6 +781,11 @@ export const ShiftsReportsTab: React.FC<ShiftsReportsTabProps> = ({
           onClose={() => setInspectingReport(null)}
           reportType={inspectingReport.reportType}
           shift={inspectingReport.shift}
+          orders={
+            Array.isArray(inspectingReport.shift?.orders) && inspectingReport.shift.orders.length > 0
+              ? inspectingReport.shift.orders
+              : cashierOrders
+          }
           restaurantName={restaurantName}
         />
       )}
