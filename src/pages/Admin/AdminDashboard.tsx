@@ -80,6 +80,7 @@ import {
 } from 'lucide-react';
 import { QRCodeSVG } from 'qrcode.react';
 import { fetchOrdersByDateRange, generateOrdersExcelSheet } from '../../lib/excelExport';
+import { ShiftsReportsTab } from '../../components/Admin/ShiftsReportsTab';
 import { 
   BarChart, 
   Bar, 
@@ -112,7 +113,7 @@ export default function AdminDashboard() {
   const [totalRevenue, setTotalRevenue] = useState(0);
   const [tables, setTables] = useState<any[]>([]);
   const [isLoadingTables, setIsLoadingTables] = useState(false);
-  const [activeTab, setActiveTab] = useState<'categories' | 'menu' | 'tables_qr' | 'orders' | 'staff' | 'analytics' | 'settings' | 'support' | 'inventory'>('categories');
+  const [activeTab, setActiveTab] = useState<'categories' | 'menu' | 'tables_qr' | 'orders' | 'shifts' | 'staff' | 'analytics' | 'settings' | 'support' | 'inventory'>('categories');
   const [phoneCopied, setPhoneCopied] = useState(false);
   
   // Real-time live orders from both Cashier POS and Customer App
@@ -1442,6 +1443,13 @@ export default function AdminDashboard() {
             )}
           </button>
           <button 
+            onClick={() => { setActiveTab('shifts'); setIsMobileMenuOpen(false); }}
+            className={cn("w-full flex items-center gap-3 px-4 py-3 rounded-xl transition-all text-right", activeTab === 'shifts' ? "bg-orange-500 text-white font-bold shadow-lg" : "text-gray-500 hover:bg-gray-100")}
+          >
+            <Clock size={20} />
+            <span>الورديات وتقارير X/Z</span>
+          </button>
+          <button 
             onClick={() => { setActiveTab('inventory'); setIsMobileMenuOpen(false); }}
             className={cn("w-full flex items-center gap-3 px-4 py-3 rounded-xl transition-all text-right", activeTab === 'inventory' ? "bg-orange-500 text-white font-bold shadow-lg" : "text-gray-500 hover:bg-gray-100")}
           >
@@ -1497,6 +1505,7 @@ export default function AdminDashboard() {
               {activeTab === 'menu' ? 'المنتجات' : 
                activeTab === 'categories' ? 'التصنيفات' : 
                activeTab === 'tables_qr' ? 'رموز QR للطاولات' :
+               activeTab === 'shifts' ? 'ورديات الكاشير وتقارير الإغلاق X/Z' :
                activeTab === 'staff' ? 'الموظفين' : 
                activeTab === 'orders' ? 'سجل الطلبات الحية والتاريخية' : 
                activeTab === 'inventory' ? 'إدارة المخزون وتكلفة المواد' :
@@ -3267,6 +3276,13 @@ export default function AdminDashboard() {
                 </div>
               </div>
             </div>
+          )}
+          {/* Cashier Shifts and Financial Reports Tab (X/Z Reports) */}
+          {activeTab === 'shifts' && restaurant && (
+            <ShiftsReportsTab
+              restaurantId={restaurant.id}
+              restaurantName={restaurant.name || 'المطعم'}
+            />
           )}
           {/* Settings View */}
           {activeTab === 'settings' && restaurant && (

@@ -50,6 +50,12 @@ import { WasteModal } from '../../components/POS/WasteModal';
 import { HeldBillsDrawer } from '../../components/POS/HeldBillsDrawer';
 import { OrdersHistoryModal } from '../../components/POS/OrdersHistoryModal';
 import { 
+  getCashierShiftConfigs, 
+  CashierShiftConfig, 
+  saveStoredActiveShift, 
+  getStoredActiveShift 
+} from '../../lib/shiftsStore';
+import { 
   Search, 
   ShoppingCart, 
   Plus, 
@@ -269,6 +275,8 @@ export const CashierPOS: React.FC = () => {
   const [offlineQueue, setOfflineQueue] = useState<any[]>([]);
   const [isSyncing, setIsSyncing] = useState<boolean>(false);
   const [cashierInputName, setCashierInputName] = useState<string>('كاشير الفرع');
+  const [availableShifts, setAvailableShifts] = useState<CashierShiftConfig[]>([]);
+  const [selectedShiftConfig, setSelectedShiftConfig] = useState<CashierShiftConfig | null>(null);
 
   // Screen Lock PIN (Default: UNLOCKED so cashier opens immediately, lockable via button)
   const [isScreenLocked, setIsScreenLocked] = useState<boolean>(false);
@@ -602,10 +610,28 @@ export const CashierPOS: React.FC = () => {
       }
 
       setOfflineQueue(getOfflineOrdersQueue(restaurantId));
-      setShift(prev => ({
-        ...prev,
-        restaurantId: restaurantId
-      }));
+      const loadedShifts = getCashierShiftConfigs(restaurantId);
+      setAvailableShifts(loadedShifts);
+      const storedActive = getStoredActiveShift(restaurantId);
+      if (storedActive) {
+        setShift(storedActive);
+        setCashierInputName(storedActive.cashierName || 'كاشير الفرع');
+        const matchedConfig = loadedShifts.find(s => s.cashierName === storedActive.cashierName);
+        if (matchedConfig) setSelectedShiftConfig(matchedConfig);
+        else if (loadedShifts.length > 0) setSelectedShiftConfig(loadedShifts[0]);
+      } else {
+        const firstShift = loadedShifts[0];
+        if (firstShift) {
+          setSelectedShiftConfig(firstShift);
+          setCashierInputName(firstShift.cashierName);
+        }
+        setShift(prev => ({
+          ...prev,
+          restaurantId: restaurantId,
+          cashierName: firstShift ? firstShift.cashierName : prev.cashierName,
+          startingCash: firstShift ? firstShift.startingCash : prev.startingCash,
+        }));
+      }
     } catch (err) {
       console.error('Error loading restaurant details, checking cache:', err);
       const cached = getCachedRestaurantData(restaurantId);
@@ -976,6 +1002,55 @@ export const CashierPOS: React.FC = () => {
   // Change Calculation
   const cashNum = parseFloat(cashTendered) || 0;
   const changeDue = Math.max(0, cashNum - finalTotal);
+
+  // Real-time table due amounts & financials (معروضة قدام عين الكاشير وإجمالي مبيع الطاولات)
+  const tablesFinancials = useMemo(() => {
+    return tables.map(table => {
+      const tableNum = String(table.table_number || '').trim();
+      const tableId = String(table.id || '').trim();
+
+      // Find active orders for this table (not cancelled, not completed, not paid)
+      const matchedOrders = activeOrders.filter(ord => {
+        if (ord.status === 'cancelled' || ord.status === 'completed' || ord.payment_status === 'paid') return false;
+        const ordTableNum = String(ord.table_number || '').trim();
+        const ordTableId = String(ord.table_id || '').trim();
+        const firstNote = ord.order_items?.[0]?.notes || ord.notes || '';
+        const numInNotes = firstNote.match(/طاولة\s*([^|\]]+)/)?.[1]?.trim();
+
+        const match = ordTableNum === tableNum || ordTableId === tableId || numInNotes === tableNum;
+        return match && (ord.order_type === 'dine_in' || !ord.order_type || firstNote.includes('صالة'));
+      });
+
+      // Find held/parked bills for this table
+      const matchedHeld = heldBills.filter(h => {
+        const hTableNum = String(h.tableNumber || '').trim();
+        const hTableId = String(h.tableId || '').trim();
+        return hTableNum === tableNum || hTableId === tableId;
+      });
+
+      const ordersSum = matchedOrders.reduce((sum, o) => sum + (Number(o.total_price || o.total_amount) || 0), 0);
+      const heldSum = matchedHeld.reduce((sum, h) => sum + (Number(h.total) || 0), 0);
+      const totalDue = ordersSum + heldSum;
+      const isOccupied = table.is_occupied || matchedOrders.length > 0 || matchedHeld.length > 0 || totalDue > 0;
+
+      return {
+        ...table,
+        totalDue,
+        ordersCount: matchedOrders.length + matchedHeld.length,
+        isOccupied,
+        activeOrders: matchedOrders,
+        heldBills: matchedHeld
+      };
+    });
+  }, [tables, activeOrders, heldBills]);
+
+  const allTablesTotalDue = useMemo(() => {
+    return tablesFinancials.reduce((sum, t) => sum + t.totalDue, 0);
+  }, [tablesFinancials]);
+
+  const occupiedTablesCount = useMemo(() => {
+    return tablesFinancials.filter(t => t.isOccupied || t.totalDue > 0).length;
+  }, [tablesFinancials]);
 
   // Render Product Card
   const renderProductCard = (item: Product) => {
@@ -1600,20 +1675,27 @@ export const CashierPOS: React.FC = () => {
     setAuditLogs(prev => [log, ...prev]);
   };
 
-  const handleUnlockScreen = () => {
+  const handleUnlockScreen = (customPin?: string) => {
     const restId = selectedRestaurant?.id || '';
-    if (verifyCashierOrManagerPin(restId, lockPinInput)) {
+    const pinToVerify = (typeof customPin === 'string' ? customPin : lockPinInput).trim();
+    const expectedPin = selectedShiftConfig?.pin;
+
+    if (verifyCashierOrManagerPin(restId, pinToVerify, expectedPin)) {
+      const chosenName = selectedShiftConfig ? selectedShiftConfig.cashierName : (cashierInputName.trim() || 'كاشير الفرع');
+      const updatedShift: ShiftRecord = {
+        ...shift,
+        cashierName: chosenName,
+        startingCash: selectedShiftConfig?.startingCash || shift.startingCash,
+      };
+      setShift(updatedShift);
+      if (restId) {
+        saveStoredActiveShift(restId, updatedShift);
+      }
       setIsScreenLocked(false);
       setLockPinInput('');
       setLockPinError('');
-      if (cashierInputName.trim()) {
-        setShift(prev => ({
-          ...prev,
-          cashierName: cashierInputName.trim(),
-        }));
-      }
     } else {
-      setLockPinError('رمز PIN غير صحيح! يرجى مراجعة إدارة المطعم');
+      setLockPinError('رمز PIN غير صحيح! يرجى إدخال الرمز الخاص بك أو مراجعة الإدارة');
       setLockPinInput('');
     }
   };
@@ -1645,21 +1727,73 @@ export const CashierPOS: React.FC = () => {
               </h2>
               <div className="inline-flex items-center gap-1.5 px-2.5 py-0.5 mt-1 rounded-full bg-emerald-50 text-emerald-700 border border-emerald-200 text-[11px] font-bold">
                 <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
-                <span>نظام كاشير مستقل (أوفلاين بدون نت)</span>
+                <span>تسجيل دخول واستلام الوردية</span>
               </div>
             </div>
           </div>
 
-          {/* Cashier Name / Operator Input */}
-          <div className="text-right">
-            <label className="text-[11px] font-bold text-slate-600 block mb-1">اسم الكاشير المناوب:</label>
-            <input
-              type="text"
-              value={cashierInputName}
-              onChange={e => setCashierInputName(e.target.value)}
-              placeholder="مثال: أحمد، كاشير 1..."
-              className="w-full bg-slate-50 border border-slate-300 focus:border-amber-500 rounded-xl px-3 py-2 text-xs font-bold text-slate-800 outline-none text-center shadow-inner"
-            />
+          {/* Cashier Name / Operator Shift Selector */}
+          <div className="text-right space-y-1.5">
+            <div className="flex items-center justify-between">
+              <label className="text-[11px] font-bold text-slate-700">اختر اسمك والوردية المسندة لك:</label>
+              {selectedShiftConfig && (
+                <span className="text-[10px] text-amber-600 font-bold font-mono">
+                  {selectedShiftConfig.startTime} - {selectedShiftConfig.endTime}
+                </span>
+              )}
+            </div>
+
+            {availableShifts.length > 0 ? (
+              <div className="grid grid-cols-1 gap-1.5 max-h-36 overflow-y-auto p-1 bg-slate-50 rounded-2xl border border-slate-200">
+                {availableShifts.filter(s => s.isActive).map(s => {
+                  const isChosen = selectedShiftConfig?.id === s.id;
+                  return (
+                    <button
+                      key={s.id}
+                      type="button"
+                      onClick={() => {
+                        setSelectedShiftConfig(s);
+                        setCashierInputName(s.cashierName);
+                        setLockPinError('');
+                        setLockPinInput('');
+                      }}
+                      className={cn(
+                        "p-2.5 rounded-xl text-right text-xs font-bold transition-all flex items-center justify-between border cursor-pointer",
+                        isChosen
+                          ? "bg-amber-500 text-slate-950 border-amber-600 shadow-sm"
+                          : "bg-white text-slate-700 border-slate-200 hover:bg-slate-100"
+                      )}
+                    >
+                      <div className="flex items-center gap-2">
+                        <span className="text-base">👤</span>
+                        <div>
+                          <p className="font-black leading-tight">{s.cashierName}</p>
+                          <p className={cn("text-[10px]", isChosen ? "text-slate-900" : "text-slate-400")}>
+                            {s.shiftName}
+                          </p>
+                        </div>
+                      </div>
+                      <div className="text-left font-mono text-[10px]">
+                        <span className={cn(
+                          "px-1.5 py-0.5 rounded",
+                          isChosen ? "bg-black/15 text-slate-950 font-bold" : "bg-slate-100 text-slate-500"
+                        )}>
+                          عهدة: {s.startingCash} ج.م
+                        </span>
+                      </div>
+                    </button>
+                  );
+                })}
+              </div>
+            ) : (
+              <input
+                type="text"
+                value={cashierInputName}
+                onChange={e => setCashierInputName(e.target.value)}
+                placeholder="مثال: أحمد، كاشير 1..."
+                className="w-full bg-slate-50 border border-slate-300 focus:border-amber-500 rounded-xl px-3 py-2 text-xs font-bold text-slate-800 outline-none text-center shadow-inner"
+              />
+            )}
           </div>
 
           {/* PIN Indicators */}
@@ -1679,7 +1813,7 @@ export const CashierPOS: React.FC = () => {
             {lockPinError ? (
               <p className="text-xs text-rose-600 font-bold animate-shake">{lockPinError}</p>
             ) : (
-              <p className="text-[11px] text-slate-400 font-medium">أدخل رمز PIN للكاشير المحدد من الإدارة</p>
+              <p className="text-[11px] text-slate-400 font-medium">أدخل رمز PIN الخاص بالكاشير المحدد لبدء العمل</p>
             )}
           </div>
 
@@ -1694,18 +1828,7 @@ export const CashierPOS: React.FC = () => {
                     const next = lockPinInput + digit;
                     setLockPinInput(next);
                     if (next.length === 4) {
-                      const restId = selectedRestaurant?.id || '';
-                      if (verifyCashierOrManagerPin(restId, next)) {
-                        setIsScreenLocked(false);
-                        setLockPinInput('');
-                        setLockPinError('');
-                        if (cashierInputName.trim()) {
-                          setShift(prev => ({ ...prev, cashierName: cashierInputName.trim() }));
-                        }
-                      } else {
-                        setLockPinError('رمز PIN غير صحيح! يرجى مراجعة إدارة المطعم');
-                        setLockPinInput('');
-                      }
+                      handleUnlockScreen(next);
                     }
                   }
                 }}
@@ -1731,18 +1854,7 @@ export const CashierPOS: React.FC = () => {
                   const next = lockPinInput + '0';
                   setLockPinInput(next);
                   if (next.length === 4) {
-                    const restId = selectedRestaurant?.id || '';
-                    if (verifyCashierOrManagerPin(restId, next)) {
-                      setIsScreenLocked(false);
-                      setLockPinInput('');
-                      setLockPinError('');
-                      if (cashierInputName.trim()) {
-                        setShift(prev => ({ ...prev, cashierName: cashierInputName.trim() }));
-                      }
-                    } else {
-                      setLockPinError('رمز PIN غير صحيح!');
-                      setLockPinInput('');
-                    }
+                    handleUnlockScreen(next);
                   }
                 }
               }}
@@ -1752,7 +1864,7 @@ export const CashierPOS: React.FC = () => {
             </button>
             <button
               type="button"
-              onClick={handleUnlockScreen}
+              onClick={() => handleUnlockScreen()}
               className="h-13 bg-amber-500 hover:bg-amber-600 active:bg-amber-700 text-white font-bold text-xs rounded-2xl flex items-center justify-center shadow-md shadow-amber-500/20 transition-all cursor-pointer"
             >
               دخول
@@ -1826,12 +1938,28 @@ export const CashierPOS: React.FC = () => {
             <span className="text-slate-300">|</span>
             <span className="font-mono font-bold text-blue-600">{shift.cardSales.toFixed(0)} فيزا</span>
             <span className="text-slate-300">|</span>
+            <span className="font-mono font-bold text-purple-600">{(shift.walletSales || 0).toFixed(0)} انستاباي</span>
+            <span className="text-slate-300">|</span>
             <span className="font-mono font-bold text-amber-600">({shift.ordersCount}) طلب</span>
           </div>
         </div>
 
         {/* Action Controls */}
         <div className="flex items-center gap-2">
+          {/* Active Cashier Name Badge */}
+          <div className="flex items-center gap-1.5 bg-slate-100/90 border border-slate-200 px-2.5 py-1.5 rounded-xl text-xs font-bold text-slate-800 shadow-xs">
+            <span className="text-amber-600">👤</span>
+            <span className="text-xs font-black truncate max-w-[120px]">{shift.cashierName || 'كاشير الفرع'}</span>
+            <button
+              type="button"
+              onClick={() => setIsScreenLocked(true)}
+              className="text-[10px] text-blue-600 hover:text-blue-800 hover:underline mr-0.5 font-bold cursor-pointer"
+              title="تبديل الوردية أو تسليم كاشير آخر"
+            >
+              (تبديل)
+            </button>
+          </div>
+
           {/* Orders History Modal Shortcut Button */}
           <button
             onClick={() => setIsOrdersHistoryModalOpen(true)}
@@ -1857,26 +1985,6 @@ export const CashierPOS: React.FC = () => {
                 {heldBills.length}
               </span>
             )}
-          </button>
-
-          {/* X-Report Button */}
-          <button
-            onClick={() => setShiftReportType('X')}
-            className="px-2.5 py-1.5 bg-blue-50 hover:bg-blue-100 text-blue-700 text-xs font-bold rounded-xl flex items-center gap-1.5 border border-blue-200 transition-all cursor-pointer"
-            title="تقرير مبيعات الشيفت اللحظي (X-Report)"
-          >
-            <TrendingUp size={14} />
-            <span className="hidden sm:inline">X-Report</span>
-          </button>
-
-          {/* Z-Report / Shift Close Button */}
-          <button
-            onClick={() => setShiftReportType('Z')}
-            className="px-2.5 py-1.5 bg-rose-50 hover:bg-rose-100 text-rose-700 text-xs font-bold rounded-xl flex items-center gap-1.5 border border-rose-200 transition-all cursor-pointer"
-            title="تقفيل الوردية والدرج (Z-Report)"
-          >
-            <FileText size={14} />
-            <span className="hidden sm:inline">تقفيل الشيفت (Z)</span>
           </button>
 
           {/* Cash In / Out */}
@@ -2108,6 +2216,127 @@ export const CashierPOS: React.FC = () => {
           {/* Tab 1: Product Grid View (Items side-by-side) */}
           {activeTab === 'pos' && (
             <div className="flex-1 overflow-y-auto p-3 sm:p-4 space-y-4">
+              {/* 🍽️ LIVE DINING TABLES & FINANCIALS STRIP (معروضة في الشاشة الرئيسية قدام عين الكاشير) */}
+              {tablesFinancials.length > 0 && (
+                <div className="bg-white rounded-2xl border border-slate-200/90 shadow-sm p-3.5 space-y-3">
+                  {/* Tables Header */}
+                  <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-100 pb-2.5">
+                    <div className="flex items-center gap-2">
+                      <div className="w-8 h-8 rounded-xl bg-amber-500 text-white flex items-center justify-center shadow-sm shadow-amber-500/20">
+                        <UtensilsCrossed size={16} />
+                      </div>
+                      <div>
+                        <div className="flex items-center gap-2">
+                          <h4 className="font-black text-sm text-slate-800">
+                            طاولات الصالة والحسابات المفتوحة
+                          </h4>
+                          <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-slate-100 text-slate-600">
+                            {occupiedTablesCount} مشغولة من أصل {tablesFinancials.length}
+                          </span>
+                        </div>
+                        <p className="text-[11px] text-slate-400">
+                          معاينة لحظية لكل طاولة والمبلغ المطلوب تحصيله منها فوراً
+                        </p>
+                      </div>
+                    </div>
+
+                    {/* Top Highlight Badge for Grand Total */}
+                    <div className="flex items-center gap-2">
+                      <div className="px-3 py-1.5 rounded-xl bg-gradient-to-r from-amber-500 to-orange-500 text-white shadow-sm flex items-center gap-2 font-black text-xs">
+                        <span>إجمالي مستحقات الطاولات:</span>
+                        <span className="font-mono text-sm bg-black/20 px-2 py-0.5 rounded-lg">
+                          {allTablesTotalDue.toFixed(2)} ج.م
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Tables Ribbon / Horizontal Scrollable Grid */}
+                  <div className="flex items-stretch gap-2.5 overflow-x-auto no-scrollbar py-1">
+                    {tablesFinancials.map(t => {
+                      const isSelected = selectedTable?.id === t.id;
+                      const hasDue = t.totalDue > 0;
+
+                      return (
+                        <button
+                          key={t.id}
+                          type="button"
+                          onClick={() => {
+                            setSelectedTable(t);
+                            setOrderType('dine_in');
+                            if (t.heldBills && t.heldBills.length > 0) {
+                              const held = t.heldBills[0];
+                              setCart(held.items);
+                              setCustomerName(held.customerName || '');
+                              setOrderNotes(held.notes || '');
+                              setHeldBills(prev => prev.filter(b => b.id !== held.id));
+                            }
+                          }}
+                          className={cn(
+                            "shrink-0 min-w-[125px] p-2.5 rounded-2xl border text-center transition-all cursor-pointer flex flex-col justify-between gap-2 select-none",
+                            isSelected
+                              ? "bg-amber-500 text-white border-amber-500 shadow-md ring-2 ring-amber-300"
+                              : hasDue
+                              ? "bg-rose-50/90 border-rose-300 text-rose-900 hover:bg-rose-100 shadow-xs"
+                              : t.isOccupied
+                              ? "bg-amber-50 border-amber-200 text-amber-900 hover:bg-amber-100"
+                              : "bg-slate-50 hover:bg-white border-slate-200 text-slate-700 hover:border-slate-300"
+                          )}
+                        >
+                          <div className="flex items-center justify-between w-full">
+                            <span className="font-black text-xs">طاولة #{t.table_number}</span>
+                            <span className={cn(
+                              "w-2.5 h-2.5 rounded-full",
+                              hasDue ? "bg-rose-500 animate-pulse" : t.isOccupied ? "bg-amber-500" : "bg-emerald-400"
+                            )} />
+                          </div>
+
+                          {/* Money to be collected under each table */}
+                          <div className="w-full bg-white/90 rounded-xl py-1 px-1.5 text-center border border-black/5 shadow-2xs">
+                            <span className="text-[10px] text-slate-400 font-bold block leading-none mb-0.5">
+                              {hasDue ? 'مطلوب تحصيله:' : 'الحالة:'}
+                            </span>
+                            <span className={cn(
+                              "font-mono font-black text-xs block leading-tight",
+                              isSelected ? "text-slate-900" : hasDue ? "text-rose-700 font-black text-sm" : "text-emerald-600"
+                            )}>
+                              {hasDue ? `${t.totalDue.toFixed(0)} ج.م` : 'متاحة (0 ج.م)'}
+                            </span>
+                          </div>
+                        </button>
+                      );
+                    })}
+                  </div>
+
+                  {/* Grand Total Summary Box under all tables */}
+                  <div className="bg-slate-50 rounded-xl p-2.5 px-3 border border-slate-200/70 flex flex-col sm:flex-row items-center justify-between text-xs text-slate-700 gap-2">
+                    <div className="flex items-center gap-2 font-bold flex-wrap">
+                      <span className="text-base">💵</span>
+                      <span>إجمالي المبيع المطلوب تحصيله من كل الطاولات:</span>
+                      <span className="font-mono font-black text-slate-950 bg-white px-2.5 py-0.5 rounded-lg border border-slate-300 text-sm shadow-2xs">
+                        {allTablesTotalDue.toFixed(2)} جنيه
+                      </span>
+                      <span className="text-amber-700 bg-amber-50 px-2 py-0.5 rounded-md border border-amber-200 text-[11px] font-bold">
+                        (كل الترابيزات مفروض تدفع {allTablesTotalDue.toFixed(0)} جنيه)
+                      </span>
+                    </div>
+
+                    <div className="flex items-center gap-2">
+                      <span className="text-[11px] text-slate-400">
+                        {selectedTable ? `المحددة حالياً: طاولة #${selectedTable.table_number}` : 'اختر طاولة لتسجيل طلب'}
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => setActiveTab('tables')}
+                        className="text-xs font-bold text-amber-600 hover:text-amber-800 hover:underline cursor-pointer"
+                      >
+                        عرض المخطط الشامل
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              )}
+
               {/* Category Filter Active Indicator if filtered */}
               {selectedCategory !== 'all' && (
                 <div className="flex items-center justify-between pb-2 border-b border-slate-200">
@@ -2286,11 +2515,28 @@ export const CashierPOS: React.FC = () => {
 
           {/* Tab 3: Tables Floor Map */}
           {activeTab === 'tables' && (
-            <div className="flex-1 overflow-y-auto p-4 bg-slate-50">
-              <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-6 gap-3">
-                {tables.map(table => {
+            <div className="flex-1 overflow-y-auto p-4 bg-slate-50 space-y-4">
+              <div className="bg-white p-3.5 rounded-2xl border border-slate-200 shadow-sm flex flex-col sm:flex-row items-center justify-between gap-3">
+                <div className="flex items-center gap-2">
+                  <div className="w-9 h-9 rounded-xl bg-amber-500 text-white flex items-center justify-center shadow-md shadow-amber-500/20">
+                    <UtensilsCrossed size={18} />
+                  </div>
+                  <div>
+                    <h3 className="font-black text-slate-800 text-sm">مخطط صالة المطعم والطاولات</h3>
+                    <p className="text-[11px] text-slate-400">اختر أي طاولة لبدء تسجيل طلب صالة أو تحصيل حسابها</p>
+                  </div>
+                </div>
+
+                <div className="px-3.5 py-1.5 rounded-xl bg-slate-900 text-white font-bold text-xs flex items-center gap-2 shadow-sm">
+                  <span className="text-amber-400">إجمالي المطلوب تحصيله:</span>
+                  <span className="font-mono text-sm text-emerald-400 font-black">{allTablesTotalDue.toFixed(2)} ج.م</span>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-3">
+                {tablesFinancials.map(table => {
                   const isSelected = selectedTable?.id === table.id;
-                  const isOccupied = table.is_occupied;
+                  const hasDue = table.totalDue > 0;
 
                   return (
                     <button
@@ -2298,26 +2544,61 @@ export const CashierPOS: React.FC = () => {
                       onClick={() => {
                         setSelectedTable(table);
                         setOrderType('dine_in');
+                        if (table.heldBills && table.heldBills.length > 0) {
+                          const held = table.heldBills[0];
+                          setCart(held.items);
+                          setCustomerName(held.customerName || '');
+                          setOrderNotes(held.notes || '');
+                          setHeldBills(prev => prev.filter(b => b.id !== held.id));
+                        }
                         setActiveTab('pos');
                       }}
-                      className={`p-4 rounded-2xl border text-center transition-all cursor-pointer flex flex-col items-center justify-center gap-2 ${
+                      className={`p-3.5 rounded-2xl border text-center transition-all cursor-pointer flex flex-col items-center justify-between gap-2 shadow-sm ${
                         isSelected 
-                          ? 'bg-amber-500 text-white border-amber-400 shadow-md scale-105'
-                          : isOccupied
-                          ? 'bg-rose-50 border-rose-200 text-rose-700 hover:bg-rose-100'
-                          : 'bg-white border-slate-200 text-slate-800 hover:border-amber-400 shadow-sm'
+                          ? 'bg-amber-500 text-white border-amber-400 ring-2 ring-amber-300'
+                          : hasDue
+                          ? 'bg-rose-50/90 border-rose-300 text-rose-900 hover:bg-rose-100'
+                          : table.isOccupied
+                          ? 'bg-amber-50 border-amber-200 text-amber-900 hover:bg-amber-100'
+                          : 'bg-white border-slate-200 text-slate-800 hover:border-amber-400'
                       }`}
                     >
-                      <UtensilsCrossed size={24} />
-                      <div>
-                        <span className="font-bold text-sm block">طاولة #{table.table_number}</span>
-                        <span className="text-[10px] font-medium opacity-80">
-                          {isOccupied ? 'مشغولة' : 'متاحة'}
+                      <div className="flex items-center justify-between w-full">
+                        <span className="font-black text-xs">طاولة #{table.table_number}</span>
+                        <span className={`w-2.5 h-2.5 rounded-full ${
+                          hasDue ? 'bg-rose-500 animate-pulse' : table.isOccupied ? 'bg-amber-500' : 'bg-emerald-400'
+                        }`} />
+                      </div>
+
+                      <UtensilsCrossed size={22} className={isSelected ? 'text-white' : 'text-slate-500'} />
+
+                      <div className="w-full bg-white/95 rounded-xl py-1 px-1.5 text-center border border-black/5 shadow-2xs">
+                        <span className="text-[10px] text-slate-400 font-bold block leading-none mb-0.5">
+                          {hasDue ? 'مطلوب تحصيله:' : 'الحالة:'}
+                        </span>
+                        <span className={`font-mono font-black text-xs block leading-tight ${
+                          isSelected ? 'text-slate-900' : hasDue ? 'text-rose-700 font-black text-sm' : 'text-emerald-600'
+                        }`}>
+                          {hasDue ? `${table.totalDue.toFixed(0)} ج.م` : 'متاحة (0 ج.م)'}
                         </span>
                       </div>
                     </button>
                   );
                 })}
+              </div>
+
+              {/* Grand Total Footer Banner */}
+              <div className="bg-white rounded-2xl p-3.5 border border-slate-200 shadow-sm flex flex-col sm:flex-row items-center justify-between gap-2 text-xs font-bold text-slate-800">
+                <div className="flex items-center gap-2">
+                  <span className="text-base">💰</span>
+                  <span>إجمالي المبيع المطلوب تحصيله من كل الطاولات:</span>
+                  <span className="font-mono text-base font-black text-emerald-700 bg-emerald-50 px-3 py-1 rounded-xl border border-emerald-200">
+                    {allTablesTotalDue.toFixed(2)} جنيه
+                  </span>
+                </div>
+                <div className="text-slate-500 text-[11px]">
+                  (كل الترابيزات مفروض تدفع <span className="font-bold text-slate-800">{allTablesTotalDue.toFixed(0)} جنيه</span>)
+                </div>
               </div>
             </div>
           )}
@@ -2716,7 +2997,7 @@ export const CashierPOS: React.FC = () => {
                 }`}
               >
                 <ShoppingCart size={15} />
-                <span>سلة البيع المباشر</span>
+                <span>طلب البيع المباشر</span>
                 {cart.length > 0 && (
                   <span className="px-1.5 py-0.2 rounded-md bg-emerald-500 text-white font-mono text-[10px] font-bold">
                     {cart.length}
