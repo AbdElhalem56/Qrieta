@@ -93,7 +93,8 @@ import {
   Pie,
   Cell
 } from 'recharts';
-import { formatCurrency, cn } from '../../lib/utils';
+import { formatCurrency, toEnglishDigits, cn } from '../../lib/utils';
+import { getStoredActiveShift, getStoredShiftReports, getCashierShiftConfigs } from '../../lib/shiftsStore';
 import { motion, AnimatePresence } from 'motion/react';
 
 export default function AdminDashboard() {
@@ -118,7 +119,8 @@ export default function AdminDashboard() {
   
   // Real-time live orders from both Cashier POS and Customer App
   const [adminLiveOrders, setAdminLiveOrders] = useState<LiveOrder[]>([]);
-  const [ordersSourceFilter, setOrdersSourceFilter] = useState<'all' | 'customer_app' | 'cashier_pos' | 'delivery' | 'dine_in'>('all');
+  const [ordersSourceFilter, setOrdersSourceFilter] = useState<'all' | 'cashier_pos' | 'customer_app'>('all');
+  const [ordersTypeFilter, setOrdersTypeFilter] = useState<'all' | 'dine_in' | 'delivery' | 'takeaway'>('all');
   const [isUpdatingOrderStatus, setIsUpdatingOrderStatus] = useState<string | null>(null);
   const [newCat, setNewCat] = useState({ en: '', ar: '' });
   const [newCatOptions, setNewCatOptions] = useState<CategoryOption[]>([]);
@@ -297,6 +299,19 @@ export default function AdminDashboard() {
     const liveMap = new Map<string, LiveOrder>();
     adminLiveOrders.forEach(lo => liveMap.set(String(lo.id), lo));
 
+    // Gather shift data for robust cashier and payment method mapping
+    const restId = restaurant?.id || '';
+    const storedActive = restId ? getStoredActiveShift(restId) : null;
+    const storedReports = restId ? getStoredShiftReports(restId) : [];
+    const shiftConfigs = restId ? getCashierShiftConfigs(restId) : [];
+    const fallbackCashier = storedActive?.cashierName || shiftConfigs[0]?.cashierName || 'كاشير 1';
+
+    const allShiftOrders: any[] = [];
+    if (storedActive?.orders) allShiftOrders.push(...storedActive.orders);
+    storedReports.forEach(r => {
+      if (r.shift?.orders) allShiftOrders.push(...r.shift.orders);
+    });
+
     const map = new Map<string, any>();
 
     // 1. Map historical orders with any live updates
@@ -307,17 +322,67 @@ export default function AdminDashboard() {
                      Number(lo.daily_order_number) === Number(o.daily_order_number)
                    );
 
+      const noteText = [
+        o.notes,
+        o.order_items?.[0]?.notes,
+        ...(Array.isArray(o.order_items) ? o.order_items.map((it: any) => it.notes) : [])
+      ].filter(Boolean).join(' ');
+
       const isCustomerApp = live?.source === 'customer_app' || 
                             o.source === 'customer_app' || 
-                            Boolean(o.notes && o.notes.includes('تطبيق الزبائن'));
+                            Boolean(noteText.includes('طلب زبون') || noteText.includes('تطبيق الزبائن'));
 
-      const cashierName = live?.cashier_name || 
-                          (o as any).cashier_name || 
-                          (isCustomerApp ? 'طلب أونلاين' : 'كاشير الفرع');
+      // Check matching shift order
+      const matchingShiftOrder = allShiftOrders.find((so: any) => 
+        String(so.id) === String(o.id) || 
+        (so.daily_order_number && o.daily_order_number && Number(so.daily_order_number) === Number(o.daily_order_number))
+      );
 
-      const paymentMethod = live?.payment_method || 
-                            (o as any).payment_method || 
-                            'cash';
+      // Resolve Cashier Name
+      const cashierMatch = noteText.match(/كاشير:\s*([^|\]]+)/);
+      let cashierName = live?.cashier_name || 
+                        (o as any).cashier_name || 
+                        (cashierMatch ? cashierMatch[1].trim() : null) ||
+                        matchingShiftOrder?.cashier_name;
+
+      if (!cashierName) {
+        cashierName = isCustomerApp ? 'تطبيق الزبائن (أونلاين)' : fallbackCashier;
+      }
+
+      // Resolve Payment Method
+      let paymentMethod = live?.payment_method || 
+                          (o as any).payment_method || 
+                          matchingShiftOrder?.payment_method;
+
+      if (!paymentMethod) {
+        if (noteText.includes('دفع: card') || noteText.includes('دفع: visa') || noteText.includes('فيزا') || noteText.includes('بطاقة')) {
+          paymentMethod = 'card';
+        } else if (noteText.includes('دفع: wallet') || noteText.includes('دفع: instapay') || noteText.includes('انستاباي') || noteText.includes('محفظة')) {
+          paymentMethod = 'wallet';
+        } else if (noteText.includes('دفع: split') || noteText.includes('مقسم') || noteText.includes('مجزأ')) {
+          paymentMethod = 'split';
+        } else {
+          paymentMethod = 'cash';
+        }
+      }
+
+      // Resolve Order Type
+      let orderType: 'dine_in' | 'delivery' | 'takeaway' = 'dine_in';
+      if (live?.order_type) {
+        orderType = live.order_type;
+      } else if (matchingShiftOrder?.order_type) {
+        orderType = matchingShiftOrder.order_type;
+      } else if (noteText.includes('دليفري') || noteText.includes('توصيل')) {
+        orderType = 'delivery';
+      } else if (noteText.includes('سفري') || noteText.includes('تيك أواي') || noteText.includes('takeaway')) {
+        orderType = 'takeaway';
+      } else if (o.tables || o.table_id) {
+        orderType = 'dine_in';
+      }
+
+      // Resolve Table Number
+      const tableMatch = noteText.match(/طاولة\s*([^|\]]+)/);
+      const tableNumber = live?.table_number || o.tables?.table_number || (tableMatch ? tableMatch[1].trim() : null);
 
       map.set(String(o.id), {
         ...o,
@@ -326,7 +391,9 @@ export default function AdminDashboard() {
         source: isCustomerApp ? 'customer_app' : 'cashier_pos',
         cashier_name: cashierName,
         payment_method: paymentMethod,
-        order_type: live?.order_type || (o.tables ? 'dine_in' : (o.notes?.includes('دليفري') ? 'delivery' : 'takeaway')),
+        order_type: orderType,
+        table_number: tableNumber,
+        tables: tableNumber ? { table_number: tableNumber } : o.tables,
         customer_name: live?.customer_name || (o as any).customer_name || '',
         customer_phone: live?.customer_phone || (o as any).customer_phone || '',
         delivery_address: live?.delivery_address || (o as any).delivery_address || '',
@@ -343,7 +410,19 @@ export default function AdminDashboard() {
       });
 
       if (!existingKey) {
-        const isCustomerApp = lo.source === 'customer_app' || Boolean(lo.notes && lo.notes.includes('تطبيق الزبائن'));
+        const noteText = lo.notes || '';
+        const isCustomerApp = lo.source === 'customer_app' || Boolean(noteText.includes('طلب زبون') || noteText.includes('تطبيق الزبائن'));
+        const cashierMatch = noteText.match(/كاشير:\s*([^|\]]+)/);
+        const cashierName = lo.cashier_name || (cashierMatch ? cashierMatch[1].trim() : (isCustomerApp ? 'تطبيق الزبائن (أونلاين)' : fallbackCashier));
+
+        let payMethod = lo.payment_method;
+        if (!payMethod) {
+          if (noteText.includes('دفع: card') || noteText.includes('فيزا') || noteText.includes('بطاقة')) payMethod = 'card';
+          else if (noteText.includes('دفع: wallet') || noteText.includes('انستاباي') || noteText.includes('محفظة')) payMethod = 'wallet';
+          else if (noteText.includes('دفع: split') || noteText.includes('مقسم')) payMethod = 'split';
+          else payMethod = 'cash';
+        }
+
         map.set(String(lo.id), {
           id: lo.id,
           daily_order_number: lo.daily_order_number,
@@ -352,9 +431,9 @@ export default function AdminDashboard() {
           total_price: lo.total_price,
           created_at: lo.created_at,
           source: isCustomerApp ? 'customer_app' : 'cashier_pos',
-          cashier_name: lo.cashier_name || (isCustomerApp ? 'طلب أونلاين' : 'كاشير الفرع'),
-          payment_method: lo.payment_method || 'cash',
-          order_type: lo.order_type,
+          cashier_name: cashierName,
+          payment_method: payMethod,
+          order_type: lo.order_type || (lo.table_number ? 'dine_in' : 'takeaway'),
           customer_name: lo.customer_name,
           customer_phone: lo.customer_phone,
           delivery_address: lo.delivery_address,
@@ -374,18 +453,19 @@ export default function AdminDashboard() {
 
     let list = Array.from(map.values());
 
-    // Filter by source / type
+    // 1. Primary Classification filter (بيع مباشر من الكاشير / تطبيق الزبائن)
     if (ordersSourceFilter === 'customer_app') {
       list = list.filter(o => o.source === 'customer_app');
     } else if (ordersSourceFilter === 'cashier_pos') {
       list = list.filter(o => o.source === 'cashier_pos' || o.source === 'pos' || o.source !== 'customer_app');
-    } else if (ordersSourceFilter === 'delivery') {
-      list = list.filter(o => o.order_type === 'delivery');
-    } else if (ordersSourceFilter === 'dine_in') {
-      list = list.filter(o => o.order_type === 'dine_in');
     }
 
-    // Filter by status
+    // 2. Sub-classification filter (صالة / دليفري / تيك أواي)
+    if (ordersTypeFilter !== 'all') {
+      list = list.filter(o => o.order_type === ordersTypeFilter);
+    }
+
+    // 3. Status filter
     if (ordersStatusFilter !== 'all') {
       list = list.filter(o => {
         if (ordersStatusFilter === 'delivered') return o.status === 'delivered' || o.status === 'completed';
@@ -393,28 +473,29 @@ export default function AdminDashboard() {
       });
     }
 
-    // Filter by search term
+    // 4. Search term filter
     if (ordersSearchTerm.trim()) {
       const q = ordersSearchTerm.trim().toLowerCase();
       list = list.filter(o => {
         const numMatch = String(o.daily_order_number || o.id).includes(q);
         const nameMatch = (o.customer_name || '').toLowerCase().includes(q);
         const phoneMatch = (o.customer_phone || '').includes(q);
-        const tableMatch = o.tables?.table_number ? String(o.tables.table_number).includes(q) : false;
+        const tableMatch = o.table_number ? String(o.table_number).includes(q) : (o.tables?.table_number ? String(o.tables.table_number).includes(q) : false);
+        const cashierMatch = (o.cashier_name || '').toLowerCase().includes(q);
         const notesMatch = (o.notes || '').toLowerCase().includes(q);
         const itemMatch = (o.order_items || []).some((it: any) => 
           (it.products?.name_ar || it.products?.name_en || '').toLowerCase().includes(q)
         ) || (o.live_items || []).some((it: any) =>
           (it.name || '').toLowerCase().includes(q)
         );
-        return numMatch || nameMatch || phoneMatch || tableMatch || notesMatch || itemMatch;
+        return numMatch || nameMatch || phoneMatch || tableMatch || cashierMatch || notesMatch || itemMatch;
       });
     }
 
     list.sort((a, b) => new Date(b.created_at || 0).getTime() - new Date(a.created_at || 0).getTime());
 
     return list;
-  }, [orders, adminLiveOrders, ordersSourceFilter, ordersStatusFilter, ordersSearchTerm]);
+  }, [orders, adminLiveOrders, ordersSourceFilter, ordersTypeFilter, ordersStatusFilter, ordersSearchTerm, restaurant]);
 
   const handleSaveCashierPin = (e?: React.FormEvent) => {
     if (e) e.preventDefault();
@@ -1919,15 +2000,15 @@ export default function AdminDashboard() {
                   <div className="bg-purple-50/60 border border-purple-100 p-3.5 rounded-2xl">
                     <span className="text-[10px] font-black text-purple-600 block mb-0.5">تطبيق الزبائن</span>
                     <p className="text-xl font-black text-purple-900 font-mono">
-                      {displayedSheetOrders.filter(o => o.source === 'customer_app').length}
+                      {toEnglishDigits(displayedSheetOrders.filter(o => o.source === 'customer_app').length)}
                     </p>
                     <span className="text-[10px] text-purple-600/80 font-medium">طلب أونلاين</span>
                   </div>
 
                   <div className="bg-amber-50/60 border border-amber-100 p-3.5 rounded-2xl">
-                    <span className="text-[10px] font-black text-amber-600 block mb-0.5">كاشير الفرع</span>
+                    <span className="text-[10px] font-black text-amber-600 block mb-0.5">بيع مباشر من الكاشير</span>
                     <p className="text-xl font-black text-amber-900 font-mono">
-                      {displayedSheetOrders.filter(o => o.source === 'cashier_pos').length}
+                      {toEnglishDigits(displayedSheetOrders.filter(o => o.source === 'cashier_pos').length)}
                     </p>
                     <span className="text-[10px] text-amber-600/80 font-medium">فاتورة كاشير</span>
                   </div>
@@ -1935,7 +2016,7 @@ export default function AdminDashboard() {
                   <div className="bg-blue-50/60 border border-blue-100 p-3.5 rounded-2xl">
                     <span className="text-[10px] font-black text-blue-600 block mb-0.5">طلبات الصالة</span>
                     <p className="text-xl font-black text-blue-900 font-mono">
-                      {displayedSheetOrders.filter(o => o.order_type === 'dine_in').length}
+                      {toEnglishDigits(displayedSheetOrders.filter(o => o.order_type === 'dine_in').length)}
                     </p>
                     <span className="text-[10px] text-blue-600/80 font-medium">طاولات</span>
                   </div>
@@ -1943,9 +2024,17 @@ export default function AdminDashboard() {
                   <div className="bg-teal-50/60 border border-teal-100 p-3.5 rounded-2xl">
                     <span className="text-[10px] font-black text-teal-600 block mb-0.5">طلبات دليفري</span>
                     <p className="text-xl font-black text-teal-900 font-mono">
-                      {displayedSheetOrders.filter(o => o.order_type === 'delivery').length}
+                      {toEnglishDigits(displayedSheetOrders.filter(o => o.order_type === 'delivery').length)}
                     </p>
                     <span className="text-[10px] text-teal-600/80 font-medium">توصيل منزلي</span>
+                  </div>
+
+                  <div className="bg-orange-50/60 border border-orange-100 p-3.5 rounded-2xl">
+                    <span className="text-[10px] font-black text-orange-600 block mb-0.5">طلبات تيك أواي</span>
+                    <p className="text-xl font-black text-orange-900 font-mono">
+                      {toEnglishDigits(displayedSheetOrders.filter(o => o.order_type === 'takeaway').length)}
+                    </p>
+                    <span className="text-[10px] text-orange-600/80 font-medium">سفري / استلام</span>
                   </div>
                 </div>
 
@@ -2010,27 +2099,25 @@ export default function AdminDashboard() {
                     </div>
                   </div>
 
-                  {/* Filter Pills Row */}
-                  <div className="flex flex-wrap items-center justify-between gap-3 pt-2">
-                    {/* Source Filters */}
-                    <div className="flex flex-wrap items-center gap-1.5">
-                      <span className="text-xs font-black text-gray-500 ml-1">المصدر:</span>
+                  {/* Filter Pills: Classification & Sub-types */}
+                  <div className="space-y-2.5 pt-2">
+                    {/* Primary Classification: بيع مباشر من الكاشير vs تطبيق الزبائن */}
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span className="text-xs font-black text-gray-700 ml-1">التصنيف:</span>
                       {[
                         { id: 'all', label: 'الكل' },
+                        { id: 'cashier_pos', label: '🏬 بيع مباشر من الكاشير' },
                         { id: 'customer_app', label: '📱 تطبيق الزبائن' },
-                        { id: 'cashier_pos', label: '🏬 كاشير الفرع' },
-                        { id: 'delivery', label: '🛵 دليفري' },
-                        { id: 'dine_in', label: '🍽️ صالة' },
                       ].map(tab => (
                         <button
                           key={tab.id}
                           type="button"
                           onClick={() => setOrdersSourceFilter(tab.id as any)}
                           className={cn(
-                            "px-3 py-1 rounded-xl text-xs font-bold transition-all cursor-pointer",
+                            "px-3.5 py-1.5 rounded-xl text-xs font-black transition-all cursor-pointer",
                             ordersSourceFilter === tab.id
-                              ? "bg-gray-900 text-white shadow-sm"
-                              : "bg-gray-100 hover:bg-gray-200 text-gray-600"
+                              ? "bg-gray-900 text-white shadow-sm ring-2 ring-gray-900/20"
+                              : "bg-gray-100 hover:bg-gray-200 text-gray-700"
                           )}
                         >
                           {tab.label}
@@ -2038,31 +2125,58 @@ export default function AdminDashboard() {
                       ))}
                     </div>
 
-                    {/* Status Filters */}
-                    <div className="flex flex-wrap items-center gap-1.5">
-                      <span className="text-xs font-black text-gray-500 ml-1">الحالة:</span>
-                      {[
-                        { id: 'all', label: 'الكل' },
-                        { id: 'new', label: 'جديد' },
-                        { id: 'preparing', label: 'قيد التحضير' },
-                        { id: 'ready', label: 'جاهز' },
-                        { id: 'delivered', label: 'تم التسليم' },
-                        { id: 'cancelled', label: 'ملغي' },
-                      ].map(tab => (
-                        <button
-                          key={tab.id}
-                          type="button"
-                          onClick={() => setOrdersStatusFilter(tab.id as any)}
-                          className={cn(
-                            "px-2.5 py-1 rounded-xl text-xs font-bold transition-all cursor-pointer",
-                            ordersStatusFilter === tab.id
-                              ? "bg-orange-600 text-white shadow-sm"
-                              : "bg-gray-100 hover:bg-gray-200 text-gray-600"
-                          )}
-                        >
-                          {tab.label}
-                        </button>
-                      ))}
+                    {/* Sub-classification: صالة وانهي طاولة / دليفري / تيك أواي */}
+                    <div className="flex flex-wrap items-center justify-between gap-3">
+                      <div className="flex flex-wrap items-center gap-1.5">
+                        <span className="text-xs font-black text-gray-500 ml-1">نوع الطلب:</span>
+                        {[
+                          { id: 'all', label: 'الكل' },
+                          { id: 'dine_in', label: '🍽️ صالة' },
+                          { id: 'delivery', label: '🛵 دليفري' },
+                          { id: 'takeaway', label: '🛍️ تيك أواي (سفري)' },
+                        ].map(typeTab => (
+                          <button
+                            key={typeTab.id}
+                            type="button"
+                            onClick={() => setOrdersTypeFilter(typeTab.id as any)}
+                            className={cn(
+                              "px-3 py-1 rounded-xl text-xs font-bold transition-all cursor-pointer",
+                              ordersTypeFilter === typeTab.id
+                                ? "bg-orange-500 text-white shadow-xs"
+                                : "bg-gray-100 hover:bg-gray-200 text-gray-600"
+                            )}
+                          >
+                            {typeTab.label}
+                          </button>
+                        ))}
+                      </div>
+
+                      {/* Status Filters */}
+                      <div className="flex flex-wrap items-center gap-1.5">
+                        <span className="text-xs font-black text-gray-500 ml-1">الحالة:</span>
+                        {[
+                          { id: 'all', label: 'الكل' },
+                          { id: 'new', label: 'جديد' },
+                          { id: 'preparing', label: 'قيد التحضير' },
+                          { id: 'ready', label: 'جاهز' },
+                          { id: 'delivered', label: 'تم التسليم' },
+                          { id: 'cancelled', label: 'ملغي' },
+                        ].map(tab => (
+                          <button
+                            key={tab.id}
+                            type="button"
+                            onClick={() => setOrdersStatusFilter(tab.id as any)}
+                            className={cn(
+                              "px-2.5 py-1 rounded-xl text-xs font-bold transition-all cursor-pointer",
+                              ordersStatusFilter === tab.id
+                                ? "bg-orange-600 text-white shadow-sm"
+                                : "bg-gray-100 hover:bg-gray-200 text-gray-600"
+                            )}
+                          >
+                            {tab.label}
+                          </button>
+                        ))}
+                      </div>
                     </div>
                   </div>
                 </div>
@@ -2070,26 +2184,25 @@ export default function AdminDashboard() {
                 {/* 📋 The Sheet Table */}
                 <div className="rounded-2xl border border-gray-200 overflow-hidden shadow-xs">
                   <div className="overflow-x-auto text-right">
-                    <table className="w-full min-w-[950px] border-collapse">
+                    <table className="w-full min-w-[900px] border-collapse">
                       <thead className="bg-gray-50/90 border-b border-gray-200 text-gray-600 text-xs font-black uppercase tracking-wider">
                         <tr>
                           <th className="px-5 py-3.5">رقم الطلب والوقت</th>
-                          <th className="px-5 py-3.5">المصدر والنوع</th>
-                          <th className="px-5 py-3.5">الكاشير المسؤول والدفع</th>
+                          <th className="px-5 py-3.5">التصنيف والنوع</th>
+                          <th className="px-5 py-3.5">اسم الكاشير والدفع</th>
                           <th className="px-5 py-3.5">العميل / التوصيل</th>
                           <th className="px-5 py-3.5">الأصناف والكميات</th>
                           <th className="px-5 py-3.5">قيمة الفاتورة</th>
                           <th className="px-5 py-3.5">حالة الطلب</th>
-                          <th className="px-5 py-3.5 text-center">إجراء وتحديث الحالة</th>
-                          <th className="px-4 py-3.5 text-center">تفاصيل</th>
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-gray-100 text-sm">
                         {displayedSheetOrders.map((order) => {
                           const dateObj = new Date(order.created_at || Date.now());
-                          const timeStr = dateObj.toLocaleTimeString('ar-EG', { hour: '2-digit', minute: '2-digit', hour12: true });
-                          const dateStr = dateObj.toLocaleDateString('ar-EG', { month: 'numeric', day: 'numeric' });
-                          const orderNum = order.daily_order_number || getDisplayOrderNumber(order);
+                          const timeStr = toEnglishDigits(dateObj.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: true }));
+                          const dateStr = toEnglishDigits(dateObj.toLocaleDateString('en-US', { month: '2-digit', day: '2-digit', year: 'numeric' }));
+                          const rawOrderNum = order.daily_order_number || getDisplayOrderNumber(order);
+                          const orderNum = toEnglishDigits(rawOrderNum);
 
                           // Normalize items
                           const itemsList: Array<{ name: string; quantity: number; price?: number; notes?: string }> = [];
@@ -2113,12 +2226,19 @@ export default function AdminDashboard() {
                             });
                           }
 
+                          const tableNumDisplay = toEnglishDigits(order.table_number || order.tables?.table_number || 'عامة');
+
                           return (
-                            <tr key={String(order.id)} className="hover:bg-orange-50/30 transition-colors">
-                              {/* 1. Order Number & Time */}
+                            <tr 
+                              key={String(order.id)} 
+                              onClick={() => setSelectedOrderForDetails(order)}
+                              className="hover:bg-orange-50/40 transition-colors cursor-pointer"
+                              title="انقر لعرض تفاصيل الطلب والفاتورة الكاملة"
+                            >
+                              {/* 1. Order Number & Time (English Digits) */}
                               <td className="px-5 py-3.5 align-middle">
                                 <div className="flex items-center gap-2">
-                                  <span className="w-9 h-9 rounded-xl bg-orange-100 text-orange-800 font-black text-sm flex items-center justify-center font-mono shadow-xs">
+                                  <span className="w-10 h-10 rounded-xl bg-orange-100 text-orange-800 font-black text-sm flex items-center justify-center font-mono shadow-xs">
                                     #{orderNum}
                                   </span>
                                   <div>
@@ -2126,12 +2246,12 @@ export default function AdminDashboard() {
                                       <Clock size={12} className="text-gray-400" />
                                       <span>{timeStr}</span>
                                     </div>
-                                    <span className="text-[10px] text-gray-400 font-medium">{dateStr}</span>
+                                    <span className="text-[10px] text-gray-400 font-medium font-mono">{dateStr}</span>
                                   </div>
                                 </div>
                               </td>
 
-                              {/* 2. Source & Type */}
+                              {/* 2. Classification & Type (بيع مباشر من الكاشير / تطبيق الزبائن + صالة/طاولة/دليفري/تيك اواي) */}
                               <td className="px-5 py-3.5 align-middle">
                                 <div className="space-y-1">
                                   {order.source === 'customer_app' ? (
@@ -2140,39 +2260,39 @@ export default function AdminDashboard() {
                                       <span>تطبيق الزبائن</span>
                                     </span>
                                   ) : (
-                                    <span className="inline-flex items-center gap-1 bg-amber-50 text-amber-700 border border-amber-200 px-2 py-0.5 rounded-lg text-[10px] font-black">
+                                    <span className="inline-flex items-center gap-1 bg-amber-50 text-amber-800 border border-amber-200 px-2 py-0.5 rounded-lg text-[10px] font-black">
                                       <Store size={10} />
-                                      <span>كاشير الفرع</span>
+                                      <span>بيع مباشر من الكاشير</span>
                                     </span>
                                   )}
 
                                   <div>
                                     {order.order_type === 'dine_in' ? (
-                                      <span className="inline-flex items-center gap-1 bg-blue-50 text-blue-700 px-2 py-0.5 rounded-lg text-[10px] font-black">
+                                      <span className="inline-flex items-center gap-1 bg-blue-50 text-blue-700 border border-blue-200/60 px-2 py-0.5 rounded-lg text-[10px] font-black">
                                         <Coffee size={10} />
-                                        <span>طاولة {order.tables?.table_number || order.table_number || 'صالة'}</span>
+                                        <span>صالة - طاولة {tableNumDisplay}</span>
                                       </span>
                                     ) : order.order_type === 'delivery' ? (
-                                      <span className="inline-flex items-center gap-1 bg-emerald-50 text-emerald-700 px-2 py-0.5 rounded-lg text-[10px] font-black">
+                                      <span className="inline-flex items-center gap-1 bg-emerald-50 text-emerald-700 border border-emerald-200/60 px-2 py-0.5 rounded-lg text-[10px] font-black">
                                         <Bike size={10} />
                                         <span>دليفري (توصيل)</span>
                                       </span>
                                     ) : (
-                                      <span className="inline-flex items-center gap-1 bg-gray-100 text-gray-700 px-2 py-0.5 rounded-lg text-[10px] font-black">
-                                        <span>سفري (تيك أواي)</span>
+                                      <span className="inline-flex items-center gap-1 bg-gray-100 text-gray-700 border border-gray-200/60 px-2 py-0.5 rounded-lg text-[10px] font-black">
+                                        <span>🛍️ سفري (تيك أواي)</span>
                                       </span>
                                     )}
                                   </div>
                                 </div>
                               </td>
 
-                              {/* 2.5. Cashier & Payment Method */}
+                              {/* 3. Cashier Name & Payment Method */}
                               <td className="px-5 py-3.5 align-middle">
                                 <div className="space-y-1">
                                   <div className="flex items-center gap-1.5 text-xs font-black text-gray-800">
                                     <span className="text-amber-600 text-sm">👤</span>
-                                    <span className="truncate max-w-[130px]" title={order.cashier_name || 'كاشير الفرع'}>
-                                      {order.cashier_name || 'كاشير الفرع'}
+                                    <span className="truncate max-w-[130px]" title={order.cashier_name || (order.source === 'customer_app' ? 'تطبيق الزبائن (أونلاين)' : 'كاشير 1')}>
+                                      {order.cashier_name || (order.source === 'customer_app' ? 'تطبيق الزبائن (أونلاين)' : 'كاشير 1')}
                                     </span>
                                   </div>
                                   <div>
@@ -2197,7 +2317,7 @@ export default function AdminDashboard() {
                                 </div>
                               </td>
 
-                              {/* 3. Customer Info */}
+                              {/* 4. Customer Info (English Digits) */}
                               <td className="px-5 py-3.5 align-middle">
                                 <div className="space-y-0.5">
                                   <p className="font-black text-xs text-gray-900">
@@ -2206,10 +2326,11 @@ export default function AdminDashboard() {
                                   {order.customer_phone ? (
                                     <a
                                       href={`tel:${order.customer_phone}`}
+                                      onClick={(e) => e.stopPropagation()}
                                       className="text-[11px] font-bold text-orange-600 hover:underline font-mono block"
                                       dir="ltr"
                                     >
-                                      {order.customer_phone}
+                                      {toEnglishDigits(order.customer_phone)}
                                     </a>
                                   ) : null}
                                   {order.delivery_address && (
@@ -2220,35 +2341,29 @@ export default function AdminDashboard() {
                                 </div>
                               </td>
 
-                              {/* 4. Items summary */}
+                              {/* 5. Items summary (English Digits) */}
                               <td className="px-5 py-3.5 align-middle">
-                                <div 
-                                  onClick={() => setSelectedOrderForDetails(order)}
-                                  className="cursor-pointer group"
-                                  title="انقر لعرض تفاصيل الأصناف"
-                                >
-                                  <div className="flex flex-wrap gap-1 max-w-[240px]">
-                                    {itemsList.slice(0, 3).map((it, idx) => (
-                                      <span
-                                        key={idx}
-                                        className="bg-orange-50 group-hover:bg-orange-100 text-orange-700 border border-orange-200/60 text-[10px] px-2 py-0.5 rounded-md font-bold transition-colors"
-                                      >
-                                        {it.quantity}x {it.name}
-                                      </span>
-                                    ))}
-                                    {itemsList.length > 3 && (
-                                      <span className="bg-gray-100 text-gray-600 text-[10px] px-1.5 py-0.5 rounded-md font-bold">
-                                        +{itemsList.length - 3} آخرين
-                                      </span>
-                                    )}
-                                    {itemsList.length === 0 && (
-                                      <span className="text-gray-400 text-xs">لا توجد أصناف</span>
-                                    )}
-                                  </div>
+                                <div className="flex flex-wrap gap-1 max-w-[240px]">
+                                  {itemsList.slice(0, 3).map((it, idx) => (
+                                    <span
+                                      key={idx}
+                                      className="bg-orange-50 group-hover:bg-orange-100 text-orange-700 border border-orange-200/60 text-[10px] px-2 py-0.5 rounded-md font-bold transition-colors font-mono"
+                                    >
+                                      {toEnglishDigits(it.quantity)}x {it.name}
+                                    </span>
+                                  ))}
+                                  {itemsList.length > 3 && (
+                                    <span className="bg-gray-100 text-gray-600 text-[10px] px-1.5 py-0.5 rounded-md font-bold font-mono">
+                                      +{toEnglishDigits(itemsList.length - 3)} آخرين
+                                    </span>
+                                  )}
+                                  {itemsList.length === 0 && (
+                                    <span className="text-gray-400 text-xs">لا توجد أصناف</span>
+                                  )}
                                 </div>
                               </td>
 
-                              {/* 5. Total Price & Payment Status */}
+                              {/* 6. Total Price & Payment Status (English Digits) */}
                               <td className="px-5 py-3.5 align-middle">
                                 <p className="font-black text-gray-900 text-sm font-mono">
                                   {formatCurrency(order.total_price)}
@@ -2263,7 +2378,7 @@ export default function AdminDashboard() {
                                 </span>
                               </td>
 
-                              {/* 6. Status Badge */}
+                              {/* 7. Status Badge */}
                               <td className="px-5 py-3.5 align-middle">
                                 <span className={cn(
                                   "px-2.5 py-1 rounded-xl text-[11px] font-black inline-block border",
@@ -2283,83 +2398,13 @@ export default function AdminDashboard() {
                                    order.status === 'delivered' || order.status === 'completed' ? 'تم التسليم ✅' : 'ملغي ❌'}
                                 </span>
                               </td>
-
-                              {/* 7. Quick Status Actions */}
-                              <td className="px-5 py-3.5 align-middle text-center">
-                                <div className="flex items-center justify-center gap-1">
-                                  {order.status === 'new' && (
-                                    <button
-                                      type="button"
-                                      onClick={() => handleAdminUpdateOrderStatus(order.id, 'preparing')}
-                                      disabled={isUpdatingOrderStatus === String(order.id)}
-                                      className="px-2.5 py-1 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-[10px] font-black shadow-xs transition-all cursor-pointer"
-                                    >
-                                      بدء التحضير
-                                    </button>
-                                  )}
-
-                                  {order.status === 'preparing' && (
-                                    <button
-                                      type="button"
-                                      onClick={() => handleAdminUpdateOrderStatus(order.id, 'ready')}
-                                      disabled={isUpdatingOrderStatus === String(order.id)}
-                                      className="px-2.5 py-1 bg-purple-600 hover:bg-purple-700 text-white rounded-lg text-[10px] font-black shadow-xs transition-all cursor-pointer"
-                                    >
-                                      جاهز للتسليم
-                                    </button>
-                                  )}
-
-                                  {(order.status === 'ready' || order.status === 'new' || order.status === 'preparing') && (
-                                    <button
-                                      type="button"
-                                      onClick={() => handleAdminUpdateOrderStatus(order.id, 'completed')}
-                                      disabled={isUpdatingOrderStatus === String(order.id)}
-                                      className="px-2.5 py-1 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-[10px] font-black shadow-xs transition-all cursor-pointer"
-                                    >
-                                      تسليم ✓
-                                    </button>
-                                  )}
-
-                                  {order.status !== 'cancelled' && order.status !== 'delivered' && order.status !== 'completed' && (
-                                    <button
-                                      type="button"
-                                      onClick={() => {
-                                        if (confirm('هل أنت متأكد من إلغاء هذا الطلب؟')) {
-                                          handleAdminUpdateOrderStatus(order.id, 'cancelled');
-                                        }
-                                      }}
-                                      disabled={isUpdatingOrderStatus === String(order.id)}
-                                      className="px-2 py-1 bg-gray-100 hover:bg-rose-50 hover:text-rose-600 text-gray-500 rounded-lg text-[10px] font-bold transition-all cursor-pointer"
-                                      title="إلغاء الطلب"
-                                    >
-                                      إلغاء
-                                    </button>
-                                  )}
-
-                                  {(order.status === 'delivered' || order.status === 'completed') && (
-                                    <span className="text-[10px] font-bold text-emerald-600">مكتمل ومفوتر</span>
-                                  )}
-                                </div>
-                              </td>
-
-                              {/* 8. Details Button */}
-                              <td className="px-4 py-3.5 align-middle text-center">
-                                <button
-                                  type="button"
-                                  onClick={() => setSelectedOrderForDetails(order)}
-                                  className="w-8 h-8 rounded-lg bg-gray-50 hover:bg-orange-50 hover:text-orange-600 text-gray-400 flex items-center justify-center transition-colors cursor-pointer mx-auto"
-                                  title="عرض الفاتورة وتفاصيل الطلب"
-                                >
-                                  <Eye size={16} />
-                                </button>
-                              </td>
                             </tr>
                           );
                         })}
 
                         {displayedSheetOrders.length === 0 && (
                           <tr>
-                            <td colSpan={8} className="px-6 py-16 text-center text-gray-400">
+                            <td colSpan={7} className="px-6 py-16 text-center text-gray-400">
                               <History size={40} className="mx-auto text-gray-300 mb-2" />
                               <p className="font-bold text-gray-600 text-sm">لا توجد طلبات تطابق معايير التصفية المحددة</p>
                               <p className="text-xs text-gray-400 mt-1">جرّب تغيير التاريخ أو اختيار "الكل" لعرض الطلبات</p>

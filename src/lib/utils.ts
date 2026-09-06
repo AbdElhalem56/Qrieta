@@ -5,11 +5,23 @@ export function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
 }
 
+export function toEnglishDigits(value: string | number | null | undefined): string {
+  if (value === null || value === undefined) return '';
+  return String(value)
+    .replace(/[٠-٩]/g, d => '0123456789'['٠١٢٣٤٥٦٧٨٩'.indexOf(d)])
+    .replace(/[۰-۹]/g, d => '0123456789'['۰۱۲۳۴۵۶۷۸۹'.indexOf(d)]);
+}
+
 export function formatCurrency(amount: number, locale: 'ar-EG' | 'en-US' = 'ar-EG') {
-  if (locale === 'ar-EG') {
-    return `${amount.toLocaleString('ar-EG')} جـ`;
+  const num = Number(amount || 0);
+  const formatted = num.toLocaleString('en-US', {
+    minimumFractionDigits: Number.isInteger(num) ? 0 : 2,
+    maximumFractionDigits: 2
+  });
+  if (locale === 'en-US') {
+    return `${formatted} LE`;
   }
-  return `${amount.toLocaleString('en-US')} LE`;
+  return `${formatted} ج.م`;
 }
 
 export interface DeliveryInfo {

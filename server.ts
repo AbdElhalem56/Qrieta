@@ -766,11 +766,26 @@ async function startServer() {
             const phoneMatch = firstNote.match(/هاتف:\s*([^|\]]+)/);
             const addrMatch = firstNote.match(/العنوان:\s*([^|\]]+)/);
 
+            // Cashier & Payment Extraction
+            const cashierMatch = firstNote.match(/كاشير:\s*([^|\]]+)/);
+            const cashierName = dbo.cashier_name || (cashierMatch ? cashierMatch[1].trim() : (isCustomer ? 'طلب أونلاين' : 'كاشير الفرع'));
+
+            let payMethod = dbo.payment_method || 'cash';
+            if (firstNote.includes('دفع: card') || firstNote.includes('دفع: visa') || firstNote.includes('فيزا') || firstNote.includes('بطاقة')) {
+              payMethod = 'card';
+            } else if (firstNote.includes('دفع: wallet') || firstNote.includes('دفع: instapay') || firstNote.includes('انستاباي') || firstNote.includes('محفظة')) {
+              payMethod = 'wallet';
+            } else if (firstNote.includes('دفع: split') || firstNote.includes('مقسم') || firstNote.includes('مجزأ')) {
+              payMethod = 'split';
+            }
+
             const mappedOrder = {
               id: dbo.id,
               daily_order_number: dailyNum,
               restaurant_id: dbo.restaurant_id,
               source: isCustomer ? 'customer_app' : 'pos',
+              cashier_name: cashierName,
+              payment_method: payMethod,
               order_type: orderType,
               table_id: dbo.table_id,
               table_number: tableNum,

@@ -1864,6 +1864,9 @@ export const CashierPOS: React.FC = () => {
           if (!error && data) {
             createdOrder = { ...orderPayload, id: data.id };
             try {
+              const cashierTag = shift.cashierName || 'كاشير 1';
+              const payTag = currentPayMethod;
+              const typeTag = orderType === 'dine_in' ? `طاولة ${selectedTable?.table_number || ''}` : orderType === 'takeaway' ? 'سفري' : 'دليفري';
               const itemsPayload = cart.map((it, idx) => {
                 const isUuid = typeof it.menuItemId === 'string' && it.menuItemId.length > 20 && it.menuItemId.includes('-');
                 return {
@@ -1871,7 +1874,7 @@ export const CashierPOS: React.FC = () => {
                   product_id: isUuid ? it.menuItemId : null,
                   quantity: it.quantity,
                   notes: idx === 0 
-                    ? `[طلب كاشير POS #${dailyOrderNum} | ${orderType === 'dine_in' ? `طاولة ${selectedTable?.table_number || ''}` : orderType === 'takeaway' ? 'سفري' : 'دليفري'}${customerName ? ` | ${customerName}` : ''}]` 
+                    ? `[طلب كاشير POS #${dailyOrderNum} | ${typeTag} | كاشير: ${cashierTag} | دفع: ${payTag}${customerName ? ` | العميل: ${customerName}` : ''}]` 
                     : (it.notes || null),
                   price_at_order: it.price
                 };
