@@ -348,6 +348,8 @@ export async function updateLiveOrderStatus(
     const numId = parseInt(String(orderId), 10);
     if (!isNaN(numId) && String(numId) === String(orderId).trim()) {
       await supabase.from('orders').update(updatePayload).eq('id', numId);
+    } else {
+      await supabase.from('orders').update(updatePayload).eq('id', orderId);
     }
   } catch (e) {
     console.warn('Supabase status update error:', e);

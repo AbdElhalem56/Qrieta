@@ -49,6 +49,7 @@ import { ManagerPinModal } from '../../components/POS/ManagerPinModal';
 import { WasteModal } from '../../components/POS/WasteModal';
 import { HeldBillsDrawer } from '../../components/POS/HeldBillsDrawer';
 import { OrdersHistoryModal } from '../../components/POS/OrdersHistoryModal';
+import { TableSettleModal } from '../../components/POS/TableSettleModal';
 import { 
   getCashierShiftConfigs, 
   CashierShiftConfig, 
@@ -231,9 +232,24 @@ export const CashierPOS: React.FC = () => {
     transactions: [],
   });
 
-  // Held Bills (Parked Orders)
-  const [heldBills, setHeldBills] = useState<HeldBill[]>([]);
+  // Held Bills (Parked Orders) with Persistent LocalStorage
+  const [heldBills, setHeldBills] = useState<HeldBill[]>(() => {
+    try {
+      const stored = localStorage.getItem('qrieta_pos_held_bills');
+      return stored ? JSON.parse(stored) : [];
+    } catch (e) {
+      return [];
+    }
+  });
+
+  useEffect(() => {
+    try {
+      localStorage.setItem('qrieta_pos_held_bills', JSON.stringify(heldBills));
+    } catch (e) {}
+  }, [heldBills]);
+
   const [isHeldDrawerOpen, setIsHeldDrawerOpen] = useState<boolean>(false);
+  const [settleModalTable, setSettleModalTable] = useState<any | null>(null);
 
   // Waste Records
   const [wasteLogs, setWasteLogs] = useState<WasteRecord[]>([]);
@@ -684,6 +700,39 @@ export const CashierPOS: React.FC = () => {
         );
         setCustomerLiveOrders(customerOnly);
 
+        // Keep activeOrders synchronized with all live orders across POS, customer app, and waiter
+        setActiveOrders(prev => {
+          const map = new Map<string, any>();
+          prev.forEach(o => map.set(String(o.id), o));
+
+          list.forEach(ord => {
+            const key = String(ord.id);
+            const existing = map.get(key);
+            const ordAny = ord as any;
+            if (!existing) {
+              map.set(key, {
+                ...ord,
+                total_amount: ord.total_price || ordAny.total_amount,
+                table_number: ord.table_number,
+                daily_order_number: ord.daily_order_number
+              });
+            } else {
+              map.set(key, {
+                ...existing,
+                status: ord.status,
+                payment_status: ord.payment_status,
+                payment_method: ord.payment_method || existing.payment_method,
+                total_amount: ord.total_price || ordAny.total_amount || existing.total_amount,
+                table_number: ord.table_number || existing.table_number
+              });
+            }
+          });
+
+          return Array.from(map.values()).sort(
+            (a, b) => new Date(b.created_at || 0).getTime() - new Date(a.created_at || 0).getTime()
+          );
+        });
+
         const unhandledNew = customerOnly.filter(o => o.status === 'new');
         if (unhandledNew.length > 0) {
           const newest = unhandledNew[0];
@@ -1005,12 +1054,24 @@ export const CashierPOS: React.FC = () => {
 
   // Real-time table due amounts & financials (معروضة قدام عين الكاشير وإجمالي مبيع الطاولات)
   const tablesFinancials = useMemo(() => {
+    // Combine active orders and customer live orders without duplicates
+    const combinedCandidates: any[] = [];
+    const seenIds = new Set<string>();
+
+    [...activeOrders, ...customerLiveOrders].forEach(ord => {
+      const idKey = String(ord.id);
+      if (!seenIds.has(idKey)) {
+        seenIds.add(idKey);
+        combinedCandidates.push(ord);
+      }
+    });
+
     return tables.map(table => {
       const tableNum = String(table.table_number || '').trim();
       const tableId = String(table.id || '').trim();
 
       // Find active orders for this table (not cancelled, not completed, not paid)
-      const matchedOrders = activeOrders.filter(ord => {
+      const matchedOrders = combinedCandidates.filter(ord => {
         if (ord.status === 'cancelled' || ord.status === 'completed' || ord.payment_status === 'paid') return false;
         const ordTableNum = String(ord.table_number || '').trim();
         const ordTableId = String(ord.table_id || '').trim();
@@ -1042,7 +1103,7 @@ export const CashierPOS: React.FC = () => {
         heldBills: matchedHeld
       };
     });
-  }, [tables, activeOrders, heldBills]);
+  }, [tables, activeOrders, customerLiveOrders, heldBills]);
 
   const allTablesTotalDue = useMemo(() => {
     return tablesFinancials.reduce((sum, t) => sum + t.totalDue, 0);
@@ -1210,10 +1271,10 @@ export const CashierPOS: React.FC = () => {
     }
   };
 
-  // Hold Current Bill
-  const handleHoldBill = () => {
+  // Hold Current Bill or Send to Kitchen as Table Order
+  const handleHoldBill = async () => {
     if (cart.length === 0) {
-      alert('لا توجد أصناف لتعليق الفاتورة!');
+      alert('لا توجد أصناف لتعليق الفاتورة أو إرسالها للطاولة!');
       return;
     }
 
@@ -1223,8 +1284,16 @@ export const CashierPOS: React.FC = () => {
       ? `سفري - ${customerName || 'عميل كاشير'}`
       : `دليفري - ${customerName || 'طلب خارجي'}`;
 
+    let dailyOrderNum = parseInt(customOrderNumber) || 0;
+    if (!dailyOrderNum && selectedRestaurant) {
+      dailyOrderNum = await getNextDailyOrderNumber(selectedRestaurant.id);
+    }
+    if (!dailyOrderNum) dailyOrderNum = activeOrders.length + 1;
+
+    const newOrderId = `pos-hold-${Date.now()}`;
+
     const newHeldBill: HeldBill = {
-      id: `hold-${Date.now()}`,
+      id: newOrderId,
       heldAt: new Date().toISOString(),
       title,
       customerName,
@@ -1241,6 +1310,48 @@ export const CashierPOS: React.FC = () => {
     };
 
     setHeldBills(prev => [newHeldBill, ...prev]);
+
+    // Register live order so it persists on server and appears across all screens
+    if (selectedRestaurant) {
+      const liveOrderData: any = {
+        id: newOrderId,
+        daily_order_number: dailyOrderNum,
+        restaurant_id: selectedRestaurant.id,
+        source: 'pos',
+        order_type: orderType,
+        table_id: selectedTable?.id || null,
+        table_number: selectedTable?.table_number || null,
+        customer_name: customerName.trim() || undefined,
+        customer_phone: customerPhone.trim() || undefined,
+        delivery_address: customerAddress.trim() || undefined,
+        notes: orderNotes.trim() || undefined,
+        total_price: finalTotal,
+        total_amount: finalTotal,
+        status: 'preparing',
+        payment_status: 'unpaid',
+        items: cart.map(it => ({
+          id: it.menuItemId,
+          name: it.name,
+          quantity: it.quantity,
+          price: it.price,
+          notes: it.notes,
+          options: it.options
+        })),
+        created_at: new Date().toISOString()
+      };
+
+      registerLiveOrder(liveOrderData).catch(() => {});
+
+      // Add to activeOrders
+      setActiveOrders(prev => [liveOrderData, ...prev]);
+
+      // If table order, mark table as occupied in DB & local
+      if (selectedTable?.id) {
+        setTables(prev => prev.map(t => t.id === selectedTable.id ? { ...t, is_occupied: true } : t));
+        supabase.from('tables').update({ is_occupied: true }).eq('id', selectedTable.id).then(() => {}, () => {});
+      }
+    }
+
     setCart([]);
     setDiscountValue(0);
     setTipsAmount(0);
@@ -1249,7 +1360,294 @@ export const CashierPOS: React.FC = () => {
     setCustomerPhone('');
     setSelectedTable(null);
 
-    addAuditLog('void_item', `تم تعليق الفاتورة (${title}) بإجمالي ${finalTotal.toFixed(2)} ج.م`);
+    addAuditLog('void_item', `تم تعليق الفاتورة وإرسالها للطاولة (${title}) بإجمالي ${finalTotal.toFixed(2)} ج.م`);
+  };
+
+  // Settle Table Account (تحصيل وسداد حساب الطاولة وإخلاءها)
+  const handleSettleTable = async (tableData: any, chosenPaymentMethod: 'cash' | 'card' | 'wallet' = 'cash') => {
+    if (!selectedRestaurant || !tableData) return;
+
+    try {
+      const tableNum = String(tableData.table_number || '').trim();
+      const tableId = String(tableData.id || '').trim();
+      const amountToCollect = Number(tableData.totalDue || 0);
+
+      const matchedOrders = tableData.activeOrders || [];
+      const matchedHeld = tableData.heldBills || [];
+      const allItems: any[] = [];
+
+      // 1. Mark each matched live order as completed and paid
+      for (const ord of matchedOrders) {
+        await updateLiveOrderStatus(ord.id, selectedRestaurant.id, 'completed', 'paid');
+        const items = ord.order_items || ord.items || [];
+        if (Array.isArray(items)) {
+          allItems.push(...items);
+        }
+      }
+
+      // Also mark in Supabase
+      try {
+        if (tableData.id) {
+          await supabase
+            .from('orders')
+            .update({ status: 'delivered', payment_status: 'paid' })
+            .eq('restaurant_id', selectedRestaurant.id)
+            .eq('table_id', tableData.id)
+            .neq('status', 'cancelled');
+        }
+        await supabase
+          .from('tables')
+          .update({ is_occupied: false })
+          .eq('id', tableData.id);
+      } catch (e) {
+        console.warn('DB table update error:', e);
+      }
+
+      // 2. Remove held bills for this table
+      if (matchedHeld.length > 0) {
+        matchedHeld.forEach((h: any) => {
+          if (Array.isArray(h.cart)) {
+            allItems.push(...h.cart);
+          }
+        });
+        setHeldBills(prev => prev.filter(h => {
+          const hNum = String(h.tableNumber || '').trim();
+          const hId = String(h.tableId || '').trim();
+          return hNum !== tableNum && hId !== tableId;
+        }));
+      }
+
+      // 3. Update local activeOrders and customerLiveOrders
+      const matchedOrderIds = new Set(matchedOrders.map((o: any) => String(o.id)));
+      setActiveOrders(prev => prev.map(o => {
+        if (matchedOrderIds.has(String(o.id))) {
+          return { ...o, status: 'completed', payment_status: 'paid', payment_method: chosenPaymentMethod };
+        }
+        const oNum = String(o.table_number || '').trim();
+        const oId = String(o.table_id || '').trim();
+        if ((oNum === tableNum || oId === tableId) && o.payment_status !== 'paid') {
+          return { ...o, status: 'completed', payment_status: 'paid', payment_method: chosenPaymentMethod };
+        }
+        return o;
+      }));
+
+      setCustomerLiveOrders(prev => prev.map(o => {
+        if (matchedOrderIds.has(String(o.id))) {
+          return { ...o, status: 'completed', payment_status: 'paid' };
+        }
+        const oNum = String(o.table_number || '').trim();
+        const oId = String(o.table_id || '').trim();
+        if ((oNum === tableNum || oId === tableId) && o.payment_status !== 'paid') {
+          return { ...o, status: 'completed', payment_status: 'paid' };
+        }
+        return o;
+      }));
+
+      // 4. Update local tables state
+      setTables(prev => prev.map(t => t.id === tableData.id ? { ...t, is_occupied: false } : t));
+
+      // 5. Update Shift sales & order count
+      if (amountToCollect > 0) {
+        const cashAdd = chosenPaymentMethod === 'cash' ? amountToCollect : 0;
+        const cardAdd = chosenPaymentMethod === 'card' ? amountToCollect : 0;
+        const walletAdd = chosenPaymentMethod === 'wallet' ? amountToCollect : 0;
+
+        setShift(prev => ({
+          ...prev,
+          ordersCount: prev.ordersCount + Math.max(1, matchedOrders.length + matchedHeld.length),
+          totalSales: prev.totalSales + amountToCollect,
+          cashSales: prev.cashSales + cashAdd,
+          cardSales: prev.cardSales + cardAdd,
+          walletSales: prev.walletSales + walletAdd,
+        }));
+
+        logShiftAuditRecord(selectedRestaurant.id, {
+          ...shift,
+          ordersCount: shift.ordersCount + Math.max(1, matchedOrders.length + matchedHeld.length),
+          totalSales: shift.totalSales + amountToCollect,
+          cashSales: shift.cashSales + cashAdd,
+          cardSales: shift.cardSales + cardAdd,
+          walletSales: shift.walletSales + walletAdd,
+        }).catch(() => {});
+      }
+
+      // 6. Clear cart if it had this table's items
+      if (selectedTable?.id === tableData.id) {
+        setCart([]);
+        setSelectedTable(null);
+      }
+
+      // 7. Prepare thermal receipt
+      if (amountToCollect > 0) {
+        const dailyNum = await getNextDailyOrderNumber(selectedRestaurant.id);
+        const receiptData: TaxReceiptData = {
+          restaurantName: selectedRestaurant?.name || 'مطعم وكافيه كريتا',
+          restaurantLogo: selectedRestaurant?.logo_url,
+          taxNumber: restaurantGeofence?.tax_number || '100-245-890',
+          commercialRegistration: restaurantGeofence?.commercial_registration || '45892',
+          branchAddress: restaurantGeofence?.address || 'بورسعيد - حي الشرق',
+          branchPhone: restaurantGeofence?.phone || '01000000000',
+          invoiceNumber: `INV-${dailyNum}`,
+          dailyOrderNumber: dailyNum,
+          orderType: 'dine_in',
+          tableNumber: tableData.table_number,
+          cashierName: shift.cashierName,
+          dateTime: new Date(),
+          items: allItems.length > 0 ? allItems.map((it: any) => ({
+            name: it.name || it.product_name || (it.products && it.products.name_ar) || 'صنف طاولة',
+            quantity: it.quantity || 1,
+            unitPrice: Number(it.price || it.price_at_order || 0),
+            totalPrice: Number((it.price || it.price_at_order || 0) * (it.quantity || 1)),
+            notes: it.notes,
+            options: it.options
+          })) : [
+            {
+              name: `حساب طاولة #${tableData.table_number}`,
+              quantity: 1,
+              unitPrice: amountToCollect,
+              totalPrice: amountToCollect
+            }
+          ],
+          subtotal: amountToCollect,
+          taxRate: 0,
+          taxAmount: 0,
+          serviceFeeRate: 0,
+          serviceFeeAmount: 0,
+          deliveryFee: 0,
+          discountAmount: 0,
+          finalTotal: amountToCollect,
+          paymentMethod: chosenPaymentMethod,
+          amountPaid: amountToCollect,
+          changeDue: 0
+        };
+        setTaxReceiptData(receiptData);
+        setIsReceiptModalOpen(true);
+      }
+
+      // 8. Close settle modal
+      setSettleModalTable(null);
+    } catch (err: any) {
+      console.error('Error settling table:', err);
+      alert('حدث خطأ أثناء تحصيل حساب الطاولة: ' + (err?.message || 'يرجى المحاولة مرة أخرى'));
+    }
+  };
+
+  // Clear Table Without Payment (مسح الحساب وتصفير الطاولة بدون تحصيل / إلغاء)
+  const handleClearTableWithoutPayment = async (tableData: any) => {
+    if (!selectedRestaurant || !tableData) return;
+    if (!confirm(`هل أنت متأكد من مسح الحساب وتصفير وإخلاء طاولة #${tableData.table_number} بدون تحصيل؟`)) {
+      return;
+    }
+
+    try {
+      const tableNum = String(tableData.table_number || '').trim();
+      const tableId = String(tableData.id || '').trim();
+
+      const matchedOrders = tableData.activeOrders || [];
+
+      for (const ord of matchedOrders) {
+        await updateLiveOrderStatus(ord.id, selectedRestaurant.id, 'cancelled');
+      }
+
+      try {
+        if (tableData.id) {
+          await supabase
+            .from('orders')
+            .update({ status: 'cancelled' })
+            .eq('restaurant_id', selectedRestaurant.id)
+            .eq('table_id', tableData.id)
+            .neq('status', 'cancelled');
+        }
+        await supabase
+          .from('tables')
+          .update({ is_occupied: false })
+          .eq('id', tableData.id);
+      } catch (e) {}
+
+      setHeldBills(prev => prev.filter(h => {
+        const hNum = String(h.tableNumber || '').trim();
+        const hId = String(h.tableId || '').trim();
+        return hNum !== tableNum && hId !== tableId;
+      }));
+
+      const matchedOrderIds = new Set(matchedOrders.map((o: any) => String(o.id)));
+      setActiveOrders(prev => prev.map(o => {
+        if (matchedOrderIds.has(String(o.id))) {
+          return { ...o, status: 'cancelled' };
+        }
+        const oNum = String(o.table_number || '').trim();
+        const oId = String(o.table_id || '').trim();
+        if (oNum === tableNum || oId === tableId) {
+          return { ...o, status: 'cancelled' };
+        }
+        return o;
+      }));
+
+      setCustomerLiveOrders(prev => prev.map(o => {
+        if (matchedOrderIds.has(String(o.id))) {
+          return { ...o, status: 'cancelled' };
+        }
+        const oNum = String(o.table_number || '').trim();
+        const oId = String(o.table_id || '').trim();
+        if (oNum === tableNum || oId === tableId) {
+          return { ...o, status: 'cancelled' };
+        }
+        return o;
+      }));
+
+      setTables(prev => prev.map(t => t.id === tableData.id ? { ...t, is_occupied: false } : t));
+
+      if (selectedTable?.id === tableData.id) {
+        setCart([]);
+        setSelectedTable(null);
+      }
+
+      setSettleModalTable(null);
+    } catch (err: any) {
+      console.error('Clear table error:', err);
+      alert('حدث خطأ أثناء إخلاء الطاولة: ' + (err?.message || 'يرجى المحاولة'));
+    }
+  };
+
+  // Load Table Items into POS Cart for editing
+  const handleLoadTableToCart = (tableData: any) => {
+    const matchedHeld = tableData.heldBills || [];
+    const matchedOrders = tableData.activeOrders || [];
+
+    const newCartItems: POSCartItem[] = [];
+
+    // From held bills
+    matchedHeld.forEach((h: any) => {
+      if (Array.isArray(h.cart)) {
+        newCartItems.push(...h.cart);
+      }
+    });
+
+    // From active orders
+    matchedOrders.forEach((ord: any) => {
+      const items = ord.order_items || ord.items || [];
+      if (Array.isArray(items)) {
+        items.forEach((it: any) => {
+          newCartItems.push({
+            id: `ci-${Date.now()}-${Math.random()}`,
+            menuItemId: it.id || it.product_id || `prod-${Math.random()}`,
+            name: it.name || it.product_name || (it.products && it.products.name_ar) || 'صنف',
+            price: Number(it.price || it.price_at_order || 0),
+            quantity: Number(it.quantity || 1),
+            notes: it.notes,
+            options: it.options
+          });
+        });
+      }
+    });
+
+    if (newCartItems.length > 0) {
+      setCart(newCartItems);
+    }
+    setSelectedTable(tableData);
+    setOrderType('dine_in');
+    setSettleModalTable(null);
+    setActiveTab('pos');
   };
 
   // Recall Held Bill
@@ -1417,11 +1815,19 @@ export const CashierPOS: React.FC = () => {
 
       if (navigator.onLine) {
         try {
+          let validTableId = null;
+          if (selectedTable?.id) {
+            const sId = String(selectedTable.id);
+            if (sId.length > 20 || (!isNaN(parseInt(sId, 10)) && !sId.includes('table-') && !sId.includes('tb-'))) {
+              validTableId = selectedTable.id;
+            }
+          }
+
           const { data, error } = await supabase
             .from('orders')
             .insert({
               restaurant_id: selectedRestaurant?.id,
-              table_id: selectedTable?.id || null,
+              table_id: validTableId,
               status: 'delivered',
               total_price: parseFloat(finalTotal.toFixed(2))
             })
@@ -1430,16 +1836,23 @@ export const CashierPOS: React.FC = () => {
 
           if (!error && data) {
             createdOrder = { ...orderPayload, id: data.id };
-            const itemsPayload = cart.map((it, idx) => ({
-              order_id: data.id,
-              product_id: it.menuItemId,
-              quantity: it.quantity,
-              notes: idx === 0 
-                ? `[طلب كاشير POS #${dailyOrderNum} | ${orderType === 'dine_in' ? `طاولة ${selectedTable?.table_number || ''}` : orderType === 'takeaway' ? 'سفري' : 'دليفري'}${customerName ? ` | ${customerName}` : ''}]` 
-                : (it.notes || null),
-              price_at_order: it.price
-            }));
-            await supabase.from('order_items').insert(itemsPayload);
+            try {
+              const itemsPayload = cart.map((it, idx) => {
+                const isUuid = typeof it.menuItemId === 'string' && it.menuItemId.length > 20 && it.menuItemId.includes('-');
+                return {
+                  order_id: data.id,
+                  product_id: isUuid ? it.menuItemId : null,
+                  quantity: it.quantity,
+                  notes: idx === 0 
+                    ? `[طلب كاشير POS #${dailyOrderNum} | ${orderType === 'dine_in' ? `طاولة ${selectedTable?.table_number || ''}` : orderType === 'takeaway' ? 'سفري' : 'دليفري'}${customerName ? ` | ${customerName}` : ''}]` 
+                    : (it.notes || null),
+                  price_at_order: it.price
+                };
+              });
+              await supabase.from('order_items').insert(itemsPayload);
+            } catch (itemInsertErr) {
+              console.warn('order_items partial insert warning:', itemInsertErr);
+            }
           } else {
             console.warn('Supabase insert warning, queueing order locally:', error?.message);
             shouldQueueOffline = true;
@@ -1511,6 +1924,7 @@ export const CashierPOS: React.FC = () => {
           totalSales: shift.totalSales + finalTotal,
           cashSales: shift.cashSales + (currentPayMethod === 'cash' ? finalTotal : 0),
           cardSales: shift.cardSales + (currentPayMethod === 'card' ? finalTotal : 0),
+          walletSales: shift.walletSales + (currentPayMethod === 'wallet' ? finalTotal : 0),
         }).catch(() => {});
       }
 
@@ -1604,6 +2018,18 @@ export const CashierPOS: React.FC = () => {
         setCustomerName('');
         setCustomerPhone('');
         setCustomerAddress('');
+      } else if (selectedTable) {
+        // Clear table state, held bills, and mark table as unoccupied
+        const sNum = String(selectedTable.table_number || '').trim();
+        const sId = String(selectedTable.id || '').trim();
+        setHeldBills(prev => prev.filter(h => {
+          const hNum = String(h.tableNumber || '').trim();
+          const hId = String(h.tableId || '').trim();
+          return hNum !== sNum && hId !== sId;
+        }));
+        setTables(prev => prev.map(t => t.id === selectedTable.id ? { ...t, is_occupied: false } : t));
+        supabase.from('tables').update({ is_occupied: false }).eq('id', selectedTable.id).then(() => {}, () => {});
+        setSelectedTable(null);
       }
 
     } catch (err: any) {
@@ -2258,32 +2684,30 @@ export const CashierPOS: React.FC = () => {
                       const hasDue = t.totalDue > 0;
 
                       return (
-                        <button
+                        <div
                           key={t.id}
-                          type="button"
-                          onClick={() => {
-                            setSelectedTable(t);
-                            setOrderType('dine_in');
-                            if (t.heldBills && t.heldBills.length > 0) {
-                              const held = t.heldBills[0];
-                              setCart(held.items);
-                              setCustomerName(held.customerName || '');
-                              setOrderNotes(held.notes || '');
-                              setHeldBills(prev => prev.filter(b => b.id !== held.id));
-                            }
-                          }}
                           className={cn(
-                            "shrink-0 min-w-[125px] p-2.5 rounded-2xl border text-center transition-all cursor-pointer flex flex-col justify-between gap-2 select-none",
+                            "shrink-0 min-w-[130px] p-2 rounded-2xl border text-center transition-all flex flex-col justify-between gap-1.5 select-none",
                             isSelected
-                              ? "bg-amber-500 text-white border-amber-500 shadow-md ring-2 ring-amber-300"
+                              ? "bg-amber-500/10 border-amber-500 shadow-md ring-2 ring-amber-300"
                               : hasDue
-                              ? "bg-rose-50/90 border-rose-300 text-rose-900 hover:bg-rose-100 shadow-xs"
+                              ? "bg-rose-50/95 border-rose-300 text-rose-900 shadow-xs"
                               : t.isOccupied
-                              ? "bg-amber-50 border-amber-200 text-amber-900 hover:bg-amber-100"
-                              : "bg-slate-50 hover:bg-white border-slate-200 text-slate-700 hover:border-slate-300"
+                              ? "bg-amber-50 border-amber-200 text-amber-900"
+                              : "bg-slate-50 border-slate-200 text-slate-700"
                           )}
                         >
-                          <div className="flex items-center justify-between w-full">
+                          <div 
+                            onClick={() => {
+                              if (hasDue) {
+                                setSettleModalTable(t);
+                              } else {
+                                setSelectedTable(t);
+                                setOrderType('dine_in');
+                              }
+                            }}
+                            className="flex items-center justify-between w-full cursor-pointer"
+                          >
                             <span className="font-black text-xs">طاولة #{t.table_number}</span>
                             <span className={cn(
                               "w-2.5 h-2.5 rounded-full",
@@ -2292,18 +2716,58 @@ export const CashierPOS: React.FC = () => {
                           </div>
 
                           {/* Money to be collected under each table */}
-                          <div className="w-full bg-white/90 rounded-xl py-1 px-1.5 text-center border border-black/5 shadow-2xs">
+                          <div 
+                            onClick={() => {
+                              if (hasDue) {
+                                setSettleModalTable(t);
+                              } else {
+                                setSelectedTable(t);
+                                setOrderType('dine_in');
+                              }
+                            }}
+                            className="w-full bg-white/95 rounded-xl py-1 px-1 text-center border border-black/5 shadow-2xs cursor-pointer"
+                          >
                             <span className="text-[10px] text-slate-400 font-bold block leading-none mb-0.5">
                               {hasDue ? 'مطلوب تحصيله:' : 'الحالة:'}
                             </span>
                             <span className={cn(
                               "font-mono font-black text-xs block leading-tight",
-                              isSelected ? "text-slate-900" : hasDue ? "text-rose-700 font-black text-sm" : "text-emerald-600"
+                              hasDue ? "text-rose-700 font-black text-sm" : "text-emerald-600"
                             )}>
                               {hasDue ? `${t.totalDue.toFixed(0)} ج.م` : 'متاحة (0 ج.م)'}
                             </span>
                           </div>
-                        </button>
+
+                          {/* Quick Action Button: Settle/Clear if hasDue, or Select if empty */}
+                          {hasDue ? (
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                setSettleModalTable(t);
+                              }}
+                              className="w-full py-1 px-1.5 bg-rose-600 hover:bg-rose-700 text-white rounded-xl font-bold text-[10px] flex items-center justify-center gap-1 shadow-sm active:scale-95 transition-all cursor-pointer"
+                              title="تحصيل وسداد حساب الطاولة أو تصفيره وإخلاء الطاولة"
+                            >
+                              <DollarSign size={11} />
+                              <span>سداد وتحصيل</span>
+                            </button>
+                          ) : (
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setSelectedTable(t);
+                                setOrderType('dine_in');
+                              }}
+                              className={cn(
+                                "w-full py-1 px-1.5 rounded-xl font-bold text-[10px] flex items-center justify-center gap-1 transition-all cursor-pointer",
+                                isSelected ? "bg-amber-500 text-white" : "bg-white hover:bg-slate-100 text-slate-600 border border-slate-200"
+                              )}
+                            >
+                              <span>{isSelected ? 'طاولة محددة' : 'فتح طلب'}</span>
+                            </button>
+                          )}
+                        </div>
                       );
                     })}
                   </div>
@@ -2539,50 +3003,89 @@ export const CashierPOS: React.FC = () => {
                   const hasDue = table.totalDue > 0;
 
                   return (
-                    <button
+                    <div
                       key={table.id}
-                      onClick={() => {
-                        setSelectedTable(table);
-                        setOrderType('dine_in');
-                        if (table.heldBills && table.heldBills.length > 0) {
-                          const held = table.heldBills[0];
-                          setCart(held.items);
-                          setCustomerName(held.customerName || '');
-                          setOrderNotes(held.notes || '');
-                          setHeldBills(prev => prev.filter(b => b.id !== held.id));
-                        }
-                        setActiveTab('pos');
-                      }}
-                      className={`p-3.5 rounded-2xl border text-center transition-all cursor-pointer flex flex-col items-center justify-between gap-2 shadow-sm ${
+                      className={`p-3 rounded-2xl border text-center transition-all flex flex-col items-center justify-between gap-2 shadow-sm select-none ${
                         isSelected 
-                          ? 'bg-amber-500 text-white border-amber-400 ring-2 ring-amber-300'
+                          ? 'bg-amber-500/10 border-amber-400 ring-2 ring-amber-300'
                           : hasDue
-                          ? 'bg-rose-50/90 border-rose-300 text-rose-900 hover:bg-rose-100'
+                          ? 'bg-rose-50/90 border-rose-300 text-rose-900 shadow-xs'
                           : table.isOccupied
-                          ? 'bg-amber-50 border-amber-200 text-amber-900 hover:bg-amber-100'
-                          : 'bg-white border-slate-200 text-slate-800 hover:border-amber-400'
+                          ? 'bg-amber-50 border-amber-200 text-amber-900'
+                          : 'bg-white border-slate-200 text-slate-800'
                       }`}
                     >
-                      <div className="flex items-center justify-between w-full">
+                      <div 
+                        onClick={() => {
+                          if (hasDue) {
+                            setSettleModalTable(table);
+                          } else {
+                            setSelectedTable(table);
+                            setOrderType('dine_in');
+                            setActiveTab('pos');
+                          }
+                        }}
+                        className="flex items-center justify-between w-full cursor-pointer"
+                      >
                         <span className="font-black text-xs">طاولة #{table.table_number}</span>
                         <span className={`w-2.5 h-2.5 rounded-full ${
                           hasDue ? 'bg-rose-500 animate-pulse' : table.isOccupied ? 'bg-amber-500' : 'bg-emerald-400'
                         }`} />
                       </div>
 
-                      <UtensilsCrossed size={22} className={isSelected ? 'text-white' : 'text-slate-500'} />
+                      <div 
+                        onClick={() => {
+                          if (hasDue) {
+                            setSettleModalTable(table);
+                          } else {
+                            setSelectedTable(table);
+                            setOrderType('dine_in');
+                            setActiveTab('pos');
+                          }
+                        }}
+                        className="w-full flex flex-col items-center cursor-pointer"
+                      >
+                        <UtensilsCrossed size={22} className={isSelected ? 'text-amber-600' : 'text-slate-500'} />
 
-                      <div className="w-full bg-white/95 rounded-xl py-1 px-1.5 text-center border border-black/5 shadow-2xs">
-                        <span className="text-[10px] text-slate-400 font-bold block leading-none mb-0.5">
-                          {hasDue ? 'مطلوب تحصيله:' : 'الحالة:'}
-                        </span>
-                        <span className={`font-mono font-black text-xs block leading-tight ${
-                          isSelected ? 'text-slate-900' : hasDue ? 'text-rose-700 font-black text-sm' : 'text-emerald-600'
-                        }`}>
-                          {hasDue ? `${table.totalDue.toFixed(0)} ج.م` : 'متاحة (0 ج.م)'}
-                        </span>
+                        <div className="w-full bg-white/95 rounded-xl py-1 px-1.5 text-center border border-black/5 shadow-2xs mt-2">
+                          <span className="text-[10px] text-slate-400 font-bold block leading-none mb-0.5">
+                            {hasDue ? 'مطلوب تحصيله:' : 'الحالة:'}
+                          </span>
+                          <span className={`font-mono font-black text-xs block leading-tight ${
+                            hasDue ? 'text-rose-700 font-black text-sm' : 'text-emerald-600'
+                          }`}>
+                            {hasDue ? `${table.totalDue.toFixed(0)} ج.م` : 'متاحة (0 ج.م)'}
+                          </span>
+                        </div>
                       </div>
-                    </button>
+
+                      {/* Action Button */}
+                      {hasDue ? (
+                        <button
+                          type="button"
+                          onClick={() => setSettleModalTable(table)}
+                          className="w-full py-1.5 bg-rose-600 hover:bg-rose-700 text-white rounded-xl font-bold text-xs flex items-center justify-center gap-1 shadow-sm active:scale-95 transition-all cursor-pointer"
+                          title="تحصيل وسداد حساب الطاولة أو تصفيره وإخلاء الطاولة"
+                        >
+                          <DollarSign size={13} />
+                          <span>سداد وتحصيل</span>
+                        </button>
+                      ) : (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setSelectedTable(table);
+                            setOrderType('dine_in');
+                            setActiveTab('pos');
+                          }}
+                          className={`w-full py-1.5 rounded-xl font-bold text-xs flex items-center justify-center gap-1 transition-all cursor-pointer ${
+                            isSelected ? 'bg-amber-500 text-white' : 'bg-slate-50 hover:bg-slate-100 text-slate-700 border border-slate-200'
+                          }`}
+                        >
+                          <span>{isSelected ? 'طاولة محددة' : 'بدء طلب'}</span>
+                        </button>
+                      )}
+                    </div>
                   );
                 })}
               </div>
@@ -3859,6 +4362,71 @@ export const CashierPOS: React.FC = () => {
         onRefundOrder={handleRefundOrder}
         restaurantName={selectedRestaurant?.name || 'مطعم كريتا'}
         restaurantGeofence={restaurantGeofence}
+      />
+
+      {/* 9.5. Table Settle & Clear Balance Modal */}
+      <TableSettleModal
+        isOpen={Boolean(settleModalTable)}
+        onClose={() => setSettleModalTable(null)}
+        table={settleModalTable}
+        onSettle={handleSettleTable}
+        onClearWithoutPayment={handleClearTableWithoutPayment}
+        onLoadToCart={handleLoadTableToCart}
+        onPrintBill={async (tableData) => {
+          if (!tableData) return;
+          const totalAmt = Number(tableData.totalDue || 0);
+          const allItems: any[] = [];
+          (tableData.activeOrders || []).forEach((ord: any) => {
+            const items = ord.order_items || ord.items || [];
+            if (Array.isArray(items)) allItems.push(...items);
+          });
+          (tableData.heldBills || []).forEach((h: any) => {
+            if (Array.isArray(h.cart)) allItems.push(...h.cart);
+          });
+
+          const receiptData: TaxReceiptData = {
+            restaurantName: selectedRestaurant?.name || 'مطعم وكافيه كريتا',
+            restaurantLogo: selectedRestaurant?.logo_url,
+            taxNumber: restaurantGeofence?.tax_number || '100-245-890',
+            commercialRegistration: restaurantGeofence?.commercial_registration || '45892',
+            branchAddress: restaurantGeofence?.address || 'بورسعيد - حي الشرق',
+            branchPhone: restaurantGeofence?.phone || '01000000000',
+            invoiceNumber: `BILL-${tableData.table_number}`,
+            dailyOrderNumber: 0,
+            orderType: 'dine_in',
+            tableNumber: tableData.table_number,
+            cashierName: shift.cashierName,
+            dateTime: new Date(),
+            items: allItems.length > 0 ? allItems.map((it: any) => ({
+              name: it.name || it.product_name || (it.products && it.products.name_ar) || 'صنف',
+              quantity: it.quantity || 1,
+              unitPrice: Number(it.price || it.price_at_order || 0),
+              totalPrice: Number((it.price || it.price_at_order || 0) * (it.quantity || 1)),
+              notes: it.notes,
+              options: it.options
+            })) : [
+              {
+                name: `حساب طاولة #${tableData.table_number}`,
+                quantity: 1,
+                unitPrice: totalAmt,
+                totalPrice: totalAmt
+              }
+            ],
+            subtotal: totalAmt,
+            taxRate: 0,
+            taxAmount: 0,
+            serviceFeeRate: 0,
+            serviceFeeAmount: 0,
+            deliveryFee: 0,
+            discountAmount: 0,
+            finalTotal: totalAmt,
+            paymentMethod: 'cash',
+            amountPaid: totalAmt,
+            changeDue: 0
+          };
+          setTaxReceiptData(receiptData);
+          setIsReceiptModalOpen(true);
+        }}
       />
 
       {/* 10. Cash Drawer In / Out Modal */}

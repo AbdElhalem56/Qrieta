@@ -1020,6 +1020,8 @@ async function startServer() {
           const numId = parseInt(orderId, 10);
           if (!isNaN(numId) && String(numId) === String(orderId).trim()) {
             await client.from("orders").update(updatePayload).eq("id", numId);
+          } else {
+            await client.from("orders").update(updatePayload).eq("id", orderId);
           }
         } catch (dbErr) {
           console.warn("DB status update error:", dbErr);
