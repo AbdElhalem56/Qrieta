@@ -1200,6 +1200,143 @@ async function startServer() {
     }
   });
 
+  // Persistent Recipe & Raw Materials Store (BOM, Food Cost & Raw Movements)
+  const recipesFilePath = path.join(process.cwd(), "recipes-store.json");
+  let recipesStore: Record<string, {
+    materials: any[];
+    recipes: Record<string, any>;
+    purchases: any[];
+    wastes: any[];
+    audits: any[];
+    movements: any[];
+  }> = {};
+
+  try {
+    if (fs.existsSync(recipesFilePath)) {
+      const recData = fs.readFileSync(recipesFilePath, "utf-8");
+      recipesStore = JSON.parse(recData || "{}");
+    }
+  } catch (e) {
+    console.warn("Could not read recipes-store.json:", e);
+  }
+
+  const persistRecipes = () => {
+    try {
+      fs.writeFileSync(recipesFilePath, JSON.stringify(recipesStore, null, 2), "utf-8");
+    } catch (e) {
+      console.warn("Could not write recipes-store.json:", e);
+    }
+  };
+
+  // GET /api/inventory/recipes-data - Get all raw materials, recipes, and movements
+  app.get("/api/inventory/recipes-data", (req, res) => {
+    const restaurantId = req.query.restaurant_id as string;
+    if (!restaurantId) {
+      return res.status(400).json({ error: "معرف المطعم مطلوب." });
+    }
+
+    const data = recipesStore[restaurantId] || {
+      materials: [],
+      recipes: {},
+      purchases: [],
+      wastes: [],
+      audits: [],
+      movements: []
+    };
+
+    res.status(200).json({ success: true, ...data });
+  });
+
+  // POST /api/inventory/recipes-data - Save all raw materials, recipes, and movements
+  app.post("/api/inventory/recipes-data", (req, res) => {
+    const { restaurant_id, data } = req.body;
+    if (!restaurant_id || !data) {
+      return res.status(400).json({ error: "بيانات غير مكتملة." });
+    }
+
+    try {
+      recipesStore[restaurant_id] = {
+        materials: data.materials || [],
+        recipes: data.recipes || {},
+        purchases: data.purchases || [],
+        wastes: data.wastes || [],
+        audits: data.audits || [],
+        movements: data.movements || []
+      };
+
+      persistRecipes();
+      res.status(200).json({ success: true, message: "تم حفظ بيانات الريسبي والمخزون بنجاح" });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message || "فشل في حفظ بيانات الريسبي" });
+    }
+  });
+
+  // POST /api/inventory/recipes-deduct - Auto-deduct raw materials for completed orders
+  app.post("/api/inventory/recipes-deduct", (req, res) => {
+    const { restaurant_id, items, orderRef, cashierName } = req.body;
+    if (!restaurant_id || !items || !Array.isArray(items)) {
+      return res.status(400).json({ error: "بيانات غير مكتملة." });
+    }
+
+    try {
+      if (!recipesStore[restaurant_id]) {
+        return res.status(200).json({ success: true, deducted: 0 });
+      }
+
+      const rest = recipesStore[restaurant_id];
+      const matMap = new Map<string, any>();
+      (rest.materials || []).forEach(m => matMap.set(m.id, m));
+
+      let deducted = 0;
+      const now = new Date().toISOString();
+
+      items.forEach((item: any) => {
+        const prodId = item.id || item.menuItemId || item.product_id;
+        const qty = Math.max(1, item.quantity || 1);
+        if (!prodId || !rest.recipes[prodId]) return;
+
+        const recipe = rest.recipes[prodId];
+        if (recipe && Array.isArray(recipe.ingredients)) {
+          recipe.ingredients.forEach((ing: any) => {
+            const mat = matMap.get(ing.material_id);
+            if (mat) {
+              const delta = (ing.quantity || 0) * qty;
+              const prev = mat.current_stock;
+              const next = Math.max(0, prev - delta);
+              mat.current_stock = next;
+              deducted++;
+
+              rest.movements.unshift({
+                id: `mov-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+                restaurant_id,
+                material_id: mat.id,
+                material_name: mat.name_ar,
+                type: 'sale_deduction',
+                quantity: -delta,
+                prev_stock: prev,
+                new_stock: next,
+                unit: mat.unit,
+                order_id: orderRef,
+                reason: `خصم مبيعات تلقائي: ${item.name} x ${qty} (طلب #${orderRef})`,
+                performed_by: cashierName || 'الكاشير',
+                timestamp: now
+              });
+            }
+          });
+        }
+      });
+
+      if (rest.movements.length > 1000) {
+        rest.movements = rest.movements.slice(0, 1000);
+      }
+
+      persistRecipes();
+      res.status(200).json({ success: true, deducted });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message || "فشل في خصم مكونات الريسبي" });
+    }
+  });
+
   // Persistent restaurant delivery zones store
   const deliveryZonesFilePath = path.join(process.cwd(), "restaurant-delivery-zones.json");
   let restaurantDeliveryZonesStore: Record<string, any> = {};

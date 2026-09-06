@@ -126,6 +126,7 @@ import {
   updateProductStock, 
   logShiftAuditRecord 
 } from '../../lib/inventoryService';
+import { deductOrderRecipeStock } from '../../lib/recipeService';
 
 export const CashierPOS: React.FC = () => {
   const [searchParams] = useSearchParams();
@@ -1936,7 +1937,19 @@ export const CashierPOS: React.FC = () => {
           created_at: new Date().toISOString()
         }).catch(() => {});
 
-        // Update inventory store
+        // Update inventory store & Auto-deduct recipes raw materials
+        deductOrderRecipeStock(
+          selectedRestaurant.id,
+          cart.map(it => ({
+            id: it.menuItemId,
+            name: it.name,
+            quantity: it.quantity,
+            options: it.options
+          })),
+          String(dailyOrderNum),
+          shift.cashierName || 'كاشير'
+        ).catch(() => {});
+
         cart.forEach(it => {
           updateProductStock(selectedRestaurant.id, {
             productId: it.menuItemId,

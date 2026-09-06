@@ -31,6 +31,17 @@ import {
   InventoryState, 
   InventoryMovement 
 } from '../../lib/inventoryService';
+import { 
+  fetchRestaurantRecipesData, 
+  FullRecipeInventoryState 
+} from '../../lib/recipeService';
+import { RawMaterialsTable } from './Inventory/RawMaterialsTable';
+import { RecipeBuilderTab } from './Inventory/RecipeBuilderTab';
+import { PurchaseInvoicesTab } from './Inventory/PurchaseInvoicesTab';
+import { WasteLogTab } from './Inventory/WasteLogTab';
+import { StocktakeAuditTab } from './Inventory/StocktakeAuditTab';
+import { MovementsLogTab } from './Inventory/MovementsLogTab';
+import { ChefHat, Truck, AlertOctagon, History } from 'lucide-react';
 
 interface InventoryAuditTabProps {
   restaurantId: string;
@@ -45,7 +56,17 @@ export const InventoryAuditTab: React.FC<InventoryAuditTabProps> = ({
   products,
   categories,
 }) => {
-  const [subTab, setSubTab] = useState<'stock' | 'audit' | 'movements' | 'cashier_shifts'>('stock');
+  const [subTab, setSubTab] = useState<
+    'raw_materials' | 'recipes' | 'purchases' | 'waste' | 'raw_audit' | 'raw_movements' | 'stock' | 'audit' | 'movements' | 'cashier_shifts'
+  >('raw_materials');
+  const [recipeData, setRecipeData] = useState<FullRecipeInventoryState>({
+    materials: [],
+    recipes: {},
+    purchases: [],
+    wastes: [],
+    audits: [],
+    movements: []
+  });
   const [inventory, setInventory] = useState<InventoryState>({
     stock: {},
     minAlerts: {},
@@ -69,15 +90,18 @@ export const InventoryAuditTab: React.FC<InventoryAuditTabProps> = ({
   const [isAuditing, setIsAuditing] = useState(false);
   const [auditNotes, setAuditNotes] = useState('');
 
-  // Load Inventory Data
+  // Load Inventory & Recipe Data
   const loadData = async () => {
     if (!restaurantId) return;
     setLoading(true);
     try {
-      const data = await fetchRestaurantInventory(restaurantId);
+      const [data, recData] = await Promise.all([
+        fetchRestaurantInventory(restaurantId),
+        fetchRestaurantRecipesData(restaurantId)
+      ]);
       // Initialize default stock if empty
       const initializedStock = { ...data.stock };
-      products.forEach((p, idx) => {
+      products.forEach((p) => {
         if (initializedStock[p.id] === undefined) {
           initializedStock[p.id] = 25; // standard initial stock
         }
@@ -86,8 +110,9 @@ export const InventoryAuditTab: React.FC<InventoryAuditTabProps> = ({
         ...data,
         stock: initializedStock
       });
+      setRecipeData(recData);
     } catch (e) {
-      console.error('Error loading inventory:', e);
+      console.error('Error loading inventory & recipes:', e);
     } finally {
       setLoading(false);
     }
@@ -224,104 +249,206 @@ export const InventoryAuditTab: React.FC<InventoryAuditTabProps> = ({
   return (
     <div className="space-y-6 text-right font-sans">
       {/* Top Header & Navigation Subtabs */}
-      <div className="bg-white p-4 sm:p-6 rounded-3xl border border-gray-200 shadow-sm flex flex-col md:flex-row items-center justify-between gap-4">
+      <div className="bg-white p-4 sm:p-6 rounded-3xl border border-gray-200 shadow-sm flex flex-col xl:flex-row items-center justify-between gap-4">
         <div>
           <h3 className="text-xl font-black text-gray-900 flex items-center gap-2">
             <Boxes className="text-orange-500" />
-            <span>نظام إدارة المخزون والجرد ورقابة الكاشير</span>
+            <span>نظام الريسبي والمخزون المتقدم وحساب تكلفة الوجبات</span>
           </h3>
           <p className="text-xs text-gray-500 mt-1">
-            متابعة حركة المخزن، تسوية الجرد الفعلي، ومراقبة حركة الدرج والورديات لحظة بلحظة
+            إدارة متكاملة للمواد الخام، خصم تلقائي من الأوردرات بالجرامات، حساب Food Cost، سندات التوريد، والهدر الفعلي
           </p>
         </div>
 
         {/* Subtab Switcher */}
-        <div className="flex flex-wrap gap-1 bg-gray-100 p-1 rounded-2xl w-full md:w-auto">
+        <div className="flex flex-wrap gap-1.5 bg-gray-100 p-1.5 rounded-2xl w-full xl:w-auto">
+          <button
+            onClick={() => setSubTab('raw_materials')}
+            className={cn(
+              "px-3.5 py-2 rounded-xl text-xs font-black transition-all flex items-center gap-1.5 cursor-pointer",
+              subTab === 'raw_materials' ? "bg-orange-500 text-white shadow-md shadow-orange-500/20" : "text-gray-600 hover:text-gray-900"
+            )}
+          >
+            <Boxes size={15} />
+            <span>المواد الخام بالمستودع ({recipeData.materials.length})</span>
+          </button>
+
+          <button
+            onClick={() => setSubTab('recipes')}
+            className={cn(
+              "px-3.5 py-2 rounded-xl text-xs font-black transition-all flex items-center gap-1.5 cursor-pointer",
+              subTab === 'recipes' ? "bg-orange-500 text-white shadow-md shadow-orange-500/20" : "text-gray-600 hover:text-gray-900"
+            )}
+          >
+            <ChefHat size={15} />
+            <span>شجرة الريسبي والتكاليف</span>
+          </button>
+
+          <button
+            onClick={() => setSubTab('purchases')}
+            className={cn(
+              "px-3.5 py-2 rounded-xl text-xs font-black transition-all flex items-center gap-1.5 cursor-pointer",
+              subTab === 'purchases' ? "bg-orange-500 text-white shadow-md shadow-orange-500/20" : "text-gray-600 hover:text-gray-900"
+            )}
+          >
+            <Truck size={15} />
+            <span>سندات التوريد والشراء ({recipeData.purchases.length})</span>
+          </button>
+
+          <button
+            onClick={() => setSubTab('waste')}
+            className={cn(
+              "px-3.5 py-2 rounded-xl text-xs font-black transition-all flex items-center gap-1.5 cursor-pointer",
+              subTab === 'waste' ? "bg-orange-500 text-white shadow-md shadow-orange-500/20" : "text-gray-600 hover:text-gray-900"
+            )}
+          >
+            <AlertOctagon size={15} />
+            <span>سجل الهدر والتوالف ({recipeData.wastes.length})</span>
+          </button>
+
+          <button
+            onClick={() => setSubTab('raw_audit')}
+            className={cn(
+              "px-3.5 py-2 rounded-xl text-xs font-black transition-all flex items-center gap-1.5 cursor-pointer",
+              subTab === 'raw_audit' ? "bg-orange-500 text-white shadow-md shadow-orange-500/20" : "text-gray-600 hover:text-gray-900"
+            )}
+          >
+            <ClipboardCheck size={15} />
+            <span>الجرد الفعلي وتسوية العجز</span>
+          </button>
+
+          <button
+            onClick={() => setSubTab('raw_movements')}
+            className={cn(
+              "px-3.5 py-2 rounded-xl text-xs font-black transition-all flex items-center gap-1.5 cursor-pointer",
+              subTab === 'raw_movements' ? "bg-orange-500 text-white shadow-md shadow-orange-500/20" : "text-gray-600 hover:text-gray-900"
+            )}
+          >
+            <History size={15} />
+            <span>حركات المواد اللحظية ({recipeData.movements.length})</span>
+          </button>
+
           <button
             onClick={() => setSubTab('stock')}
             className={cn(
-              "px-4 py-2 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5",
-              subTab === 'stock' ? "bg-white shadow-sm text-orange-600" : "text-gray-600 hover:text-gray-900"
+              "px-3.5 py-2 rounded-xl text-xs font-black transition-all flex items-center gap-1.5 cursor-pointer",
+              subTab === 'stock' ? "bg-orange-500 text-white shadow-md shadow-orange-500/20" : "text-gray-600 hover:text-gray-900"
             )}
           >
-            <Boxes size={14} />
-            <span>رصيد الأصناف</span>
+            <Package size={15} />
+            <span>الأصناف الجاهزة</span>
           </button>
-          <button
-            onClick={() => setSubTab('audit')}
-            className={cn(
-              "px-4 py-2 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5",
-              subTab === 'audit' ? "bg-white shadow-sm text-orange-600" : "text-gray-600 hover:text-gray-900"
-            )}
-          >
-            <ClipboardCheck size={14} />
-            <span>الجرد الدوري ومطابقة العجز</span>
-          </button>
-          <button
-            onClick={() => setSubTab('movements')}
-            className={cn(
-              "px-4 py-2 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5",
-              subTab === 'movements' ? "bg-white shadow-sm text-orange-600" : "text-gray-600 hover:text-gray-900"
-            )}
-          >
-            <FileText size={14} />
-            <span>سجل الحركات ({inventory.movements.length})</span>
-          </button>
+
           <button
             onClick={() => setSubTab('cashier_shifts')}
             className={cn(
-              "px-4 py-2 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5",
-              subTab === 'cashier_shifts' ? "bg-white shadow-sm text-orange-600" : "text-gray-600 hover:text-gray-900"
+              "px-3.5 py-2 rounded-xl text-xs font-black transition-all flex items-center gap-1.5 cursor-pointer",
+              subTab === 'cashier_shifts' ? "bg-orange-500 text-white shadow-md shadow-orange-500/20" : "text-gray-600 hover:text-gray-900"
             )}
           >
-            <Wallet size={14} />
+            <Wallet size={15} />
             <span>رقابة الكاشير والدرج</span>
           </button>
         </div>
       </div>
 
-      {/* KPI Cards */}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-        <div className="bg-white p-4 rounded-2xl border border-gray-200 shadow-sm flex items-center justify-between">
-          <div>
-            <span className="text-[11px] font-bold text-gray-400">إجمالي الأصناف بالمخزن</span>
-            <p className="text-2xl font-black text-gray-900">{totalProductsCount}</p>
-          </div>
-          <div className="w-10 h-10 rounded-xl bg-orange-50 text-orange-600 flex items-center justify-center">
-            <Boxes size={20} />
-          </div>
-        </div>
+      {/* Enterprise Recipe & Raw Materials Tabs */}
+      {subTab === 'raw_materials' && (
+        <RawMaterialsTable
+          restaurantId={restaurantId}
+          materials={recipeData.materials}
+          onRefresh={loadData}
+        />
+      )}
 
-        <div className="bg-white p-4 rounded-2xl border border-gray-200 shadow-sm flex items-center justify-between">
-          <div>
-            <span className="text-[11px] font-bold text-amber-600">أصناف قريبة من النفاذ</span>
-            <p className="text-2xl font-black text-amber-600">{lowStockCount}</p>
-          </div>
-          <div className="w-10 h-10 rounded-xl bg-amber-50 text-amber-600 flex items-center justify-center">
-            <AlertTriangle size={20} />
-          </div>
-        </div>
+      {subTab === 'recipes' && (
+        <RecipeBuilderTab
+          restaurantId={restaurantId}
+          products={products}
+          categories={categories}
+          rawMaterials={recipeData.materials}
+          recipes={recipeData.recipes}
+          onRefresh={loadData}
+        />
+      )}
 
-        <div className="bg-white p-4 rounded-2xl border border-gray-200 shadow-sm flex items-center justify-between">
-          <div>
-            <span className="text-[11px] font-bold text-red-600">أصناف نفذت بالكامل</span>
-            <p className="text-2xl font-black text-red-600">{outOfStockCount}</p>
-          </div>
-          <div className="w-10 h-10 rounded-xl bg-red-50 text-red-600 flex items-center justify-center">
-            <Minus size={20} />
-          </div>
-        </div>
+      {subTab === 'purchases' && (
+        <PurchaseInvoicesTab
+          restaurantId={restaurantId}
+          purchases={recipeData.purchases}
+          rawMaterials={recipeData.materials}
+          onRefresh={loadData}
+        />
+      )}
 
-        <div className="bg-white p-4 rounded-2xl border border-gray-200 shadow-sm flex items-center justify-between">
-          <div>
-            <span className="text-[11px] font-bold text-emerald-600">القيمة التقديرية للمخزون</span>
-            <p className="text-xl font-black text-emerald-600 font-mono">{formatCurrency(estimatedStockValue)}</p>
+      {subTab === 'waste' && (
+        <WasteLogTab
+          restaurantId={restaurantId}
+          wastes={recipeData.wastes}
+          rawMaterials={recipeData.materials}
+          onRefresh={loadData}
+        />
+      )}
+
+      {subTab === 'raw_audit' && (
+        <StocktakeAuditTab
+          restaurantId={restaurantId}
+          materials={recipeData.materials}
+          audits={recipeData.audits}
+          onRefresh={loadData}
+        />
+      )}
+
+      {subTab === 'raw_movements' && (
+        <MovementsLogTab
+          movements={recipeData.movements}
+        />
+      )}
+
+      {/* KPI Cards for legacy finished products stock */}
+      {(subTab === 'stock' || subTab === 'audit' || subTab === 'movements') && (
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+          <div className="bg-white p-4 rounded-2xl border border-gray-200 shadow-sm flex items-center justify-between">
+            <div>
+              <span className="text-[11px] font-bold text-gray-400">إجمالي الأصناف بالمخزن</span>
+              <p className="text-2xl font-black text-gray-900">{totalProductsCount}</p>
+            </div>
+            <div className="w-10 h-10 rounded-xl bg-orange-50 text-orange-600 flex items-center justify-center">
+              <Boxes size={20} />
+            </div>
           </div>
-          <div className="w-10 h-10 rounded-xl bg-emerald-50 text-emerald-600 flex items-center justify-center">
-            <DollarSign size={20} />
+
+          <div className="bg-white p-4 rounded-2xl border border-gray-200 shadow-sm flex items-center justify-between">
+            <div>
+              <span className="text-[11px] font-bold text-amber-600">أصناف قريبة من النفاذ</span>
+              <p className="text-2xl font-black text-amber-600">{lowStockCount}</p>
+            </div>
+            <div className="w-10 h-10 rounded-xl bg-amber-50 text-amber-600 flex items-center justify-center">
+              <AlertTriangle size={20} />
+            </div>
+          </div>
+
+          <div className="bg-white p-4 rounded-2xl border border-gray-200 shadow-sm flex items-center justify-between">
+            <div>
+              <span className="text-[11px] font-bold text-red-600">أصناف نفذت بالكامل</span>
+              <p className="text-2xl font-black text-red-600">{outOfStockCount}</p>
+            </div>
+            <div className="w-10 h-10 rounded-xl bg-red-50 text-red-600 flex items-center justify-center">
+              <Minus size={20} />
+            </div>
+          </div>
+
+          <div className="bg-white p-4 rounded-2xl border border-gray-200 shadow-sm flex items-center justify-between">
+            <div>
+              <span className="text-[11px] font-bold text-emerald-600">القيمة التقديرية للمخزون</span>
+              <p className="text-xl font-black text-emerald-600 font-mono">{formatCurrency(estimatedStockValue)}</p>
+            </div>
+            <div className="w-10 h-10 rounded-xl bg-emerald-50 text-emerald-600 flex items-center justify-center">
+              <DollarSign size={20} />
+            </div>
           </div>
         </div>
-      </div>
+      )}
 
       {/* Subtab 1: Stock Control Table */}
       {subTab === 'stock' && (
