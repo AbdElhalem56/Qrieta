@@ -1,31 +1,43 @@
 import React, { useState } from 'react';
-import { X, Check, Boxes, DollarSign, AlertTriangle, ShieldCheck, Tag } from 'lucide-react';
+import { X, Check, Boxes, DollarSign, AlertTriangle, ShieldCheck, Tag, Plus } from 'lucide-react';
 import { 
   RawMaterial, 
   RawMaterialUnit, 
   RawMaterialCategory, 
+  RawMaterialCategoryItem,
+  DEFAULT_RAW_CATEGORIES,
   RAW_CATEGORY_LABELS, 
   getUnitArabicName,
   saveRawMaterial 
 } from '../../../lib/recipeService';
 import { toEnglishDigits } from '../../../lib/utils';
+import { ManageRawCategoriesModal } from './ManageRawCategoriesModal';
 
 interface AddRawMaterialModalProps {
   restaurantId: string;
   editingMaterial?: RawMaterial | null;
+  categories?: RawMaterialCategoryItem[];
+  materials?: RawMaterial[];
   onClose: () => void;
   onSaved: () => void;
+  onRefreshCategories?: () => void;
 }
 
 export const AddRawMaterialModal: React.FC<AddRawMaterialModalProps> = ({
   restaurantId,
   editingMaterial,
+  categories,
+  materials = [],
   onClose,
   onSaved,
+  onRefreshCategories,
 }) => {
+  const categoriesList = categories && categories.length > 0 ? categories : DEFAULT_RAW_CATEGORIES;
   const [nameAr, setNameAr] = useState(editingMaterial?.name_ar || '');
   const [nameEn, setNameEn] = useState(editingMaterial?.name_en || '');
-  const [category, setCategory] = useState<RawMaterialCategory>(editingMaterial?.category || 'coffee');
+  const [category, setCategory] = useState<string>(
+    editingMaterial?.category || (categoriesList[0]?.id || 'dairy')
+  );
   const [unit, setUnit] = useState<RawMaterialUnit>(editingMaterial?.unit || 'g');
   const [currentStock, setCurrentStock] = useState<string>(editingMaterial ? String(editingMaterial.current_stock) : '1000');
   const [minAlertStock, setMinAlertStock] = useState<string>(editingMaterial ? String(editingMaterial.min_alert_stock) : '200');
@@ -33,6 +45,7 @@ export const AddRawMaterialModal: React.FC<AddRawMaterialModalProps> = ({
   const [supplier, setSupplier] = useState(editingMaterial?.supplier || '');
   const [barcode, setBarcode] = useState(editingMaterial?.barcode || '');
   const [saving, setSaving] = useState(false);
+  const [isCategoryModalOpen, setIsCategoryModalOpen] = useState(false);
 
   // Helper for quick bulk pricing (e.g. if user enters price per 1kg or 1L)
   const [bulkPriceHelper, setBulkPriceHelper] = useState('');
@@ -77,7 +90,7 @@ export const AddRawMaterialModal: React.FC<AddRawMaterialModalProps> = ({
         restaurant_id: restaurantId,
         name_ar: nameAr.trim(),
         name_en: nameEn.trim() || nameAr.trim(),
-        category,
+        category: category as RawMaterialCategory,
         unit,
         current_stock: stockNum,
         min_alert_stock: isNaN(alertNum) ? 0 : alertNum,
@@ -158,15 +171,25 @@ export const AddRawMaterialModal: React.FC<AddRawMaterialModalProps> = ({
 
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <div>
-              <label className="block text-xs font-black text-gray-700 mb-1.5">فئة المادة الخام</label>
+              <div className="flex items-center justify-between mb-1.5">
+                <label className="block text-xs font-black text-gray-700">فئة المادة الخام</label>
+                <button
+                  type="button"
+                  onClick={() => setIsCategoryModalOpen(true)}
+                  className="text-[11px] font-bold text-orange-600 hover:text-orange-700 flex items-center gap-1 cursor-pointer"
+                >
+                  <Plus size={12} />
+                  <span>+ فئة جديدة</span>
+                </button>
+              </div>
               <select
                 value={category}
-                onChange={e => setCategory(e.target.value as RawMaterialCategory)}
+                onChange={e => setCategory(e.target.value)}
                 className="w-full bg-gray-50 border border-gray-300 focus:bg-white rounded-xl px-4 py-3 outline-none focus:ring-2 ring-orange-500 font-bold text-sm"
               >
-                {Object.entries(RAW_CATEGORY_LABELS).map(([key, item]) => (
-                  <option key={key} value={key}>
-                    {item.icon} {item.ar}
+                {categoriesList.map(item => (
+                  <option key={item.id} value={item.id}>
+                    {item.icon || '📦'} {item.ar}
                   </option>
                 ))}
               </select>
@@ -323,6 +346,21 @@ export const AddRawMaterialModal: React.FC<AddRawMaterialModalProps> = ({
           </div>
         </form>
       </div>
+
+      {isCategoryModalOpen && (
+        <ManageRawCategoriesModal
+          restaurantId={restaurantId}
+          isOpen={isCategoryModalOpen}
+          onClose={() => setIsCategoryModalOpen(false)}
+          categories={categoriesList}
+          materials={materials}
+          onRefresh={() => onRefreshCategories?.()}
+          onSelectNewCategory={(newCatId) => {
+            setCategory(newCatId);
+            setIsCategoryModalOpen(false);
+          }}
+        />
+      )}
     </div>
   );
 };

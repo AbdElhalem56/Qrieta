@@ -1204,6 +1204,7 @@ async function startServer() {
   const recipesFilePath = path.join(process.cwd(), "recipes-store.json");
   let recipesStore: Record<string, {
     materials: any[];
+    categories?: any[];
     recipes: Record<string, any>;
     purchases: any[];
     wastes: any[];
@@ -1237,6 +1238,7 @@ async function startServer() {
 
     const data = recipesStore[restaurantId] || {
       materials: [],
+      categories: [],
       recipes: {},
       purchases: [],
       wastes: [],
@@ -1257,6 +1259,7 @@ async function startServer() {
     try {
       recipesStore[restaurant_id] = {
         materials: data.materials || [],
+        categories: data.categories || [],
         recipes: data.recipes || {},
         purchases: data.purchases || [],
         wastes: data.wastes || [],

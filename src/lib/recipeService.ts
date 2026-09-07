@@ -11,7 +11,19 @@ export type RawMaterialCategory =
   | 'bakery' 
   | 'sauces' 
   | 'beverage' 
-  | 'general';
+  | 'produce'
+  | 'spices'
+  | 'frozen'
+  | 'general'
+  | (string & {});
+
+export interface RawMaterialCategoryItem {
+  id: string;
+  ar: string;
+  en?: string;
+  icon?: string;
+  is_default?: boolean;
+}
 
 export interface RawMaterial {
   id: string;
@@ -115,6 +127,7 @@ export interface RawStockMovement {
 
 export interface FullRecipeInventoryState {
   materials: RawMaterial[];
+  categories?: RawMaterialCategoryItem[];
   recipes: Record<string, ProductRecipe>; // key: product_id
   purchases: PurchaseInvoice[];
   wastes: WasteRecord[];
@@ -403,17 +416,50 @@ export function getUnitArabicName(unit: RawMaterialUnit): string {
   }
 }
 
-// Category labels
-export const RAW_CATEGORY_LABELS: Record<RawMaterialCategory, { ar: string; icon: string }> = {
-  coffee: { ar: 'بن وإسبريسو', icon: '☕' },
+// Category labels & Defaults
+export const DEFAULT_RAW_CATEGORIES: RawMaterialCategoryItem[] = [
+  { id: 'dairy', ar: 'ألبان وأجبان', icon: '🥛', is_default: true },
+  { id: 'packaging', ar: 'تعبئة وتغليف وأكواب', icon: '📦', is_default: true },
+  { id: 'coffee', ar: 'بن وإسبريسو ومشروبات ساخنة', icon: '☕', is_default: true },
+  { id: 'meat', ar: 'لحوم ودواجن وأسماك', icon: '🥩', is_default: true },
+  { id: 'produce', ar: 'خضروات وفواكه طازجة', icon: '🥬', is_default: true },
+  { id: 'bakery', ar: 'مخبوزات وعجائن', icon: '🍞', is_default: true },
+  { id: 'sauces', ar: 'سيرب وصوصات وتتبيلات', icon: '🍯', is_default: true },
+  { id: 'spices', ar: 'بهارات وتوابل ومكسرات', icon: '🧂', is_default: true },
+  { id: 'beverage', ar: 'مشروبات وعصائر ومياه', icon: '🧃', is_default: true },
+  { id: 'frozen', ar: 'مجمدات ومصنعات', icon: '🧊', is_default: true },
+  { id: 'general', ar: 'مواد عامة ومستلزمات', icon: '🛒', is_default: true },
+];
+
+export const RAW_CATEGORY_LABELS: Record<string, { ar: string; icon: string }> = {
   dairy: { ar: 'ألبان وأجبان', icon: '🥛' },
   packaging: { ar: 'تعبئة وتغليف وأكواب', icon: '📦' },
-  meat: { ar: 'لحوم ودواجن', icon: '🥩' },
-  bakery: { ar: 'مخبوزات وخبز', icon: '🍞' },
-  sauces: { ar: 'سيرب وصوصات', icon: '🍯' },
-  beverage: { ar: 'مشروبات وشاي', icon: '🧃' },
+  coffee: { ar: 'بن وإسبريسو ومشروبات ساخنة', icon: '☕' },
+  meat: { ar: 'لحوم ودواجن وأسماك', icon: '🥩' },
+  produce: { ar: 'خضروات وفواكه طازجة', icon: '🥬' },
+  bakery: { ar: 'مخبوزات وعجائن', icon: '🍞' },
+  sauces: { ar: 'سيرب وصوصات وتتبيلات', icon: '🍯' },
+  spices: { ar: 'بهارات وتوابل ومكسرات', icon: '🧂' },
+  beverage: { ar: 'مشروبات وعصائر ومياه', icon: '🧃' },
+  frozen: { ar: 'مجمدات ومصنعات', icon: '🧊' },
   general: { ar: 'مواد عامة ومستلزمات', icon: '🛒' },
 };
+
+export function getRawCategoryInfo(
+  catKey: string, 
+  customCategories?: RawMaterialCategoryItem[]
+): { ar: string; icon: string } {
+  if (customCategories && customCategories.length > 0) {
+    const found = customCategories.find(c => c.id === catKey);
+    if (found) {
+      return { ar: found.ar, icon: found.icon || '📦' };
+    }
+  }
+  if (RAW_CATEGORY_LABELS[catKey]) {
+    return RAW_CATEGORY_LABELS[catKey];
+  }
+  return { ar: catKey, icon: '📦' };
+}
 
 // Main Storage Key
 const getLocalKey = (restaurantId: string) => `qrieta_recipes_inventory_${restaurantId}`;
@@ -423,6 +469,7 @@ export async function fetchRestaurantRecipesData(restaurantId: string): Promise<
   const localKey = getLocalKey(restaurantId);
   let state: FullRecipeInventoryState = {
     materials: [],
+    categories: [...DEFAULT_RAW_CATEGORIES],
     recipes: {},
     purchases: [],
     wastes: [],
@@ -447,6 +494,7 @@ export async function fetchRestaurantRecipesData(restaurantId: string): Promise<
       if (serverData.success) {
         state = {
           materials: serverData.materials && serverData.materials.length > 0 ? serverData.materials : state.materials,
+          categories: serverData.categories && serverData.categories.length > 0 ? serverData.categories : state.categories,
           recipes: serverData.recipes && Object.keys(serverData.recipes).length > 0 ? serverData.recipes : state.recipes,
           purchases: serverData.purchases && serverData.purchases.length > 0 ? serverData.purchases : state.purchases,
           wastes: serverData.wastes && serverData.wastes.length > 0 ? serverData.wastes : state.wastes,
@@ -459,14 +507,76 @@ export async function fetchRestaurantRecipesData(restaurantId: string): Promise<
     // offline or server fallback
   }
 
-  // Auto-seed if completely empty for this restaurant
+  // Auto-seed materials if completely empty for this restaurant
   if (!state.materials || state.materials.length === 0) {
     state.materials = DEFAULT_RAW_MATERIALS(restaurantId);
+  }
+
+  // Auto-seed categories if empty
+  if (!state.categories || state.categories.length === 0) {
+    state.categories = [...DEFAULT_RAW_CATEGORIES];
   }
 
   // Persist locally
   try {
     localStorage.setItem(localKey, JSON.stringify(state));
+  } catch (e) {}
+
+  return state;
+}
+
+// Save or Update Category
+export async function saveRawMaterialCategory(
+  restaurantId: string, 
+  category: RawMaterialCategoryItem
+): Promise<FullRecipeInventoryState> {
+  const state = await fetchRestaurantRecipesData(restaurantId);
+  const categories = state.categories && state.categories.length > 0 ? [...state.categories] : [...DEFAULT_RAW_CATEGORIES];
+  
+  const existingIdx = categories.findIndex(c => c.id === category.id);
+  if (existingIdx >= 0) {
+    categories[existingIdx] = { ...categories[existingIdx], ...category };
+  } else {
+    categories.push(category);
+  }
+  state.categories = categories;
+
+  localStorage.setItem(getLocalKey(restaurantId), JSON.stringify(state));
+  try {
+    await fetch('/api/inventory/recipes-data', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ restaurant_id: restaurantId, data: state })
+    });
+  } catch (e) {}
+
+  return state;
+}
+
+// Delete Category
+export async function deleteRawMaterialCategory(
+  restaurantId: string, 
+  categoryId: string
+): Promise<FullRecipeInventoryState> {
+  const state = await fetchRestaurantRecipesData(restaurantId);
+  const categories = (state.categories || [...DEFAULT_RAW_CATEGORIES]).filter(c => c.id !== categoryId);
+  state.categories = categories;
+
+  // Remap any material using this category to 'general'
+  state.materials = state.materials.map(m => {
+    if (m.category === categoryId) {
+      return { ...m, category: 'general' };
+    }
+    return m;
+  });
+
+  localStorage.setItem(getLocalKey(restaurantId), JSON.stringify(state));
+  try {
+    await fetch('/api/inventory/recipes-data', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ restaurant_id: restaurantId, data: state })
+    });
   } catch (e) {}
 
   return state;

@@ -357,6 +357,7 @@ export const InventoryAuditTab: React.FC<InventoryAuditTabProps> = ({
         <RawMaterialsTable
           restaurantId={restaurantId}
           materials={recipeData.materials}
+          categories={recipeData.categories}
           onRefresh={loadData}
         />
       )}

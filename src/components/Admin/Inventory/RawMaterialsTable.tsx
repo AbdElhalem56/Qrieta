@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import { 
   Plus, 
   Search, 
@@ -13,12 +13,18 @@ import {
   AlertCircle,
   Package,
   Layers,
-  Filter
+  Filter,
+  ChevronLeft,
+  ChevronRight,
+  Tags
 } from 'lucide-react';
 import { 
   RawMaterial, 
   RawMaterialCategory, 
+  RawMaterialCategoryItem,
+  DEFAULT_RAW_CATEGORIES,
   RAW_CATEGORY_LABELS, 
+  getRawCategoryInfo,
   formatMaterialQuantity, 
   getUnitArabicName,
   deleteRawMaterial
@@ -27,18 +33,22 @@ import { formatCurrency, toEnglishDigits } from '../../../lib/utils';
 import { AddRawMaterialModal } from './AddRawMaterialModal';
 import { NewPurchaseModal } from './NewPurchaseModal';
 import { NewWasteModal } from './NewWasteModal';
+import { ManageRawCategoriesModal } from './ManageRawCategoriesModal';
 
 interface RawMaterialsTableProps {
   restaurantId: string;
   materials: RawMaterial[];
+  categories?: RawMaterialCategoryItem[];
   onRefresh: () => void;
 }
 
 export const RawMaterialsTable: React.FC<RawMaterialsTableProps> = ({
   restaurantId,
   materials,
+  categories,
   onRefresh,
 }) => {
+  const categoriesList = categories && categories.length > 0 ? categories : DEFAULT_RAW_CATEGORIES;
   const [search, setSearch] = useState('');
   const [selectedCategory, setSelectedCategory] = useState<string>('all');
   const [stockFilter, setStockFilter] = useState<'all' | 'low' | 'out'>('all');
@@ -49,6 +59,27 @@ export const RawMaterialsTable: React.FC<RawMaterialsTableProps> = ({
   const [isPurchaseModalOpen, setIsPurchaseModalOpen] = useState(false);
   const [wasteModalMaterial, setWasteModalMaterial] = useState<RawMaterial | null>(null);
   const [isWasteModalOpen, setIsWasteModalOpen] = useState(false);
+  const [isCategoryModalOpen, setIsCategoryModalOpen] = useState(false);
+
+  // Horizontal Scroll Controls
+  const scrollContainerRef = useRef<HTMLDivElement>(null);
+
+  const handleScroll = (direction: 'prev' | 'next') => {
+    if (scrollContainerRef.current) {
+      // In RTL Arabic, scrollBy with negative moves left (next) and positive moves right (prev)
+      const delta = direction === 'next' ? -260 : 260;
+      scrollContainerRef.current.scrollBy({ left: delta, behavior: 'smooth' });
+    }
+  };
+
+  const handleWheel = (e: React.WheelEvent) => {
+    if (scrollContainerRef.current && Math.abs(e.deltaY) > Math.abs(e.deltaX)) {
+      scrollContainerRef.current.scrollBy({
+        left: -e.deltaY * 1.5,
+        behavior: 'smooth'
+      });
+    }
+  };
 
   // KPIs
   const totalMaterials = materials.length;
@@ -182,38 +213,123 @@ export const RawMaterialsTable: React.FC<RawMaterialsTableProps> = ({
           </div>
         </div>
 
-        {/* Category Filter Pills */}
-        <div className="flex items-center gap-2 overflow-x-auto pb-1 scrollbar-none">
-          <button
-            type="button"
-            onClick={() => setSelectedCategory('all')}
-            className={`px-3.5 py-1.5 rounded-xl text-xs font-black transition-all shrink-0 cursor-pointer ${
-              selectedCategory === 'all'
-                ? 'bg-gray-900 text-white shadow-sm'
-                : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
-            }`}
-          >
-            الكل ({toEnglishDigits(materials.length)})
-          </button>
-          {Object.entries(RAW_CATEGORY_LABELS).map(([catKey, item]) => {
-            const count = materials.filter(m => m.category === catKey).length;
-            return (
+        {/* Category Header & Horizontal Scroll Bar */}
+        <div className="pt-2 border-t border-gray-100">
+          <div className="flex items-center justify-between gap-2 mb-2 flex-wrap">
+            <div className="flex items-center gap-2">
+              <Tags size={16} className="text-orange-600" />
+              <span className="text-xs font-black text-gray-800">
+                فئات المواد الخام ({toEnglishDigits(categoriesList.length)})
+              </span>
+              <span className="text-[11px] text-gray-400 font-medium hidden md:inline">
+                (يمكنك التمرير الأفقي بين الفئات بالأسهم أو بعجلة الماوس أو بالسحب)
+              </span>
+            </div>
+
+            {/* Category Actions & Scroll Buttons */}
+            <div className="flex items-center gap-2">
               <button
-                key={catKey}
                 type="button"
-                onClick={() => setSelectedCategory(catKey)}
-                className={`px-3.5 py-1.5 rounded-xl text-xs font-black transition-all shrink-0 cursor-pointer flex items-center gap-1.5 ${
-                  selectedCategory === catKey
-                    ? 'bg-orange-500 text-white shadow-sm'
-                    : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+                onClick={() => setIsCategoryModalOpen(true)}
+                className="bg-orange-50 hover:bg-orange-100 text-orange-700 font-black text-xs px-3 py-1.5 rounded-xl border border-orange-200/70 flex items-center gap-1.5 transition-all cursor-pointer shadow-xs"
+              >
+                <Plus size={14} />
+                <span>+ فئة جديدة</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setIsCategoryModalOpen(true)}
+                className="bg-gray-100 hover:bg-gray-200 text-gray-700 font-bold text-xs px-2.5 py-1.5 rounded-xl flex items-center gap-1 transition-all cursor-pointer"
+                title="إدارة كل الفئات وتخصيصها"
+              >
+                <Tags size={13} />
+                <span>إدارة الفئات</span>
+              </button>
+
+              {/* Scroll Arrow Buttons */}
+              <div className="flex items-center gap-1 bg-gray-100 p-1 rounded-xl">
+                <button
+                  type="button"
+                  onClick={() => handleScroll('prev')}
+                  title="تمرير لليمين"
+                  className="w-7 h-7 rounded-lg bg-white hover:bg-orange-500 hover:text-white text-gray-700 flex items-center justify-center transition-all cursor-pointer shadow-xs"
+                >
+                  <ChevronRight size={15} />
+                </button>
+                <button
+                  type="button"
+                  onClick={() => handleScroll('next')}
+                  title="تمرير لليسار"
+                  className="w-7 h-7 rounded-lg bg-white hover:bg-orange-500 hover:text-white text-gray-700 flex items-center justify-center transition-all cursor-pointer shadow-xs"
+                >
+                  <ChevronLeft size={15} />
+                </button>
+              </div>
+            </div>
+          </div>
+
+          {/* Smooth Horizontal Scroll Pills Container */}
+          <div className="relative group">
+            <div 
+              ref={scrollContainerRef}
+              onWheel={handleWheel}
+              className="flex items-center gap-2 overflow-x-auto py-1.5 scroll-smooth scrollbar-thin scrollbar-thumb-gray-200 hover:scrollbar-thumb-gray-300 scrollbar-track-transparent select-none"
+              style={{ WebkitOverflowScrolling: 'touch' }}
+            >
+              <button
+                type="button"
+                onClick={() => setSelectedCategory('all')}
+                className={`px-3.5 py-2 rounded-xl text-xs font-black transition-all shrink-0 cursor-pointer flex items-center gap-1.5 ${
+                  selectedCategory === 'all'
+                    ? 'bg-gray-900 text-white shadow-md'
+                    : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
                 }`}
               >
-                <span>{item.icon}</span>
-                <span>{item.ar}</span>
-                <span className="opacity-70 text-[10px]">({toEnglishDigits(count)})</span>
+                <span>📦</span>
+                <span>الكل</span>
+                <span className={`text-[10px] px-1.5 py-0.5 rounded-full font-bold ${
+                  selectedCategory === 'all' ? 'bg-white/20 text-white' : 'bg-gray-200 text-gray-600'
+                }`}>
+                  {toEnglishDigits(materials.length)}
+                </span>
               </button>
-            );
-          })}
+
+              {categoriesList.map(cat => {
+                const count = materials.filter(m => m.category === cat.id).length;
+                const isSelected = selectedCategory === cat.id;
+                return (
+                  <button
+                    key={cat.id}
+                    type="button"
+                    onClick={() => setSelectedCategory(cat.id)}
+                    className={`px-3.5 py-2 rounded-xl text-xs font-black transition-all shrink-0 cursor-pointer flex items-center gap-1.5 border ${
+                      isSelected
+                        ? 'bg-orange-500 text-white shadow-md shadow-orange-500/25 border-orange-500 ring-2 ring-orange-400/30'
+                        : 'bg-white text-gray-700 hover:bg-orange-50/70 hover:text-orange-700 border-gray-200/80 hover:border-orange-200'
+                    }`}
+                  >
+                    <span className="text-sm">{cat.icon || '📦'}</span>
+                    <span>{cat.ar}</span>
+                    <span className={`text-[10px] px-1.5 py-0.5 rounded-full font-bold ${
+                      isSelected ? 'bg-white/20 text-white' : 'bg-gray-100 text-gray-500'
+                    }`}>
+                      {toEnglishDigits(count)}
+                    </span>
+                  </button>
+                );
+              })}
+
+              <button
+                type="button"
+                onClick={() => setIsCategoryModalOpen(true)}
+                className="px-3.5 py-2 rounded-xl text-xs font-black transition-all shrink-0 cursor-pointer flex items-center gap-1.5 border border-dashed border-orange-300 text-orange-600 hover:bg-orange-50"
+              >
+                <Plus size={14} />
+                <span>+ فئة جديدة</span>
+              </button>
+            </div>
+          </div>
         </div>
       </div>
 
@@ -256,7 +372,7 @@ export const RawMaterialsTable: React.FC<RawMaterialsTableProps> = ({
                     ? `${toEnglishDigits((mat.cost_per_unit * 1000).toFixed(0))} ج/لتر`
                     : `${toEnglishDigits(mat.cost_per_unit.toFixed(2))} ج/قطعة`;
 
-                  const catInfo = RAW_CATEGORY_LABELS[mat.category] || RAW_CATEGORY_LABELS.general;
+                  const catInfo = getRawCategoryInfo(mat.category, categoriesList);
 
                   return (
                     <tr key={mat.id} className="hover:bg-gray-50/60 transition-colors">
@@ -374,10 +490,28 @@ export const RawMaterialsTable: React.FC<RawMaterialsTableProps> = ({
         <AddRawMaterialModal
           restaurantId={restaurantId}
           editingMaterial={editingMaterial}
+          categories={categoriesList}
+          materials={materials}
           onClose={() => setIsAddModalOpen(false)}
           onSaved={() => {
             setIsAddModalOpen(false);
             onRefresh();
+          }}
+          onRefreshCategories={onRefresh}
+        />
+      )}
+
+      {isCategoryModalOpen && (
+        <ManageRawCategoriesModal
+          restaurantId={restaurantId}
+          isOpen={isCategoryModalOpen}
+          onClose={() => setIsCategoryModalOpen(false)}
+          categories={categoriesList}
+          materials={materials}
+          onRefresh={onRefresh}
+          onSelectNewCategory={(newCatId) => {
+            setSelectedCategory(newCatId);
+            setIsCategoryModalOpen(false);
           }}
         />
       )}
