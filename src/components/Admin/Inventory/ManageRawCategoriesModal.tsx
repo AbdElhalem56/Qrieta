@@ -67,7 +67,7 @@ export const ManageRawCategoriesModal: React.FC<ManageRawCategoriesModalProps> =
 
   if (!isOpen) return null;
 
-  const currentCategories = categories && categories.length > 0 ? categories : DEFAULT_RAW_CATEGORIES;
+  const currentCategories = categories || [];
 
   const handleAddCategory = async (e?: React.FormEvent) => {
     if (e) e.preventDefault();
@@ -327,39 +327,44 @@ export const ManageRawCategoriesModal: React.FC<ManageRawCategoriesModalProps> =
                 <span>قائمة فئات المواد الخام المفعلة ({toEnglishDigits(currentCategories.length)})</span>
               </h4>
               <span className="text-[10px] text-gray-500">
-                يمكنك التمرير الأفقي بينها في جدول المواد الخام
+                تظهر هذه الفئات في شريط التصفح الأفقي بالمستودع
               </span>
             </div>
 
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
-              {currentCategories.map(cat => {
-                const count = materials.filter(m => m.category === cat.id).length;
-                return (
-                  <div 
-                    key={cat.id}
-                    className="p-3 bg-white rounded-2xl border border-gray-200 flex items-center justify-between gap-2 shadow-xs hover:border-orange-200 transition-all"
-                  >
-                    <div className="flex items-center gap-2.5">
-                      <span className="w-8 h-8 rounded-xl bg-orange-50 border border-orange-100 text-lg flex items-center justify-center shrink-0">
-                        {cat.icon || '📦'}
-                      </span>
-                      <div>
-                        <div className="flex items-center gap-1.5">
-                          <span className="text-xs font-black text-gray-900">{cat.ar}</span>
-                          {cat.is_default && (
-                            <span className="text-[9px] font-bold text-gray-400 bg-gray-100 px-1.5 py-0.5 rounded-md">
-                              أساسي
-                            </span>
-                          )}
-                        </div>
-                        <span className="text-[10px] font-bold text-gray-500 flex items-center gap-1 mt-0.5">
-                          <Boxes size={11} className="text-gray-400" />
-                          <span>{toEnglishDigits(count)} مادة خام</span>
+            {currentCategories.length === 0 ? (
+              <div className="p-8 text-center border-2 border-dashed border-gray-200 rounded-2xl bg-gray-50/60">
+                <div className="w-12 h-12 rounded-2xl bg-orange-100 text-orange-600 flex items-center justify-center mx-auto mb-3">
+                  <Tags size={24} />
+                </div>
+                <h5 className="text-xs font-black text-gray-800 mb-1">لا توجد أي فئات مضافة حتى الآن</h5>
+                <p className="text-[11px] text-gray-500 max-w-md mx-auto leading-relaxed">
+                  لم يتم إضافة أي فئات افتراضية مسبقاً بناءً على رغبتك. يمكنك الآن كمدير للنظام إضافة فئات المواد الخام التي تناسب مطبخك أو مستودعك من النموذج أعلاه أو الضغط على الاقتراحات السريعة.
+                </p>
+              </div>
+            ) : (
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                {currentCategories.map(cat => {
+                  const count = materials.filter(m => m.category === cat.id).length;
+                  return (
+                    <div 
+                      key={cat.id}
+                      className="p-3 bg-white rounded-2xl border border-gray-200 flex items-center justify-between gap-2 shadow-xs hover:border-orange-200 transition-all"
+                    >
+                      <div className="flex items-center gap-2.5">
+                        <span className="w-8 h-8 rounded-xl bg-orange-50 border border-orange-100 text-lg flex items-center justify-center shrink-0">
+                          {cat.icon || '📦'}
                         </span>
+                        <div>
+                          <div className="flex items-center gap-1.5">
+                            <span className="text-xs font-black text-gray-900">{cat.ar}</span>
+                          </div>
+                          <span className="text-[10px] font-bold text-gray-500 flex items-center gap-1 mt-0.5">
+                            <Boxes size={11} className="text-gray-400" />
+                            <span>{toEnglishDigits(count)} مادة خام</span>
+                          </span>
+                        </div>
                       </div>
-                    </div>
 
-                    {!cat.is_default && (
                       <button
                         type="button"
                         onClick={() => handleDelete(cat)}
@@ -368,11 +373,11 @@ export const ManageRawCategoriesModal: React.FC<ManageRawCategoriesModalProps> =
                       >
                         <Trash2 size={14} />
                       </button>
-                    )}
-                  </div>
-                );
-              })}
-            </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
           </div>
         </div>
 

@@ -416,34 +416,25 @@ export function getUnitArabicName(unit: RawMaterialUnit): string {
   }
 }
 
-// Category labels & Defaults
-export const DEFAULT_RAW_CATEGORIES: RawMaterialCategoryItem[] = [
-  { id: 'dairy', ar: 'ألبان وأجبان', icon: '🥛', is_default: true },
-  { id: 'packaging', ar: 'تعبئة وتغليف وأكواب', icon: '📦', is_default: true },
-  { id: 'coffee', ar: 'بن وإسبريسو ومشروبات ساخنة', icon: '☕', is_default: true },
-  { id: 'meat', ar: 'لحوم ودواجن وأسماك', icon: '🥩', is_default: true },
-  { id: 'produce', ar: 'خضروات وفواكه طازجة', icon: '🥬', is_default: true },
-  { id: 'bakery', ar: 'مخبوزات وعجائن', icon: '🍞', is_default: true },
-  { id: 'sauces', ar: 'سيرب وصوصات وتتبيلات', icon: '🍯', is_default: true },
-  { id: 'spices', ar: 'بهارات وتوابل ومكسرات', icon: '🧂', is_default: true },
-  { id: 'beverage', ar: 'مشروبات وعصائر ومياه', icon: '🧃', is_default: true },
-  { id: 'frozen', ar: 'مجمدات ومصنعات', icon: '🧊', is_default: true },
-  { id: 'general', ar: 'مواد عامة ومستلزمات', icon: '🛒', is_default: true },
+// Category labels & Defaults - Note: No default categories are pre-populated; admin adds all categories themselves
+export const DEFAULT_RAW_CATEGORIES: RawMaterialCategoryItem[] = [];
+
+// Optional preset suggestions that the admin can choose from or click to add if desired
+export const PRESET_RAW_CATEGORY_SUGGESTIONS: Array<{ ar: string; en: string; icon: string }> = [
+  { ar: 'ألبان وأجبان', en: 'Dairy & Cheese', icon: '🥛' },
+  { ar: 'تعبئة وتغليف وأكواب', en: 'Packaging & Supplies', icon: '📦' },
+  { ar: 'بن وإسبريسو ومشروبات ساخنة', en: 'Coffee & Hot Drinks', icon: '☕' },
+  { ar: 'لحوم ودواجن وأسماك', en: 'Meat & Poultry', icon: '🥩' },
+  { ar: 'خضروات وفواكه طازجة', en: 'Fresh Produce', icon: '🥬' },
+  { ar: 'مخبوزات وعجائن', en: 'Bakery & Dough', icon: '🍞' },
+  { ar: 'سيرب وصوصات وتتبيلات', en: 'Sauces & Syrups', icon: '🍯' },
+  { ar: 'بهارات وتوابل ومكسرات', en: 'Spices & Nuts', icon: '🧂' },
+  { ar: 'مشروبات وعصائر ومياه', en: 'Drinks & Water', icon: '🧃' },
+  { ar: 'مجمدات ومصنعات', en: 'Frozen Foods', icon: '🧊' },
+  { ar: 'مستلزمات عامة ونظافة', en: 'General Supplies', icon: '🛒' },
 ];
 
-export const RAW_CATEGORY_LABELS: Record<string, { ar: string; icon: string }> = {
-  dairy: { ar: 'ألبان وأجبان', icon: '🥛' },
-  packaging: { ar: 'تعبئة وتغليف وأكواب', icon: '📦' },
-  coffee: { ar: 'بن وإسبريسو ومشروبات ساخنة', icon: '☕' },
-  meat: { ar: 'لحوم ودواجن وأسماك', icon: '🥩' },
-  produce: { ar: 'خضروات وفواكه طازجة', icon: '🥬' },
-  bakery: { ar: 'مخبوزات وعجائن', icon: '🍞' },
-  sauces: { ar: 'سيرب وصوصات وتتبيلات', icon: '🍯' },
-  spices: { ar: 'بهارات وتوابل ومكسرات', icon: '🧂' },
-  beverage: { ar: 'مشروبات وعصائر ومياه', icon: '🧃' },
-  frozen: { ar: 'مجمدات ومصنعات', icon: '🧊' },
-  general: { ar: 'مواد عامة ومستلزمات', icon: '🛒' },
-};
+export const RAW_CATEGORY_LABELS: Record<string, { ar: string; icon: string }> = {};
 
 export function getRawCategoryInfo(
   catKey: string, 
@@ -455,10 +446,7 @@ export function getRawCategoryInfo(
       return { ar: found.ar, icon: found.icon || '📦' };
     }
   }
-  if (RAW_CATEGORY_LABELS[catKey]) {
-    return RAW_CATEGORY_LABELS[catKey];
-  }
-  return { ar: catKey, icon: '📦' };
+  return { ar: catKey || 'عام', icon: '📦' };
 }
 
 // Main Storage Key
@@ -469,7 +457,7 @@ export async function fetchRestaurantRecipesData(restaurantId: string): Promise<
   const localKey = getLocalKey(restaurantId);
   let state: FullRecipeInventoryState = {
     materials: [],
-    categories: [...DEFAULT_RAW_CATEGORIES],
+    categories: [],
     recipes: {},
     purchases: [],
     wastes: [],
@@ -494,7 +482,7 @@ export async function fetchRestaurantRecipesData(restaurantId: string): Promise<
       if (serverData.success) {
         state = {
           materials: serverData.materials && serverData.materials.length > 0 ? serverData.materials : state.materials,
-          categories: serverData.categories && serverData.categories.length > 0 ? serverData.categories : state.categories,
+          categories: serverData.categories || state.categories,
           recipes: serverData.recipes && Object.keys(serverData.recipes).length > 0 ? serverData.recipes : state.recipes,
           purchases: serverData.purchases && serverData.purchases.length > 0 ? serverData.purchases : state.purchases,
           wastes: serverData.wastes && serverData.wastes.length > 0 ? serverData.wastes : state.wastes,
@@ -507,14 +495,15 @@ export async function fetchRestaurantRecipesData(restaurantId: string): Promise<
     // offline or server fallback
   }
 
-  // Auto-seed materials if completely empty for this restaurant
-  if (!state.materials || state.materials.length === 0) {
-    state.materials = DEFAULT_RAW_MATERIALS(restaurantId);
+  // Remove any legacy default-seeded categories so admin starts with their own custom list
+  if (Array.isArray(state.categories)) {
+    state.categories = state.categories.filter(c => !c.is_default);
+  } else {
+    state.categories = [];
   }
 
-  // Auto-seed categories if empty
-  if (!state.categories || state.categories.length === 0) {
-    state.categories = [...DEFAULT_RAW_CATEGORIES];
+  if (!state.materials) {
+    state.materials = [];
   }
 
   // Persist locally
@@ -531,13 +520,13 @@ export async function saveRawMaterialCategory(
   category: RawMaterialCategoryItem
 ): Promise<FullRecipeInventoryState> {
   const state = await fetchRestaurantRecipesData(restaurantId);
-  const categories = state.categories && state.categories.length > 0 ? [...state.categories] : [...DEFAULT_RAW_CATEGORIES];
+  const categories = state.categories ? [...state.categories] : [];
   
   const existingIdx = categories.findIndex(c => c.id === category.id);
   if (existingIdx >= 0) {
-    categories[existingIdx] = { ...categories[existingIdx], ...category };
+    categories[existingIdx] = { ...categories[existingIdx], ...category, is_default: false };
   } else {
-    categories.push(category);
+    categories.push({ ...category, is_default: false });
   }
   state.categories = categories;
 
@@ -559,13 +548,14 @@ export async function deleteRawMaterialCategory(
   categoryId: string
 ): Promise<FullRecipeInventoryState> {
   const state = await fetchRestaurantRecipesData(restaurantId);
-  const categories = (state.categories || [...DEFAULT_RAW_CATEGORIES]).filter(c => c.id !== categoryId);
+  const categories = (state.categories || []).filter(c => c.id !== categoryId);
   state.categories = categories;
 
-  // Remap any material using this category to 'general'
+  // Remap any material using this category to remaining or blank
+  const fallbackCat = categories[0]?.id || '';
   state.materials = state.materials.map(m => {
     if (m.category === categoryId) {
-      return { ...m, category: 'general' };
+      return { ...m, category: fallbackCat };
     }
     return m;
   });
@@ -993,4 +983,85 @@ export async function deductOrderRecipeStock(
   } catch (e) {}
 
   return { success: true, deductedIngredientsCount: deductedCount, warnings };
+}
+
+// -------------------------------------------------------------
+// RESTORE RECIPE STOCK (إعادة المواد الخام للمستودع عند إلغاء الطلب)
+// -------------------------------------------------------------
+export async function restoreOrderRecipeStock(
+  restaurantId: string,
+  items: Array<{
+    id?: string;
+    menuItemId?: string;
+    product_id?: string;
+    name: string;
+    quantity: number;
+  }>,
+  orderRef: string,
+  cashierOrActor: string = 'كاشير'
+): Promise<{ success: boolean; restoredIngredientsCount: number }> {
+  if (!restaurantId || !items || items.length === 0) {
+    return { success: true, restoredIngredientsCount: 0 };
+  }
+
+  const state = await fetchRestaurantRecipesData(restaurantId);
+  const materialsMap = new Map<string, RawMaterial>();
+  state.materials.forEach(m => materialsMap.set(m.id, m));
+
+  let restoredCount = 0;
+  const now = new Date().toISOString();
+
+  items.forEach(item => {
+    const productId = item.id || item.menuItemId || item.product_id;
+    const orderQty = Math.max(1, item.quantity || 1);
+    if (!productId) return;
+
+    const recipe = state.recipes[productId];
+    if (recipe && recipe.ingredients && recipe.ingredients.length > 0) {
+      recipe.ingredients.forEach(ing => {
+        const mat = materialsMap.get(ing.material_id);
+        if (mat) {
+          const totalRestore = (ing.quantity || 0) * orderQty;
+          const prev = mat.current_stock;
+          const next = prev + totalRestore;
+
+          mat.current_stock = next;
+          mat.updated_at = now;
+          restoredCount++;
+
+          state.movements.unshift({
+            id: `mov-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+            restaurant_id: restaurantId,
+            material_id: mat.id,
+            material_name: mat.name_ar,
+            type: 'manual_adjust',
+            quantity: totalRestore,
+            prev_stock: prev,
+            new_stock: next,
+            unit: mat.unit,
+            order_id: orderRef,
+            reason: `استرجاع ريسبي (إلغاء طلب #${orderRef}): ${item.name} x ${orderQty}`,
+            performed_by: cashierOrActor,
+            timestamp: now
+          });
+        }
+      });
+    }
+  });
+
+  if (state.movements.length > 1000) {
+    state.movements = state.movements.slice(0, 1000);
+  }
+
+  localStorage.setItem(getLocalKey(restaurantId), JSON.stringify(state));
+
+  try {
+    await fetch('/api/inventory/recipes-data', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ restaurant_id: restaurantId, data: state })
+    });
+  } catch (e) {}
+
+  return { success: true, restoredIngredientsCount: restoredCount };
 }

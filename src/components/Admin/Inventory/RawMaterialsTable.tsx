@@ -48,7 +48,7 @@ export const RawMaterialsTable: React.FC<RawMaterialsTableProps> = ({
   categories,
   onRefresh,
 }) => {
-  const categoriesList = categories && categories.length > 0 ? categories : DEFAULT_RAW_CATEGORIES;
+  const categoriesList = categories || [];
   const [search, setSearch] = useState('');
   const [selectedCategory, setSelectedCategory] = useState<string>('all');
   const [stockFilter, setStockFilter] = useState<'all' | 'low' | 'out'>('all');
@@ -269,67 +269,86 @@ export const RawMaterialsTable: React.FC<RawMaterialsTableProps> = ({
             </div>
           </div>
 
-          {/* Smooth Horizontal Scroll Pills Container */}
-          <div className="relative group">
-            <div 
-              ref={scrollContainerRef}
-              onWheel={handleWheel}
-              className="flex items-center gap-2 overflow-x-auto py-1.5 scroll-smooth scrollbar-thin scrollbar-thumb-gray-200 hover:scrollbar-thumb-gray-300 scrollbar-track-transparent select-none"
-              style={{ WebkitOverflowScrolling: 'touch' }}
-            >
-              <button
-                type="button"
-                onClick={() => setSelectedCategory('all')}
-                className={`px-3.5 py-2 rounded-xl text-xs font-black transition-all shrink-0 cursor-pointer flex items-center gap-1.5 ${
-                  selectedCategory === 'all'
-                    ? 'bg-gray-900 text-white shadow-md'
-                    : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
-                }`}
-              >
-                <span>📦</span>
-                <span>الكل</span>
-                <span className={`text-[10px] px-1.5 py-0.5 rounded-full font-bold ${
-                  selectedCategory === 'all' ? 'bg-white/20 text-white' : 'bg-gray-200 text-gray-600'
-                }`}>
-                  {toEnglishDigits(materials.length)}
+          {/* Horizontal Scroll Bar or Empty State */}
+          {categoriesList.length === 0 ? (
+            <div className="flex items-center justify-between p-3.5 bg-amber-50/80 border border-amber-200/80 rounded-2xl text-xs text-amber-900 mt-2 flex-wrap gap-2">
+              <div className="flex items-center gap-2">
+                <Tags size={16} className="text-amber-600 shrink-0" />
+                <span className="font-bold">
+                  لم تقم بإضافة فئات للمواد الخام بعد — أضف فئات مخصصة لترتيب المستودع والتمرير بينها بكل سلاسة.
                 </span>
-              </button>
-
-              {categoriesList.map(cat => {
-                const count = materials.filter(m => m.category === cat.id).length;
-                const isSelected = selectedCategory === cat.id;
-                return (
-                  <button
-                    key={cat.id}
-                    type="button"
-                    onClick={() => setSelectedCategory(cat.id)}
-                    className={`px-3.5 py-2 rounded-xl text-xs font-black transition-all shrink-0 cursor-pointer flex items-center gap-1.5 border ${
-                      isSelected
-                        ? 'bg-orange-500 text-white shadow-md shadow-orange-500/25 border-orange-500 ring-2 ring-orange-400/30'
-                        : 'bg-white text-gray-700 hover:bg-orange-50/70 hover:text-orange-700 border-gray-200/80 hover:border-orange-200'
-                    }`}
-                  >
-                    <span className="text-sm">{cat.icon || '📦'}</span>
-                    <span>{cat.ar}</span>
-                    <span className={`text-[10px] px-1.5 py-0.5 rounded-full font-bold ${
-                      isSelected ? 'bg-white/20 text-white' : 'bg-gray-100 text-gray-500'
-                    }`}>
-                      {toEnglishDigits(count)}
-                    </span>
-                  </button>
-                );
-              })}
-
+              </div>
               <button
                 type="button"
                 onClick={() => setIsCategoryModalOpen(true)}
-                className="px-3.5 py-2 rounded-xl text-xs font-black transition-all shrink-0 cursor-pointer flex items-center gap-1.5 border border-dashed border-orange-300 text-orange-600 hover:bg-orange-50"
+                className="bg-orange-600 hover:bg-orange-700 text-white font-black text-xs px-3.5 py-1.5 rounded-xl flex items-center gap-1.5 transition-all cursor-pointer shadow-xs shrink-0"
               >
                 <Plus size={14} />
-                <span>+ فئة جديدة</span>
+                <span>+ إضافة أول فئة</span>
               </button>
             </div>
-          </div>
+          ) : (
+            <div className="relative group">
+              <div 
+                ref={scrollContainerRef}
+                onWheel={handleWheel}
+                className="flex items-center gap-2 overflow-x-auto py-1.5 scroll-smooth scrollbar-thin scrollbar-thumb-gray-200 hover:scrollbar-thumb-gray-300 scrollbar-track-transparent select-none"
+                style={{ WebkitOverflowScrolling: 'touch' }}
+              >
+                <button
+                  type="button"
+                  onClick={() => setSelectedCategory('all')}
+                  className={`px-3.5 py-2 rounded-xl text-xs font-black transition-all shrink-0 cursor-pointer flex items-center gap-1.5 ${
+                    selectedCategory === 'all'
+                      ? 'bg-gray-900 text-white shadow-md'
+                      : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
+                  }`}
+                >
+                  <span>📦</span>
+                  <span>الكل</span>
+                  <span className={`text-[10px] px-1.5 py-0.5 rounded-full font-bold ${
+                    selectedCategory === 'all' ? 'bg-white/20 text-white' : 'bg-gray-200 text-gray-600'
+                  }`}>
+                    {toEnglishDigits(materials.length)}
+                  </span>
+                </button>
+
+                {categoriesList.map(cat => {
+                  const count = materials.filter(m => m.category === cat.id).length;
+                  const isSelected = selectedCategory === cat.id;
+                  return (
+                    <button
+                      key={cat.id}
+                      type="button"
+                      onClick={() => setSelectedCategory(cat.id)}
+                      className={`px-3.5 py-2 rounded-xl text-xs font-black transition-all shrink-0 cursor-pointer flex items-center gap-1.5 border ${
+                        isSelected
+                          ? 'bg-orange-500 text-white shadow-md shadow-orange-500/25 border-orange-500 ring-2 ring-orange-400/30'
+                          : 'bg-white text-gray-700 hover:bg-orange-50/70 hover:text-orange-700 border-gray-200/80 hover:border-orange-200'
+                      }`}
+                    >
+                      <span className="text-sm">{cat.icon || '📦'}</span>
+                      <span>{cat.ar}</span>
+                      <span className={`text-[10px] px-1.5 py-0.5 rounded-full font-bold ${
+                        isSelected ? 'bg-white/20 text-white' : 'bg-gray-100 text-gray-500'
+                      }`}>
+                        {toEnglishDigits(count)}
+                      </span>
+                    </button>
+                  );
+                })}
+
+                <button
+                  type="button"
+                  onClick={() => setIsCategoryModalOpen(true)}
+                  className="px-3.5 py-2 rounded-xl text-xs font-black transition-all shrink-0 cursor-pointer flex items-center gap-1.5 border border-dashed border-orange-300 text-orange-600 hover:bg-orange-50"
+                >
+                  <Plus size={14} />
+                  <span>+ فئة جديدة</span>
+                </button>
+              </div>
+            </div>
+          )}
         </div>
       </div>
 

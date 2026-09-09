@@ -32,11 +32,11 @@ export const AddRawMaterialModal: React.FC<AddRawMaterialModalProps> = ({
   onSaved,
   onRefreshCategories,
 }) => {
-  const categoriesList = categories && categories.length > 0 ? categories : DEFAULT_RAW_CATEGORIES;
+  const categoriesList = categories || [];
   const [nameAr, setNameAr] = useState(editingMaterial?.name_ar || '');
   const [nameEn, setNameEn] = useState(editingMaterial?.name_en || '');
   const [category, setCategory] = useState<string>(
-    editingMaterial?.category || (categoriesList[0]?.id || 'dairy')
+    editingMaterial?.category || (categoriesList[0]?.id || '')
   );
   const [unit, setUnit] = useState<RawMaterialUnit>(editingMaterial?.unit || 'g');
   const [currentStock, setCurrentStock] = useState<string>(editingMaterial ? String(editingMaterial.current_stock) : '1000');
@@ -182,17 +182,31 @@ export const AddRawMaterialModal: React.FC<AddRawMaterialModalProps> = ({
                   <span>+ فئة جديدة</span>
                 </button>
               </div>
-              <select
-                value={category}
-                onChange={e => setCategory(e.target.value)}
-                className="w-full bg-gray-50 border border-gray-300 focus:bg-white rounded-xl px-4 py-3 outline-none focus:ring-2 ring-orange-500 font-bold text-sm"
-              >
-                {categoriesList.map(item => (
-                  <option key={item.id} value={item.id}>
-                    {item.icon || '📦'} {item.ar}
-                  </option>
-                ))}
-              </select>
+              {categoriesList.length === 0 ? (
+                <div className="flex items-center justify-between p-3 bg-amber-50 border border-amber-200 rounded-xl text-xs text-amber-900">
+                  <span className="font-bold">لم تضف أي فئات بعد</span>
+                  <button
+                    type="button"
+                    onClick={() => setIsCategoryModalOpen(true)}
+                    className="text-xs font-black text-orange-600 hover:text-orange-700 underline flex items-center gap-1 cursor-pointer"
+                  >
+                    <Plus size={12} />
+                    <span>إضافة أول فئة</span>
+                  </button>
+                </div>
+              ) : (
+                <select
+                  value={category || categoriesList[0]?.id || ''}
+                  onChange={e => setCategory(e.target.value)}
+                  className="w-full bg-gray-50 border border-gray-300 focus:bg-white rounded-xl px-4 py-3 outline-none focus:ring-2 ring-orange-500 font-bold text-sm"
+                >
+                  {categoriesList.map(item => (
+                    <option key={item.id} value={item.id}>
+                      {item.icon || '📦'} {item.ar}
+                    </option>
+                  ))}
+                </select>
+              )}
             </div>
 
             <div>

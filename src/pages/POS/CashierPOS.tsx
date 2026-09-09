@@ -126,7 +126,7 @@ import {
   updateProductStock, 
   logShiftAuditRecord 
 } from '../../lib/inventoryService';
-import { deductOrderRecipeStock } from '../../lib/recipeService';
+import { deductOrderRecipeStock, restoreOrderRecipeStock } from '../../lib/recipeService';
 
 export const CashierPOS: React.FC = () => {
   const [searchParams] = useSearchParams();
@@ -962,19 +962,32 @@ export const CashierPOS: React.FC = () => {
         cardSales: prev.cardSales + (order.payment_status === 'paid' ? order.total_price : 0)
       }));
 
-      // 7. Deduct inventory if not already deducted
-      order.items.forEach(it => {
-        if (it.id) {
-          updateProductStock(selectedRestaurant.id, {
-            productId: it.id,
-            productName: it.name,
-            delta: -it.quantity,
-            type: 'sale',
-            reason: `تسليم طلب زبون #${displayNum}`,
-            performedBy: shift.cashierName || 'كاشير'
-          }).catch(() => {});
-        }
-      });
+      // 7. Deduct inventory if not already deducted by customer app
+      if (order.source !== 'customer_app') {
+        order.items.forEach(it => {
+          if (it.id) {
+            updateProductStock(selectedRestaurant.id, {
+              productId: it.id,
+              productName: it.name,
+              delta: -it.quantity,
+              type: 'sale',
+              reason: `تسليم طلب #${displayNum}`,
+              performedBy: shift.cashierName || 'كاشير'
+            }).catch(() => {});
+          }
+        });
+
+        deductOrderRecipeStock(
+          selectedRestaurant.id,
+          order.items.map(it => ({
+            id: it.id,
+            name: it.name,
+            quantity: it.quantity
+          })),
+          String(displayNum),
+          shift.cashierName || 'كاشير'
+        ).catch(() => {});
+      }
 
       // 8. Log shift audit
       logShiftAuditRecord(selectedRestaurant.id, {
@@ -1013,6 +1026,18 @@ export const CashierPOS: React.FC = () => {
         }).catch(() => {});
       }
     });
+
+    // Restore recipe raw materials
+    restoreOrderRecipeStock(
+      selectedRestaurant.id,
+      order.items.map(it => ({
+        id: it.id,
+        name: it.name,
+        quantity: it.quantity
+      })),
+      String(order.daily_order_number),
+      shift.cashierName || 'كاشير'
+    ).catch(() => {});
   };
 
   // Barcode Scanner Listener
@@ -2127,6 +2152,34 @@ export const CashierPOS: React.FC = () => {
             ...prev,
             totalRefunds: prev.totalRefunds + orderTotal,
           }));
+
+          // Restore product stock and recipe raw materials
+          if (anyOrder.items && Array.isArray(anyOrder.items)) {
+            anyOrder.items.forEach((it: any) => {
+              const pid = it.menuItemId || it.id || it.product_id;
+              if (pid) {
+                updateProductStock(selectedRestaurant.id, {
+                  productId: pid,
+                  productName: it.name,
+                  delta: it.quantity || 1,
+                  type: 'adjustment',
+                  reason: `مرتجع فاتورة كاشير #${order.id}`,
+                  performedBy: shift.cashierName || 'كاشير'
+                }).catch(() => {});
+              }
+            });
+
+            restoreOrderRecipeStock(
+              selectedRestaurant.id,
+              anyOrder.items.map((it: any) => ({
+                id: it.menuItemId || it.id || it.product_id,
+                name: it.name,
+                quantity: it.quantity || 1
+              })),
+              String(order.id),
+              shift.cashierName || 'كاشير'
+            ).catch(() => {});
+          }
 
           setActiveOrders(prev => prev.map(o => o.id === order.id ? { ...o, status: 'cancelled', payment_status: 'refunded' } : o));
           addAuditLog('refund_order', `تم استرجاع وإلغاء الفاتورة #${order.id} بقيمة ${orderTotal} ج.م`);

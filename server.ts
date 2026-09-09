@@ -13,6 +13,67 @@ async function startServer() {
 
   app.use(express.json());
 
+  // Supabase Cloud Storage & Database Sync Engine
+  const supabaseUrl = process.env.VITE_SUPABASE_URL || process.env.SUPABASE_URL || "";
+  const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY || "";
+  const anonKey = process.env.VITE_SUPABASE_ANON_KEY || process.env.SUPABASE_ANON_KEY || "";
+
+  const getSupabaseAdmin = () => {
+    if (!supabaseUrl) return null;
+    return createClient(supabaseUrl, serviceRoleKey || anonKey, {
+      auth: {
+        autoRefreshToken: false,
+        persistSession: false
+      }
+    });
+  };
+
+  let isSystemBucketReady = false;
+  const ensureSystemBucket = async () => {
+    if (isSystemBucketReady) return;
+    const client = getSupabaseAdmin();
+    if (!client) return;
+    try {
+      const { data: buckets } = await client.storage.listBuckets();
+      if (!buckets?.some((b: any) => b.name === "system-data")) {
+        await client.storage.createBucket("system-data", { public: false });
+      }
+      isSystemBucketReady = true;
+    } catch (e) {
+      console.warn("System storage bucket initialization warning:", e);
+    }
+  };
+
+  const loadFromSupabaseStorage = async <T>(storagePath: string, fallback: T): Promise<T> => {
+    const client = getSupabaseAdmin();
+    if (!client) return fallback;
+    try {
+      await ensureSystemBucket();
+      const { data, error } = await client.storage.from("system-data").download(storagePath);
+      if (!error && data) {
+        const text = await data.text();
+        return JSON.parse(text) as T;
+      }
+    } catch (err) {
+      // Return fallback silently if not uploaded yet
+    }
+    return fallback;
+  };
+
+  const saveToSupabaseStorage = async (storagePath: string, payload: any): Promise<void> => {
+    const client = getSupabaseAdmin();
+    if (!client) return;
+    try {
+      await ensureSystemBucket();
+      await client.storage.from("system-data").upload(storagePath, JSON.stringify(payload, null, 2), {
+        contentType: "application/json",
+        upsert: true
+      });
+    } catch (err) {
+      console.warn(`Supabase storage sync warning for ${storagePath}:`, err);
+    }
+  };
+
   // API Routes
   app.post("/api/create-waiter", async (req, res) => {
     const { name, email, password, restaurant_id } = req.body;
@@ -528,6 +589,7 @@ async function startServer() {
     } catch (e) {
       console.warn("Could not write daily-order-sequences.json:", e);
     }
+    saveToSupabaseStorage("system/daily-sequences.json", dailySequenceStore).catch(() => {});
   };
 
   // API to get/assign daily sequence order number per restaurant
@@ -1069,19 +1131,29 @@ async function startServer() {
     console.warn("Could not read inventory-store.json:", e);
   }
 
-  const persistInventory = () => {
+  const persistInventory = (restaurantId?: string) => {
     try {
       fs.writeFileSync(inventoryFilePath, JSON.stringify(inventoryStore, null, 2), "utf-8");
     } catch (e) {
       console.warn("Could not write inventory-store.json:", e);
     }
+    if (restaurantId && inventoryStore[restaurantId]) {
+      saveToSupabaseStorage(`restaurants/${restaurantId}/inventory.json`, inventoryStore[restaurantId]).catch(() => {});
+    }
   };
 
-  // GET /api/inventory - Get restaurant inventory, movements and alerts
-  app.get("/api/inventory", (req, res) => {
+  // GET /api/inventory - Get restaurant inventory, movements and alerts (Supabase Cloud + Local Memory)
+  app.get("/api/inventory", async (req, res) => {
     const restaurantId = req.query.restaurant_id as string;
     if (!restaurantId) {
       return res.status(400).json({ error: "معرف المطعم مطلوب." });
+    }
+
+    if (!inventoryStore[restaurantId]) {
+      const cloudInv = await loadFromSupabaseStorage(`restaurants/${restaurantId}/inventory.json`, null);
+      if (cloudInv) {
+        inventoryStore[restaurantId] = cloudInv;
+      }
     }
 
     const data = inventoryStore[restaurantId] || {
@@ -1096,7 +1168,7 @@ async function startServer() {
   });
 
   // POST /api/inventory/update - Adjust stock (Stock In, Waste, Sale, Manual)
-  app.post("/api/inventory/update", (req, res) => {
+  app.post("/api/inventory/update", async (req, res) => {
     const { restaurant_id, productId, productName, newStock, delta, type, reason, performedBy, minAlert } = req.body;
     if (!restaurant_id) {
       return res.status(400).json({ error: "معرف المطعم مطلوب." });
@@ -1104,7 +1176,8 @@ async function startServer() {
 
     try {
       if (!inventoryStore[restaurant_id]) {
-        inventoryStore[restaurant_id] = {
+        const cloudInv = await loadFromSupabaseStorage(`restaurants/${restaurant_id}/inventory.json`, null);
+        inventoryStore[restaurant_id] = cloudInv || {
           stock: {},
           minAlerts: {},
           movements: [],
@@ -1150,7 +1223,7 @@ async function startServer() {
         }
       }
 
-      persistInventory();
+      persistInventory(restaurant_id);
       res.status(200).json({
         success: true,
         productId,
@@ -1164,7 +1237,7 @@ async function startServer() {
   });
 
   // POST /api/inventory/shift-log - Record shift events for Admin cash drawer monitor
-  app.post("/api/inventory/shift-log", (req, res) => {
+  app.post("/api/inventory/shift-log", async (req, res) => {
     const { restaurant_id, shiftRecord } = req.body;
     if (!restaurant_id || !shiftRecord) {
       return res.status(400).json({ error: "البيانات غير مكتملة." });
@@ -1172,7 +1245,8 @@ async function startServer() {
 
     try {
       if (!inventoryStore[restaurant_id]) {
-        inventoryStore[restaurant_id] = {
+        const cloudInv = await loadFromSupabaseStorage(`restaurants/${restaurant_id}/inventory.json`, null);
+        inventoryStore[restaurant_id] = cloudInv || {
           stock: {},
           minAlerts: {},
           movements: [],
@@ -1193,7 +1267,7 @@ async function startServer() {
         restInv.shiftLogs = restInv.shiftLogs.slice(0, 100);
       }
 
-      persistInventory();
+      persistInventory(restaurant_id);
       res.status(200).json({ success: true, message: "تم تسجيل حركة الشيفت بنجاح" });
     } catch (err: any) {
       res.status(500).json({ error: err.message || "فشل في تسجيل حركة الشيفت" });
@@ -1221,19 +1295,29 @@ async function startServer() {
     console.warn("Could not read recipes-store.json:", e);
   }
 
-  const persistRecipes = () => {
+  const persistRecipes = (restaurantId?: string) => {
     try {
       fs.writeFileSync(recipesFilePath, JSON.stringify(recipesStore, null, 2), "utf-8");
     } catch (e) {
       console.warn("Could not write recipes-store.json:", e);
     }
+    if (restaurantId && recipesStore[restaurantId]) {
+      saveToSupabaseStorage(`restaurants/${restaurantId}/recipes.json`, recipesStore[restaurantId]).catch(() => {});
+    }
   };
 
-  // GET /api/inventory/recipes-data - Get all raw materials, recipes, and movements
-  app.get("/api/inventory/recipes-data", (req, res) => {
+  // GET /api/inventory/recipes-data - Get all raw materials, recipes, and movements (Supabase Cloud + Local Memory)
+  app.get("/api/inventory/recipes-data", async (req, res) => {
     const restaurantId = req.query.restaurant_id as string;
     if (!restaurantId) {
       return res.status(400).json({ error: "معرف المطعم مطلوب." });
+    }
+
+    if (!recipesStore[restaurantId]) {
+      const cloudRec = await loadFromSupabaseStorage(`restaurants/${restaurantId}/recipes.json`, null);
+      if (cloudRec) {
+        recipesStore[restaurantId] = cloudRec;
+      }
     }
 
     const data = recipesStore[restaurantId] || {
@@ -1250,7 +1334,7 @@ async function startServer() {
   });
 
   // POST /api/inventory/recipes-data - Save all raw materials, recipes, and movements
-  app.post("/api/inventory/recipes-data", (req, res) => {
+  app.post("/api/inventory/recipes-data", async (req, res) => {
     const { restaurant_id, data } = req.body;
     if (!restaurant_id || !data) {
       return res.status(400).json({ error: "بيانات غير مكتملة." });
@@ -1267,7 +1351,7 @@ async function startServer() {
         movements: data.movements || []
       };
 
-      persistRecipes();
+      persistRecipes(restaurant_id);
       res.status(200).json({ success: true, message: "تم حفظ بيانات الريسبي والمخزون بنجاح" });
     } catch (err: any) {
       res.status(500).json({ error: err.message || "فشل في حفظ بيانات الريسبي" });
@@ -1275,7 +1359,7 @@ async function startServer() {
   });
 
   // POST /api/inventory/recipes-deduct - Auto-deduct raw materials for completed orders
-  app.post("/api/inventory/recipes-deduct", (req, res) => {
+  app.post("/api/inventory/recipes-deduct", async (req, res) => {
     const { restaurant_id, items, orderRef, cashierName } = req.body;
     if (!restaurant_id || !items || !Array.isArray(items)) {
       return res.status(400).json({ error: "بيانات غير مكتملة." });
@@ -1283,7 +1367,12 @@ async function startServer() {
 
     try {
       if (!recipesStore[restaurant_id]) {
-        return res.status(200).json({ success: true, deducted: 0 });
+        const cloudRec = await loadFromSupabaseStorage(`restaurants/${restaurant_id}/recipes.json`, null);
+        if (cloudRec) {
+          recipesStore[restaurant_id] = cloudRec;
+        } else {
+          return res.status(200).json({ success: true, deducted: 0 });
+        }
       }
 
       const rest = recipesStore[restaurant_id];
@@ -1333,10 +1422,81 @@ async function startServer() {
         rest.movements = rest.movements.slice(0, 1000);
       }
 
-      persistRecipes();
+      persistRecipes(restaurant_id);
       res.status(200).json({ success: true, deducted });
     } catch (err: any) {
       res.status(500).json({ error: err.message || "فشل في خصم مكونات الريسبي" });
+    }
+  });
+
+  // POST /api/inventory/recipes-restore - Restore raw materials for cancelled orders
+  app.post("/api/inventory/recipes-restore", async (req, res) => {
+    const { restaurant_id, items, orderRef, cashierName } = req.body;
+    if (!restaurant_id || !items || !Array.isArray(items)) {
+      return res.status(400).json({ error: "بيانات غير مكتملة." });
+    }
+
+    try {
+      if (!recipesStore[restaurant_id]) {
+        const cloudRec = await loadFromSupabaseStorage(`restaurants/${restaurant_id}/recipes.json`, null);
+        if (cloudRec) {
+          recipesStore[restaurant_id] = cloudRec;
+        } else {
+          return res.status(200).json({ success: true, restored: 0 });
+        }
+      }
+
+      const rest = recipesStore[restaurant_id];
+      const matMap = new Map<string, any>();
+      (rest.materials || []).forEach(m => matMap.set(m.id, m));
+
+      let restored = 0;
+      const now = new Date().toISOString();
+
+      items.forEach((item: any) => {
+        const prodId = item.id || item.menuItemId || item.product_id;
+        const qty = Math.max(1, item.quantity || 1);
+        if (!prodId || !rest.recipes[prodId]) return;
+
+        const recipe = rest.recipes[prodId];
+        if (recipe && Array.isArray(recipe.ingredients)) {
+          recipe.ingredients.forEach((ing: any) => {
+            const mat = matMap.get(ing.material_id);
+            if (mat) {
+              const delta = (ing.quantity || 0) * qty;
+              const prev = mat.current_stock;
+              const next = prev + delta;
+              mat.current_stock = next;
+              restored++;
+
+              rest.movements.unshift({
+                id: `mov-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+                restaurant_id,
+                material_id: mat.id,
+                material_name: mat.name_ar,
+                type: 'manual_adjust',
+                quantity: delta,
+                prev_stock: prev,
+                new_stock: next,
+                unit: mat.unit,
+                order_id: orderRef,
+                reason: `استرجاع ريسبي (إلغاء/مرتجع #${orderRef}): ${item.name} x ${qty}`,
+                performed_by: cashierName || 'الكاشير',
+                timestamp: now
+              });
+            }
+          });
+        }
+      });
+
+      if (rest.movements.length > 1000) {
+        rest.movements = rest.movements.slice(0, 1000);
+      }
+
+      persistRecipes(restaurant_id);
+      res.status(200).json({ success: true, restored });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message || "فشل في استرجاع مكونات الريسبي" });
     }
   });
 
@@ -1353,11 +1513,15 @@ async function startServer() {
     console.warn("Could not read restaurant-delivery-zones.json:", e);
   }
 
-  const persistDeliveryZones = () => {
+  const persistDeliveryZones = (restaurantId?: string) => {
     try {
       fs.writeFileSync(deliveryZonesFilePath, JSON.stringify(restaurantDeliveryZonesStore, null, 2), "utf-8");
     } catch (e) {
       console.warn("Could not write restaurant-delivery-zones.json:", e);
+    }
+    saveToSupabaseStorage("system/delivery-zones.json", restaurantDeliveryZonesStore).catch(() => {});
+    if (restaurantId && restaurantDeliveryZonesStore[restaurantId]) {
+      saveToSupabaseStorage(`restaurants/${restaurantId}/delivery_zones.json`, restaurantDeliveryZonesStore[restaurantId]).catch(() => {});
     }
   };
 
@@ -1370,23 +1534,16 @@ async function startServer() {
 
     try {
       restaurantDeliveryZonesStore[restaurant_id] = delivery_zones || [];
-      persistDeliveryZones();
+      persistDeliveryZones(restaurant_id);
 
-      const supabaseUrl = process.env.VITE_SUPABASE_URL || process.env.SUPABASE_URL;
-      const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
-      const anonKey = process.env.VITE_SUPABASE_ANON_KEY || process.env.SUPABASE_ANON_KEY;
-
-      if (supabaseUrl && delivery_zones) {
-        const client = serviceRoleKey
-          ? createClient(supabaseUrl, serviceRoleKey)
-          : createClient(supabaseUrl, anonKey || "");
-
+      const client = getSupabaseAdmin();
+      if (client && delivery_zones) {
         try {
           await client.from("restaurants").update({
             delivery_zones: delivery_zones
           }).eq("id", restaurant_id);
         } catch (dbErr) {
-          // File store is the primary reliable store
+          // Fallback to storage
         }
       }
 
@@ -1405,11 +1562,43 @@ async function startServer() {
   ];
 
   // Get All Restaurant Delivery Zones API
-  app.get("/api/restaurants/delivery-zones", (req, res) => {
+  app.get("/api/restaurants/delivery-zones", async (req, res) => {
+    if (Object.keys(restaurantDeliveryZonesStore).length === 0) {
+      const cloudZones = await loadFromSupabaseStorage("system/delivery-zones.json", null);
+      if (cloudZones) {
+        restaurantDeliveryZonesStore = cloudZones;
+      }
+    }
     res.status(200).json({ 
       delivery_zones: restaurantDeliveryZonesStore,
       default_zones: DEFAULT_DELIVERY_ZONES_SERVER
     });
+  });
+
+  // System Cloud Status API for Multi-branch Health Monitoring
+  app.get("/api/system/cloud-status", async (req, res) => {
+    const client = getSupabaseAdmin();
+    if (!client) {
+      return res.status(503).json({ status: "disconnected", error: "Supabase client not initialized" });
+    }
+
+    try {
+      const { data: restaurants, error: restErr } = await client.from("restaurants").select("id, name, slug").limit(50);
+      const { data: buckets } = await client.storage.listBuckets();
+      const hasSystemBucket = buckets?.some((b: any) => b.name === "system-data");
+
+      res.status(200).json({
+        status: "healthy",
+        provider: "Supabase PostgreSQL & Cloud Storage",
+        database_connected: !restErr,
+        restaurants_count: restaurants?.length || 0,
+        restaurants: restaurants || [],
+        storage_bucket_active: Boolean(hasSystemBucket),
+        timestamp: new Date().toISOString()
+      });
+    } catch (err: any) {
+      res.status(500).json({ status: "error", message: err.message || "Failed to check Supabase health" });
+    }
   });
 
   // Vite integration

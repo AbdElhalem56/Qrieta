@@ -59,6 +59,7 @@ import {
   CustomerProfile 
 } from '../lib/customerProfileService';
 import { updateProductStock } from '../lib/inventoryService';
+import { deductOrderRecipeStock } from '../lib/recipeService';
 
 type CartItem = {
   product: Product;
@@ -955,6 +956,18 @@ export default function CustomerApp() {
           performedBy: 'تطبيق الزبائن'
         }).catch(() => {});
       });
+
+      // 4b. Deduct recipe raw materials
+      deductOrderRecipeStock(
+        restaurant.id,
+        cart.map(item => ({
+          id: item.product.id,
+          name: item.product.name_ar || item.product.name_en,
+          quantity: item.quantity
+        })),
+        String(dailySeqNum),
+        'تطبيق الزبائن'
+      ).catch(() => {});
 
       setCart([]);
       setIsCartOpen(false);

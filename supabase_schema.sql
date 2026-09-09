@@ -821,3 +821,91 @@ GRANT ALL ON ALL TABLES IN SCHEMA public TO postgres, anon, authenticated, servi
 GRANT ALL ON ALL SEQUENCES IN SCHEMA public TO postgres, anon, authenticated, service_role;
 GRANT ALL ON ALL ROUTINES IN SCHEMA public TO postgres, anon, authenticated, service_role;
 
+-- 9. RECIPE, RAW MATERIALS & MULTI-CAFE RESILIENCE TABLES
+CREATE TABLE IF NOT EXISTS public.raw_materials (
+  id text PRIMARY KEY,
+  restaurant_id uuid NOT NULL REFERENCES public.restaurants(id) ON DELETE CASCADE,
+  name_ar text NOT NULL,
+  name_en text,
+  category text,
+  unit text NOT NULL DEFAULT 'جرام',
+  current_stock numeric(12, 3) NOT NULL DEFAULT 0,
+  min_alert numeric(12, 3) NOT NULL DEFAULT 10,
+  cost_per_unit numeric(12, 4) NOT NULL DEFAULT 0,
+  supplier text,
+  barcode text,
+  expiry_date text,
+  created_at timestamp with time zone DEFAULT now(),
+  updated_at timestamp with time zone DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS idx_raw_materials_restaurant_id ON public.raw_materials(restaurant_id);
+
+CREATE TABLE IF NOT EXISTS public.recipes (
+  id text PRIMARY KEY,
+  restaurant_id uuid NOT NULL REFERENCES public.restaurants(id) ON DELETE CASCADE,
+  product_id text NOT NULL,
+  ingredients jsonb NOT NULL DEFAULT '[]'::jsonb,
+  labor_cost numeric(10, 2) DEFAULT 0,
+  overhead_cost numeric(10, 2) DEFAULT 0,
+  waste_factor_percent numeric(5, 2) DEFAULT 0,
+  profit_margin_target numeric(5, 2) DEFAULT 0,
+  portion_size text,
+  prep_instructions text,
+  updated_at timestamp with time zone DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS idx_recipes_restaurant_id ON public.recipes(restaurant_id);
+CREATE INDEX IF NOT EXISTS idx_recipes_product_id ON public.recipes(product_id);
+
+CREATE TABLE IF NOT EXISTS public.raw_movements (
+  id text PRIMARY KEY,
+  restaurant_id uuid NOT NULL REFERENCES public.restaurants(id) ON DELETE CASCADE,
+  material_id text NOT NULL,
+  material_name text NOT NULL,
+  type text NOT NULL,
+  quantity numeric(12, 3) NOT NULL,
+  prev_stock numeric(12, 3) NOT NULL,
+  new_stock numeric(12, 3) NOT NULL,
+  unit text,
+  order_id text,
+  reason text,
+  performed_by text,
+  timestamp timestamp with time zone DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS idx_raw_movements_restaurant_id ON public.raw_movements(restaurant_id);
+CREATE INDEX IF NOT EXISTS idx_raw_movements_timestamp ON public.raw_movements(timestamp);
+
+CREATE TABLE IF NOT EXISTS public.delivery_zones (
+  id text PRIMARY KEY,
+  restaurant_id uuid NOT NULL REFERENCES public.restaurants(id) ON DELETE CASCADE,
+  name text NOT NULL,
+  fee numeric(10, 2) NOT NULL DEFAULT 0,
+  estimated_time text,
+  is_active boolean DEFAULT true,
+  created_at timestamp with time zone DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS idx_delivery_zones_restaurant_id ON public.delivery_zones(restaurant_id);
+
+-- Enable RLS and create permissive policies
+ALTER TABLE public.raw_materials ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.recipes ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.raw_movements ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.delivery_zones ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS "Allow all access to raw_materials" ON public.raw_materials;
+CREATE POLICY "Allow all access to raw_materials" ON public.raw_materials FOR ALL USING (true) WITH CHECK (true);
+
+DROP POLICY IF EXISTS "Allow all access to recipes" ON public.recipes;
+CREATE POLICY "Allow all access to recipes" ON public.recipes FOR ALL USING (true) WITH CHECK (true);
+
+DROP POLICY IF EXISTS "Allow all access to raw_movements" ON public.raw_movements;
+CREATE POLICY "Allow all access to raw_movements" ON public.raw_movements FOR ALL USING (true) WITH CHECK (true);
+
+DROP POLICY IF EXISTS "Allow all access to delivery_zones" ON public.delivery_zones;
+CREATE POLICY "Allow all access to delivery_zones" ON public.delivery_zones FOR ALL USING (true) WITH CHECK (true);
+
+GRANT ALL ON ALL TABLES IN SCHEMA public TO postgres, anon, authenticated, service_role;
+

@@ -81,7 +81,9 @@ export default function WaiterDashboard() {
   const prevCallsCountRef = React.useRef(0);
 
   useEffect(() => {
-    let resId = profile?.restaurant_id;
+    const urlParams = new URLSearchParams(window.location.search);
+    const queryResId = urlParams.get('restaurant_id');
+    let resId = queryResId || profile?.restaurant_id;
 
     const setupDashboard = async () => {
       if (!resId) {
@@ -100,9 +102,9 @@ export default function WaiterDashboard() {
       fetchOrders(resId);
       fetchWaiterCalls(resId);
       
-      // Realtime subscription for orders
+      // Realtime subscription for orders (strictly isolated per restaurant)
       const ordersChannel = supabase
-        .channel('orders-changes')
+        .channel(`orders-changes-${resId}`)
         .on(
           'postgres_changes',
           {
@@ -120,9 +122,9 @@ export default function WaiterDashboard() {
         )
         .subscribe();
 
-      // Realtime subscription for waiter calls
+      // Realtime subscription for waiter calls (strictly isolated per restaurant)
       const callsChannel = supabase
-        .channel('calls-changes')
+        .channel(`calls-changes-${resId}`)
         .on(
           'postgres_changes',
           {

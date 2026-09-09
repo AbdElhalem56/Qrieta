@@ -76,7 +76,8 @@ import {
   RefreshCw,
   FileSpreadsheet,
   Search,
-  Filter
+  Filter,
+  ChevronDown
 } from 'lucide-react';
 import { QRCodeSVG } from 'qrcode.react';
 import { fetchOrdersByDateRange, generateOrdersExcelSheet } from '../../lib/excelExport';
@@ -126,6 +127,8 @@ export default function AdminDashboard() {
   const [newCatOptions, setNewCatOptions] = useState<CategoryOption[]>([]);
   const [editingCategoryOptions, setEditingCategoryOptions] = useState<CategoryOption[]>([]);
   const [restaurant, setRestaurant] = useState<any>(null);
+  const [availableRestaurants, setAvailableRestaurants] = useState<any[]>([]);
+  const [isMultiCafeSelectorOpen, setIsMultiCafeSelectorOpen] = useState(false);
   const [isSavingColors, setIsSavingColors] = useState(false);
   const [deleteModalItem, setDeleteModalItem] = useState<{ type: 'product' | 'category'; id: string; name: string } | null>(null);
   const [isDeleting, setIsDeleting] = useState(false);
@@ -545,13 +548,16 @@ export default function AdminDashboard() {
 
   useEffect(() => {
     const initData = async () => {
-      let resId = profile?.restaurant_id;
-      if (!resId) {
-        // Auto-heal/find restaurant
-        const { data: resList } = await supabase.from('restaurants').select('id, name').limit(1);
-        if (resList && resList.length > 0) {
-          resId = resList[0].id;
-        }
+      // Fetch all cafes in system for multi-branch switching
+      const { data: allRests } = await supabase.from('restaurants').select('*').order('name');
+      if (allRests && allRests.length > 0) {
+        setAvailableRestaurants(allRests);
+      }
+
+      const savedResId = localStorage.getItem('admin_selected_restaurant_id');
+      let resId = savedResId || profile?.restaurant_id;
+      if (!resId || (allRests && allRests.length > 0 && !allRests.some((r: any) => r.id === resId))) {
+        resId = allRests?.[0]?.id || profile?.restaurant_id;
       }
 
       if (resId) {
@@ -565,6 +571,16 @@ export default function AdminDashboard() {
 
     initData();
   }, [profile, selectedDate, analyticsMode]);
+
+  const handleSwitchRestaurant = (newResId: string) => {
+    localStorage.setItem('admin_selected_restaurant_id', newResId);
+    setIsMultiCafeSelectorOpen(false);
+    fetchData(newResId);
+    fetchStaff(newResId);
+    fetchRestaurant(newResId);
+    fetchTables(newResId);
+    fetchDeliveryZones(newResId);
+  };
 
   const fetchDeliveryZones = async (resId?: string) => {
     const targetId = resId || profile?.restaurant_id || restaurant?.id;
@@ -1599,27 +1615,96 @@ export default function AdminDashboard() {
       <main className="flex-grow p-4 md:p-8 overflow-y-auto">
         <div className="max-w-6xl mx-auto">
           {/* Header */}
-          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-8">
-            <h2 className="text-2xl md:text-3xl font-black text-gray-900 capitalize italic">
-              {activeTab === 'menu' ? 'المنتجات' : 
-               activeTab === 'categories' ? 'التصنيفات' : 
-               activeTab === 'tables_qr' ? 'رموز QR للطاولات' :
-               activeTab === 'shifts' ? 'ورديات الكاشير وتقارير الإغلاق X/Z' :
-               activeTab === 'staff' ? 'الموظفين' : 
-               activeTab === 'orders' ? 'سجل الطلبات الحية والتاريخية' : 
-               activeTab === 'inventory' ? 'إدارة المخزون وتكلفة المواد' :
-               activeTab === 'settings' ? 'إعدادات المطعم' : 
-               activeTab === 'support' ? 'مشاكل متعلقة بالسيستم' : 'التحليلات'}
-            </h2>
-            {activeTab === 'menu' && (
-              <button 
-                onClick={openAddProductModal}
-                className="bg-gray-900 text-white px-6 py-3 rounded-2xl font-bold flex items-center justify-center gap-2 hover:bg-gray-800 transition-all shadow-lg cursor-pointer"
-              >
-                <Plus size={20} />
-                <span>إضافة منتج</span>
-              </button>
-            )}
+          <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-8">
+            <div>
+              <h2 className="text-2xl md:text-3xl font-black text-gray-900 capitalize italic mb-1">
+                {activeTab === 'menu' ? 'المنتجات' : 
+                 activeTab === 'categories' ? 'التصنيفات' : 
+                 activeTab === 'tables_qr' ? 'رموز QR للطاولات' :
+                 activeTab === 'shifts' ? 'ورديات الكاشير وتقارير الإغلاق X/Z' :
+                 activeTab === 'staff' ? 'الموظفين' : 
+                 activeTab === 'orders' ? 'سجل الطلبات الحية والتاريخية' : 
+                 activeTab === 'inventory' ? 'إدارة المخزون وتكلفة المواد' :
+                 activeTab === 'settings' ? 'إعدادات المطعم' : 
+                 activeTab === 'support' ? 'مشاكل متعلقة بالسيستم' : 'التحليلات'}
+              </h2>
+              {restaurant?.name && (
+                <p className="text-xs text-gray-400 font-bold flex items-center gap-1.5">
+                  <span>الفرع النشط:</span>
+                  <span className="text-gray-700 font-black">{restaurant.name}</span>
+                </p>
+              )}
+            </div>
+
+            <div className="flex flex-wrap items-center gap-3">
+              {/* Multi-Cafe Branch Selector */}
+              {availableRestaurants.length > 0 && (
+                <div className="relative">
+                  <button
+                    onClick={() => setIsMultiCafeSelectorOpen(!isMultiCafeSelectorOpen)}
+                    className="flex items-center gap-2 bg-white border border-gray-200 hover:border-orange-500/50 shadow-sm px-3.5 py-2 rounded-2xl transition-all font-bold text-xs text-gray-800 cursor-pointer"
+                  >
+                    <div className="w-5 h-5 rounded-lg bg-orange-100 text-orange-600 flex items-center justify-center">
+                      <Store size={12} />
+                    </div>
+                    <span className="max-w-[120px] truncate">{restaurant?.name || 'اختر الكافيه'}</span>
+                    <span className="text-[10px] bg-gray-100 text-gray-600 font-mono px-1.5 py-0.5 rounded-md">
+                      {availableRestaurants.length} فروع
+                    </span>
+                    <ChevronDown size={14} className="text-gray-400" />
+                  </button>
+
+                  {isMultiCafeSelectorOpen && (
+                    <div className="absolute left-0 sm:right-0 sm:left-auto mt-2 w-64 bg-white rounded-2xl shadow-xl border border-gray-100 p-2 z-50 animate-in fade-in slide-in-from-top-2">
+                      <div className="px-3 py-2 text-[11px] font-black text-gray-400 uppercase tracking-wider">
+                        الكافيهات المربوطة بالسحابة
+                      </div>
+                      <div className="max-h-60 overflow-y-auto space-y-1">
+                        {availableRestaurants.map((res: any) => (
+                          <button
+                            key={res.id}
+                            onClick={() => handleSwitchRestaurant(res.id)}
+                            className={cn(
+                              "w-full flex items-center justify-between px-3 py-2.5 rounded-xl text-right text-xs font-bold transition-all cursor-pointer",
+                              restaurant?.id === res.id
+                                ? "bg-orange-50 text-orange-600 font-black"
+                                : "text-gray-700 hover:bg-gray-50"
+                            )}
+                          >
+                            <div className="flex items-center gap-2 truncate">
+                              <Coffee size={14} className={restaurant?.id === res.id ? "text-orange-500" : "text-gray-400"} />
+                              <span className="truncate">{res.name}</span>
+                            </div>
+                            {restaurant?.id === res.id && (
+                              <span className="w-2 h-2 rounded-full bg-orange-500"></span>
+                            )}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* Supabase Cloud Live Status Badge */}
+              <div className="flex items-center gap-2 bg-emerald-50 border border-emerald-200/80 px-3 py-2 rounded-2xl text-emerald-700 text-xs font-black shadow-sm">
+                <span className="relative flex h-2 w-2">
+                  <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+                  <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
+                </span>
+                <span>سحابة Supabase نشطة</span>
+              </div>
+
+              {activeTab === 'menu' && (
+                <button 
+                  onClick={openAddProductModal}
+                  className="bg-gray-900 text-white px-5 py-2.5 rounded-2xl font-bold flex items-center justify-center gap-2 hover:bg-gray-800 transition-all shadow-md cursor-pointer text-xs"
+                >
+                  <Plus size={16} />
+                  <span>إضافة منتج</span>
+                </button>
+              )}
+            </div>
           </div>
 
           {/* Analytics View */}
