@@ -27,6 +27,11 @@ import {
   getStationForCategory,
   CartItemOption
 } from '../../lib/posStore';
+import { 
+  getProductOptionGroups, 
+  POSOptionGroup, 
+  POSOptionChoice 
+} from '../../lib/posOptionsHelper';
 import {
   getLockedRestaurantId,
   setLockedRestaurantId,
@@ -203,8 +208,10 @@ export const CashierPOS: React.FC = () => {
   const [tipsAmount, setTipsAmount] = useState<number>(0);
   const [assignedWaiter, setAssignedWaiter] = useState<string>('');
 
-  // Customizing Product Modal (Modifiers / Options / Notes)
+  // Customizing Product Modal (Modifiers / Options / Notes / Sugar & Classifications)
   const [customizingItem, setCustomizingItem] = useState<Product | null>(null);
+  const [customizingGroups, setCustomizingGroups] = useState<POSOptionGroup[]>([]);
+  const [customizingSelections, setCustomizingSelections] = useState<Record<string, POSOptionChoice[]>>({});
   const [selectedItemOptions, setSelectedItemOptions] = useState<CartItemOption[]>([]);
   const [itemNoteInput, setItemNoteInput] = useState<string>('');
 
@@ -1173,7 +1180,9 @@ export const CashierPOS: React.FC = () => {
     const currentStock = stockMap[item.id] ?? 20;
     const isOutOfStock = currentStock <= 0;
     const isLowStock = currentStock > 0 && currentStock <= 5;
-    const hasOptions = item.options && Array.isArray(item.options) && item.options.length > 0;
+    const optionGroups = getProductOptionGroups(item, categories, selectedRestaurant?.id || '');
+    const hasOptions = optionGroups.length > 0;
+    const hasSugarOption = optionGroups.some(g => g.id.includes('sugar') || g.name.includes('سكر'));
 
     return (
       <button
@@ -1214,11 +1223,11 @@ export const CashierPOS: React.FC = () => {
             ) : null}
           </div>
 
-          {/* Options Indicator */}
+          {/* Options / Sugar levels Indicator */}
           {hasOptions && (
-            <div className="absolute bottom-1.5 right-1.5 bg-slate-900/70 backdrop-blur-sm text-amber-300 text-[10px] font-bold px-1.5 py-0.5 rounded-md flex items-center gap-1">
+            <div className="absolute bottom-1.5 right-1.5 bg-slate-900/80 backdrop-blur-sm text-amber-300 text-[10px] font-bold px-1.5 py-0.5 rounded-md flex items-center gap-1 shadow">
               <Sparkles size={10} />
-              <span>إضافات</span>
+              <span>{hasSugarOption ? 'درجات سكر' : 'خيارات'}</span>
             </div>
           )}
         </div>
@@ -1240,7 +1249,7 @@ export const CashierPOS: React.FC = () => {
     );
   };
 
-  // Click Product: If has options, open modifier modal, otherwise add directly
+  // Click Product: If has options or classifications (like sugar levels, sizes, recipes), open customization modal
   const handleProductClick = (item: Product) => {
     const currentStock = stockMap[item.id] ?? 20;
     if (currentStock <= 0) {
@@ -1250,9 +1259,23 @@ export const CashierPOS: React.FC = () => {
 
     setSidebarView('cart');
 
-    if (item.options && Array.isArray(item.options) && item.options.length > 0) {
+    const groups = getProductOptionGroups(item, categories, selectedRestaurant?.id || '');
+    if (groups && groups.length > 0) {
       setCustomizingItem(item);
-      setSelectedItemOptions([]);
+      setCustomizingGroups(groups);
+
+      // Pre-select default options for single-select groups (e.g. مظبوط for sugar)
+      const initialSelections: Record<string, POSOptionChoice[]> = {};
+      groups.forEach(g => {
+        if (g.type === 'single' && g.choices.length > 0) {
+          if (g.id.includes('sugar') || g.name.includes('سكر')) {
+            const med = g.choices.find(c => c.id === 'medium' || c.name.includes('مظبوط') || c.name.includes('مضبوط'));
+            if (med) initialSelections[g.id] = [med];
+          }
+        }
+      });
+
+      setCustomizingSelections(initialSelections);
       setItemNoteInput('');
       return;
     }
@@ -1260,11 +1283,76 @@ export const CashierPOS: React.FC = () => {
     addToCart(item, [], '');
   };
 
-  const addToCart = (item: Product, options: CartItemOption[], notes: string) => {
+  const handleToggleChoice = (group: POSOptionGroup, choice: POSOptionChoice) => {
+    setCustomizingSelections(prev => {
+      const currentList = prev[group.id] || [];
+      const isAlreadySelected = currentList.some(c => c.id === choice.id);
+
+      if (group.type === 'single') {
+        if (isAlreadySelected) {
+          return { ...prev, [group.id]: [] };
+        } else {
+          return { ...prev, [group.id]: [choice] };
+        }
+      } else {
+        if (isAlreadySelected) {
+          return { ...prev, [group.id]: currentList.filter(c => c.id !== choice.id) };
+        } else {
+          return { ...prev, [group.id]: [...currentList, choice] };
+        }
+      }
+    });
+  };
+
+  const handleConfirmCustomization = () => {
+    if (!customizingItem) return;
+
+    const allSelectedChoices: POSOptionChoice[] = (Object.values(customizingSelections) as POSOptionChoice[][]).flat();
+    const cartOptions: CartItemOption[] = allSelectedChoices.map(c => ({
+      name: c.name,
+      price: c.priceDelta
+    }));
+
+    // Detect sugar level for recipe deduction and kitchen tickets
+    let sugarLevel: string | undefined = undefined;
+    const sugarChoices: POSOptionChoice[] = customizingSelections['sugar_level'] || [];
+    if (sugarChoices.length > 0) {
+      sugarLevel = sugarChoices[0].id;
+    } else {
+      const sugarMatch = allSelectedChoices.find(c => 
+        c.id === 'none' || c.id === 'low' || c.id === 'medium' || c.id === 'high' ||
+        c.name.includes('بدون سكر') || c.name.includes('سادة') || c.name.includes('زيادة') || c.name.includes('مظبوط')
+      );
+      if (sugarMatch) {
+        if (sugarMatch.id === 'none' || sugarMatch.name.includes('بدون') || sugarMatch.name.includes('سادة')) sugarLevel = 'none';
+        else if (sugarMatch.id === 'low' || sugarMatch.name.includes('خفيف')) sugarLevel = 'low';
+        else if (sugarMatch.id === 'high' || sugarMatch.name.includes('زيادة')) sugarLevel = 'high';
+        else if (sugarMatch.id === 'medium' || sugarMatch.name.includes('مظبوط') || sugarMatch.name.includes('مضبوط')) sugarLevel = 'medium';
+      }
+    }
+
+    const selectedOptionsMap: Record<string, string> = {};
+    (Object.entries(customizingSelections) as [string, POSOptionChoice[]][]).forEach(([gId, list]) => {
+      if (list && list.length > 0) {
+        selectedOptionsMap[gId] = list.map(c => c.id).join(',');
+      }
+    });
+
+    addToCart(customizingItem, cartOptions, itemNoteInput, sugarLevel, selectedOptionsMap);
+    setCustomizingItem(null);
+  };
+
+  const addToCart = (
+    item: Product, 
+    options: CartItemOption[] = [], 
+    notes: string = '',
+    sugarLevel?: string,
+    selectedOptionsMap?: Record<string, string>
+  ) => {
     const optionsPrice = options.reduce((sum, opt) => sum + (opt.price || 0), 0);
     const unitPrice = item.price + optionsPrice;
     const itemName = item.name_ar || item.name_en || (item as any).name || 'صنف';
-    const cartItemId = `${item.id}-${options.map(o => o.name).sort().join('_')}-${notes}`;
+    const cartItemId = `${item.id}-${options.map(o => o.name).sort().join('_')}-${notes.trim()}-${sugarLevel || ''}`;
 
     const catObj = categories.find(c => c.id === item.category_id);
     const station = getStationForCategory(catObj?.name_ar || catObj?.name_en || (catObj as any)?.name);
@@ -1288,6 +1376,8 @@ export const CashierPOS: React.FC = () => {
           options: options.length > 0 ? options : undefined,
           station: station,
           stockQty: stockMap[item.id] ?? 20,
+          sugar_level: sugarLevel,
+          selectedOptions: selectedOptionsMap
         }
       ];
     });
@@ -4083,10 +4173,20 @@ export const CashierPOS: React.FC = () => {
                   <div className="flex items-start justify-between gap-1">
                     <div className="flex-1">
                       <span className="font-bold text-xs text-slate-800 block leading-tight">{item.name}</span>
-                      {item.options && (
-                        <div className="text-[10px] text-amber-700 mt-0.5 space-x-1">
+                      {item.options && item.options.length > 0 && (
+                        <div className="flex flex-wrap gap-1 mt-1">
                           {item.options.map((o, idx) => (
-                            <span key={idx}>+{o.name} </span>
+                            <span 
+                              key={idx} 
+                              className={`inline-flex items-center gap-0.5 text-[10px] px-1.5 py-0.5 rounded-md font-bold ${
+                                o.name.includes('سكر') || o.name.includes('سادة') || o.name.includes('مظبوط')
+                                  ? 'bg-amber-50 text-amber-800 border border-amber-200/80'
+                                  : 'bg-blue-50 text-blue-700 border border-blue-200/80'
+                              }`}
+                            >
+                              <span>{o.name}</span>
+                              {o.price > 0 && <span className="text-[9px] font-mono opacity-80">(+{o.price})</span>}
+                            </span>
                           ))}
                         </div>
                       )}
@@ -4352,76 +4452,182 @@ export const CashierPOS: React.FC = () => {
 
       {/* 🛠️ MODALS INTEGRATION */}
 
-      {/* 1. Item Customization & Modifiers Modal */}
+      {/* 1. Item Customization & Modifiers / Classifications Modal */}
       {customizingItem && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/50 backdrop-blur-sm animate-fade-in" dir="rtl">
-          <div className="bg-white border border-slate-200 rounded-3xl w-full max-w-md p-5 space-y-4 shadow-2xl">
-            <div className="flex items-center justify-between border-b border-slate-200 pb-3">
-              <div>
-                <h3 className="font-bold text-base text-slate-800">
-                  {customizingItem.name_ar || customizingItem.name_en || (customizingItem as any).name}
-                </h3>
-                <span className="font-mono text-xs text-emerald-600 font-bold">{customizingItem.price.toFixed(2)} ج.م</span>
+        <div 
+          className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-slate-900/60 backdrop-blur-sm animate-fade-in" 
+          dir="rtl"
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') {
+              e.preventDefault();
+              handleConfirmCustomization();
+            } else if (e.key === 'Escape') {
+              setCustomizingItem(null);
+            }
+          }}
+        >
+          <div className="bg-white border border-slate-200 rounded-3xl w-full max-w-lg overflow-hidden shadow-2xl flex flex-col max-h-[90vh]">
+            {/* Modal Header */}
+            <div className="p-4 sm:p-5 bg-gradient-to-r from-slate-900 to-slate-800 text-white flex items-center justify-between">
+              <div className="flex items-center gap-3">
+                {customizingItem.image_url ? (
+                  <img 
+                    src={customizingItem.image_url} 
+                    alt="" 
+                    className="w-12 h-12 rounded-xl object-cover border border-slate-700 shadow-sm shrink-0" 
+                  />
+                ) : (
+                  <div className="w-12 h-12 rounded-xl bg-amber-500/20 text-amber-400 flex items-center justify-center font-bold text-lg border border-amber-500/30 shrink-0">
+                    <Coffee size={22} />
+                  </div>
+                )}
+                <div>
+                  <div className="flex items-center gap-2">
+                    <h3 className="font-bold text-base sm:text-lg text-white leading-tight">
+                      {customizingItem.name_ar || customizingItem.name_en || (customizingItem as any).name}
+                    </h3>
+                    <span className="bg-amber-500/20 text-amber-300 border border-amber-500/30 text-[10px] font-bold px-2 py-0.5 rounded-full">
+                      تخصيص الطلب
+                    </span>
+                  </div>
+                  <div className="flex items-center gap-2 mt-1">
+                    <span className="text-slate-400 text-xs">السعر الأساسي:</span>
+                    <span className="font-mono text-emerald-400 font-bold text-sm">
+                      {customizingItem.price.toFixed(2)} ج.م
+                    </span>
+                  </div>
+                </div>
               </div>
-              <button onClick={() => setCustomizingItem(null)} className="p-2 text-slate-400 hover:text-slate-600 rounded-xl hover:bg-slate-100">
-                <X size={18} />
+              <button 
+                type="button"
+                onClick={() => setCustomizingItem(null)} 
+                className="p-2 text-slate-400 hover:text-white rounded-xl hover:bg-slate-700/60 transition-colors cursor-pointer"
+                title="إغلاق"
+              >
+                <X size={20} />
               </button>
             </div>
 
-            {/* Options list */}
-            {customizingItem.options && customizingItem.options.length > 0 && (
-              <div className="space-y-2">
-                <label className="text-xs font-bold text-slate-700 block">الإضافات والخيارات المتاحة:</label>
-                <div className="grid grid-cols-2 gap-2">
-                  {customizingItem.options.map((opt: any, idx: number) => {
-                    const isSelected = selectedItemOptions.some(o => o.name === opt.name);
-                    return (
-                      <button
-                        key={idx}
-                        type="button"
-                        onClick={() => {
-                          if (isSelected) {
-                            setSelectedItemOptions(prev => prev.filter(o => o.name !== opt.name));
-                          } else {
-                            setSelectedItemOptions(prev => [...prev, { name: opt.name, price: opt.price || 0 }]);
-                          }
-                        }}
-                        className={`p-2.5 rounded-xl border text-xs font-bold flex items-center justify-between transition-all cursor-pointer ${
-                          isSelected ? 'bg-amber-500 text-white border-amber-400 shadow-sm' : 'bg-slate-50 border-slate-200 text-slate-700 hover:bg-slate-100'
-                        }`}
-                      >
-                        <span>{opt.name}</span>
-                        <span className="font-mono">{opt.price > 0 ? `+${opt.price}` : 'مجاني'}</span>
-                      </button>
-                    );
-                  })}
-                </div>
-              </div>
-            )}
+            {/* Modal Body with Option Groups */}
+            <div className="p-4 sm:p-5 space-y-4 overflow-y-auto flex-1 custom-scrollbar">
+              {customizingGroups.length > 0 ? (
+                customizingGroups.map((group) => {
+                  const selectedInGroup = customizingSelections[group.id] || [];
+                  const isSugarGroup = group.id.includes('sugar') || group.name.includes('سكر');
 
-            {/* Custom kitchen notes */}
-            <div>
-              <label className="text-xs font-bold text-slate-700 block mb-1">ملاحظة خاصة للمطبخ (Special Notes):</label>
-              <input
-                type="text"
-                placeholder="مثال: زيادة صوص، بدون بصل، تسوية جيدة..."
-                value={itemNoteInput}
-                onChange={e => setItemNoteInput(e.target.value)}
-                className="w-full bg-slate-50 border border-slate-300 rounded-xl px-3 py-2 text-xs text-slate-800 outline-none focus:border-amber-500 shadow-inner"
-              />
+                  return (
+                    <div key={group.id} className="bg-slate-50 border border-slate-200/80 rounded-2xl p-3.5 space-y-2.5">
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-2">
+                          {isSugarGroup ? (
+                            <span className="w-6 h-6 rounded-lg bg-amber-100 text-amber-700 flex items-center justify-center text-xs">
+                              ☕
+                            </span>
+                          ) : (
+                            <span className="w-6 h-6 rounded-lg bg-blue-100 text-blue-700 flex items-center justify-center text-xs">
+                              <Sparkles size={12} />
+                            </span>
+                          )}
+                          <label className="text-xs font-bold text-slate-800">
+                            {group.name}
+                          </label>
+                        </div>
+                        <span className="text-[10px] font-medium px-2 py-0.5 rounded-md bg-white border border-slate-200 text-slate-500">
+                          {group.type === 'single' ? 'اختر تصنيفاً واحداً' : 'اختيارات متعددة'}
+                        </span>
+                      </div>
+
+                      {/* Choices Grid */}
+                      <div className="grid grid-cols-2 gap-2">
+                        {group.choices.map((choice) => {
+                          const isSelected = selectedInGroup.some(c => c.id === choice.id);
+                          return (
+                            <button
+                              key={choice.id}
+                              type="button"
+                              onClick={() => handleToggleChoice(group, choice)}
+                              className={`p-3 rounded-xl border text-xs font-bold flex items-center justify-between transition-all cursor-pointer select-none text-right ${
+                                isSelected
+                                  ? 'bg-amber-500 text-white border-amber-600 shadow-sm shadow-amber-500/30 scale-[1.01]'
+                                  : 'bg-white border-slate-200 text-slate-700 hover:border-amber-300 hover:bg-amber-50/50'
+                              }`}
+                            >
+                              <div className="flex items-center gap-2">
+                                <span className={`w-4 h-4 rounded-full flex items-center justify-center text-[10px] border ${
+                                  isSelected 
+                                    ? 'bg-white text-amber-600 border-white font-black' 
+                                    : 'border-slate-300 text-transparent'
+                                }`}>
+                                  ✓
+                                </span>
+                                <span>{choice.name}</span>
+                              </div>
+                              <span className={`font-mono text-[11px] ${isSelected ? 'text-amber-100 font-bold' : 'text-slate-500'}`}>
+                                {choice.priceDelta > 0 ? `+${choice.priceDelta} ج.م` : 'مجاني'}
+                              </span>
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  );
+                })
+              ) : (
+                <div className="text-center py-6 text-slate-400 text-xs">
+                  لا توجد تصنيفات إضافية لهذا الصنف
+                </div>
+              )}
+
+              {/* Kitchen Special Notes */}
+              <div className="bg-slate-50 border border-slate-200/80 rounded-2xl p-3.5 space-y-1.5">
+                <label className="text-xs font-bold text-slate-700 flex items-center gap-1.5">
+                  <FileText size={14} className="text-slate-400" />
+                  <span>ملاحظات خاصة للتشغيل والمطبخ (اختياري):</span>
+                </label>
+                <input
+                  type="text"
+                  placeholder="مثال: بدون ثلج، في مج زجاج، تسوية خفيفة..."
+                  value={itemNoteInput}
+                  onChange={e => setItemNoteInput(e.target.value)}
+                  className="w-full bg-white border border-slate-300 rounded-xl px-3 py-2.5 text-xs text-slate-800 outline-none focus:border-amber-500 focus:ring-2 focus:ring-amber-500/20 shadow-xs"
+                />
+              </div>
             </div>
 
-            <button
-              type="button"
-              onClick={() => {
-                addToCart(customizingItem, selectedItemOptions, itemNoteInput);
-                setCustomizingItem(null);
-              }}
-              className="w-full py-3 bg-amber-500 hover:bg-amber-600 text-white font-bold text-xs rounded-xl flex items-center justify-center gap-2 shadow-md shadow-amber-500/20 cursor-pointer"
-            >
-              <Plus size={16} />
-              <span>إضافة الصنف للسلة</span>
-            </button>
+            {/* Modal Footer */}
+            {(() => {
+              const optionsDelta = (Object.values(customizingSelections) as POSOptionChoice[][]).flat().reduce((sum, c) => sum + (c.priceDelta || 0), 0);
+              const calculatedTotal = customizingItem.price + optionsDelta;
+
+              return (
+                <div className="p-4 bg-slate-50 border-t border-slate-200 flex items-center justify-between gap-3">
+                  <div>
+                    <span className="text-[10px] text-slate-500 block">الإجمالي بعد الخيارات</span>
+                    <span className="font-mono font-bold text-lg text-slate-900">
+                      {calculatedTotal.toFixed(2)} <span className="text-xs font-sans text-slate-600">ج.م</span>
+                    </span>
+                  </div>
+
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setCustomizingItem(null)}
+                      className="px-4 py-2.5 rounded-xl border border-slate-300 text-slate-600 hover:bg-slate-100 font-bold text-xs cursor-pointer"
+                    >
+                      إلغاء
+                    </button>
+                    <button
+                      type="button"
+                      onClick={handleConfirmCustomization}
+                      className="px-6 py-2.5 bg-amber-500 hover:bg-amber-600 active:scale-95 text-white font-bold text-xs rounded-xl flex items-center justify-center gap-2 shadow-md shadow-amber-500/25 cursor-pointer transition-all"
+                    >
+                      <Plus size={16} />
+                      <span>إضافة الصنف للطلب</span>
+                    </button>
+                  </div>
+                </div>
+              );
+            })()}
           </div>
         </div>
       )}

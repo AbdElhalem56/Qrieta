@@ -19,6 +19,8 @@ export interface POSCartItem {
   originalPrice?: number;
   barcode?: string;
   stockQty?: number;
+  sugar_level?: string;
+  selectedOptions?: Record<string, string>;
 }
 
 export interface HeldBill {
