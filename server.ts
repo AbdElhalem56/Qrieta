@@ -1388,8 +1388,56 @@ async function startServer() {
         if (!prodId || !rest.recipes[prodId]) return;
 
         const recipe = rest.recipes[prodId];
-        if (recipe && Array.isArray(recipe.ingredients)) {
-          recipe.ingredients.forEach((ing: any) => {
+        let ingredientsToDeduct = Array.isArray(recipe.ingredients) ? recipe.ingredients : [];
+
+        // Check if item matches any option-specific recipe variant
+        if (Array.isArray(recipe.variants) && recipe.variants.length > 0) {
+          const optionKeywords: string[] = [];
+
+          if (Array.isArray(item.options)) {
+            item.options.forEach((opt: any) => {
+              if (typeof opt === 'string') optionKeywords.push(opt.toLowerCase().trim());
+              else if (opt?.name) optionKeywords.push(String(opt.name).toLowerCase().trim());
+              else if (opt?.name_ar) optionKeywords.push(String(opt.name_ar).toLowerCase().trim());
+            });
+          }
+
+          if (item.selectedOptions && typeof item.selectedOptions === 'object') {
+            Object.values(item.selectedOptions).forEach((val: any) => {
+              if (typeof val === 'string') optionKeywords.push(val.toLowerCase().trim());
+            });
+          }
+
+          if (item.sugar_level) {
+            const sl = String(item.sugar_level).toLowerCase();
+            if (sl === 'none') optionKeywords.push('سادة', 'ساده', 'بدون سكر', 'none');
+            if (sl === 'low') optionKeywords.push('سكر خفيف', 'خفيف', 'low');
+            if (sl === 'medium') optionKeywords.push('مضبوط', 'مظبوط', 'وسط', 'medium');
+            if (sl === 'high') optionKeywords.push('زيادة', 'زياده', 'سكر زيادة', 'سكر زياده', 'high');
+          }
+
+          if (item.notes && typeof item.notes === 'string') {
+            optionKeywords.push(item.notes.toLowerCase().trim());
+          }
+
+          const matchedVariant = recipe.variants.find((v: any) => {
+            const vName = (v.name || '').toLowerCase().trim();
+            const vChoiceId = (v.choice_id || '').toLowerCase().trim();
+            return optionKeywords.some((kw: string) => 
+              kw === vName || 
+              kw === vChoiceId || 
+              kw.includes(vName) || 
+              vName.includes(kw)
+            );
+          });
+
+          if (matchedVariant && Array.isArray(matchedVariant.ingredients) && matchedVariant.ingredients.length > 0) {
+            ingredientsToDeduct = matchedVariant.ingredients;
+          }
+        }
+
+        if (Array.isArray(ingredientsToDeduct)) {
+          ingredientsToDeduct.forEach((ing: any) => {
             const mat = matMap.get(ing.material_id);
             if (mat) {
               const delta = (ing.quantity || 0) * qty;
@@ -1459,8 +1507,56 @@ async function startServer() {
         if (!prodId || !rest.recipes[prodId]) return;
 
         const recipe = rest.recipes[prodId];
-        if (recipe && Array.isArray(recipe.ingredients)) {
-          recipe.ingredients.forEach((ing: any) => {
+        let ingredientsToRestore = Array.isArray(recipe.ingredients) ? recipe.ingredients : [];
+
+        // Check if item matches any option-specific recipe variant
+        if (Array.isArray(recipe.variants) && recipe.variants.length > 0) {
+          const optionKeywords: string[] = [];
+
+          if (Array.isArray(item.options)) {
+            item.options.forEach((opt: any) => {
+              if (typeof opt === 'string') optionKeywords.push(opt.toLowerCase().trim());
+              else if (opt?.name) optionKeywords.push(String(opt.name).toLowerCase().trim());
+              else if (opt?.name_ar) optionKeywords.push(String(opt.name_ar).toLowerCase().trim());
+            });
+          }
+
+          if (item.selectedOptions && typeof item.selectedOptions === 'object') {
+            Object.values(item.selectedOptions).forEach((val: any) => {
+              if (typeof val === 'string') optionKeywords.push(val.toLowerCase().trim());
+            });
+          }
+
+          if (item.sugar_level) {
+            const sl = String(item.sugar_level).toLowerCase();
+            if (sl === 'none') optionKeywords.push('سادة', 'ساده', 'بدون سكر', 'none');
+            if (sl === 'low') optionKeywords.push('سكر خفيف', 'خفيف', 'low');
+            if (sl === 'medium') optionKeywords.push('مضبوط', 'مظبوط', 'وسط', 'medium');
+            if (sl === 'high') optionKeywords.push('زيادة', 'زياده', 'سكر زيادة', 'سكر زياده', 'high');
+          }
+
+          if (item.notes && typeof item.notes === 'string') {
+            optionKeywords.push(item.notes.toLowerCase().trim());
+          }
+
+          const matchedVariant = recipe.variants.find((v: any) => {
+            const vName = (v.name || '').toLowerCase().trim();
+            const vChoiceId = (v.choice_id || '').toLowerCase().trim();
+            return optionKeywords.some((kw: string) => 
+              kw === vName || 
+              kw === vChoiceId || 
+              kw.includes(vName) || 
+              vName.includes(kw)
+            );
+          });
+
+          if (matchedVariant && Array.isArray(matchedVariant.ingredients) && matchedVariant.ingredients.length > 0) {
+            ingredientsToRestore = matchedVariant.ingredients;
+          }
+        }
+
+        if (Array.isArray(ingredientsToRestore)) {
+          ingredientsToRestore.forEach((ing: any) => {
             const mat = matMap.get(ing.material_id);
             if (mat) {
               const delta = (ing.quantity || 0) * qty;

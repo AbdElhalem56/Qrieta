@@ -245,6 +245,15 @@ export const RecipeBuilderTab: React.FC<RecipeBuilderTabProps> = ({
                     <div className="text-[10px] text-gray-400 font-medium">
                       يتكون من <strong>{toEnglishDigits(rec.ingredients.length)}</strong> مواد خام تُخصم آلياً
                     </div>
+
+                    {rec.variants && rec.variants.length > 0 && (
+                      <div className="flex items-center gap-1.5 text-[11px] font-bold text-blue-700 bg-blue-50/80 px-2.5 py-1 rounded-xl border border-blue-100 mt-1">
+                        <Layers size={13} className="text-blue-500 shrink-0" />
+                        <span className="truncate">
+                          {toEnglishDigits(rec.variants.length)} حالات خيارات ({rec.variants.map(v => v.name).join('، ')})
+                        </span>
+                      </div>
+                    )}
                   </div>
                 ) : (
                   <div className="bg-amber-50/60 rounded-2xl p-3.5 border border-dashed border-amber-200 text-center my-3">
@@ -267,7 +276,7 @@ export const RecipeBuilderTab: React.FC<RecipeBuilderTabProps> = ({
                 }`}
               >
                 <Edit3 size={16} />
-                <span>{hasRecipe ? 'تعديل الريسبي والمكونات' : 'إعداد الريسبي والتكلفة'}</span>
+                <span>{hasRecipe ? 'تعديل الريسبي وحالات الخيارات' : 'إعداد الريسبي والتكلفة'}</span>
               </button>
             </div>
           );
@@ -279,6 +288,7 @@ export const RecipeBuilderTab: React.FC<RecipeBuilderTabProps> = ({
         <RecipeEditModal
           restaurantId={restaurantId}
           product={editingProduct}
+          category={categories.find(c => c.id === editingProduct.category_id)}
           currentRecipe={recipes[editingProduct.id]}
           rawMaterials={rawMaterials}
           onClose={() => setEditingProduct(null)}

@@ -982,7 +982,11 @@ export const CashierPOS: React.FC = () => {
           order.items.map(it => ({
             id: it.id,
             name: it.name,
-            quantity: it.quantity
+            quantity: it.quantity,
+            options: (it as any).options,
+            notes: (it as any).notes,
+            sugar_level: (it as any).sugar_level,
+            selectedOptions: (it as any).selectedOptions
           })),
           String(displayNum),
           shift.cashierName || 'كاشير'
@@ -1969,7 +1973,10 @@ export const CashierPOS: React.FC = () => {
             id: it.menuItemId,
             name: it.name,
             quantity: it.quantity,
-            options: it.options
+            options: it.options,
+            notes: (it as any).notes,
+            sugar_level: (it as any).sugar_level || (it as any).sugar,
+            selectedOptions: (it as any).selectedOptions
           })),
           String(dailyOrderNum),
           shift.cashierName || 'كاشير'

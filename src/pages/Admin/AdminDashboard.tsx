@@ -1637,64 +1637,6 @@ export default function AdminDashboard() {
             </div>
 
             <div className="flex flex-wrap items-center gap-3">
-              {/* Multi-Cafe Branch Selector */}
-              {availableRestaurants.length > 0 && (
-                <div className="relative">
-                  <button
-                    onClick={() => setIsMultiCafeSelectorOpen(!isMultiCafeSelectorOpen)}
-                    className="flex items-center gap-2 bg-white border border-gray-200 hover:border-orange-500/50 shadow-sm px-3.5 py-2 rounded-2xl transition-all font-bold text-xs text-gray-800 cursor-pointer"
-                  >
-                    <div className="w-5 h-5 rounded-lg bg-orange-100 text-orange-600 flex items-center justify-center">
-                      <Store size={12} />
-                    </div>
-                    <span className="max-w-[120px] truncate">{restaurant?.name || 'اختر الكافيه'}</span>
-                    <span className="text-[10px] bg-gray-100 text-gray-600 font-mono px-1.5 py-0.5 rounded-md">
-                      {availableRestaurants.length} فروع
-                    </span>
-                    <ChevronDown size={14} className="text-gray-400" />
-                  </button>
-
-                  {isMultiCafeSelectorOpen && (
-                    <div className="absolute left-0 sm:right-0 sm:left-auto mt-2 w-64 bg-white rounded-2xl shadow-xl border border-gray-100 p-2 z-50 animate-in fade-in slide-in-from-top-2">
-                      <div className="px-3 py-2 text-[11px] font-black text-gray-400 uppercase tracking-wider">
-                        الكافيهات المربوطة بالسحابة
-                      </div>
-                      <div className="max-h-60 overflow-y-auto space-y-1">
-                        {availableRestaurants.map((res: any) => (
-                          <button
-                            key={res.id}
-                            onClick={() => handleSwitchRestaurant(res.id)}
-                            className={cn(
-                              "w-full flex items-center justify-between px-3 py-2.5 rounded-xl text-right text-xs font-bold transition-all cursor-pointer",
-                              restaurant?.id === res.id
-                                ? "bg-orange-50 text-orange-600 font-black"
-                                : "text-gray-700 hover:bg-gray-50"
-                            )}
-                          >
-                            <div className="flex items-center gap-2 truncate">
-                              <Coffee size={14} className={restaurant?.id === res.id ? "text-orange-500" : "text-gray-400"} />
-                              <span className="truncate">{res.name}</span>
-                            </div>
-                            {restaurant?.id === res.id && (
-                              <span className="w-2 h-2 rounded-full bg-orange-500"></span>
-                            )}
-                          </button>
-                        ))}
-                      </div>
-                    </div>
-                  )}
-                </div>
-              )}
-
-              {/* Supabase Cloud Live Status Badge */}
-              <div className="flex items-center gap-2 bg-emerald-50 border border-emerald-200/80 px-3 py-2 rounded-2xl text-emerald-700 text-xs font-black shadow-sm">
-                <span className="relative flex h-2 w-2">
-                  <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
-                  <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
-                </span>
-                <span>سحابة Supabase نشطة</span>
-              </div>
-
               {activeTab === 'menu' && (
                 <button 
                   onClick={openAddProductModal}

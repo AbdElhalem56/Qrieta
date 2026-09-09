@@ -957,13 +957,17 @@ export default function CustomerApp() {
         }).catch(() => {});
       });
 
-      // 4b. Deduct recipe raw materials
+      // 4b. Deduct recipe raw materials (matching option-specific recipes e.g. سادة/زيادة)
       deductOrderRecipeStock(
         restaurant.id,
         cart.map(item => ({
           id: item.product.id,
           name: item.product.name_ar || item.product.name_en,
-          quantity: item.quantity
+          quantity: item.quantity,
+          options: item.selectedOptionLabels,
+          sugar_level: item.sugar,
+          selectedOptions: item.selectedOptions,
+          notes: item.notes
         })),
         String(dailySeqNum),
         'تطبيق الزبائن'

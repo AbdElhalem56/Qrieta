@@ -48,10 +48,21 @@ export interface RecipeIngredient {
   notes?: string;
 }
 
+export interface RecipeVariant {
+  id: string;
+  name: string; // e.g. "سادة", "زيادة", "مضبوط", "سكر خفيف", "كبير", "دبل"
+  choice_id?: string;
+  option_name?: string; // e.g. "درجة السكر"
+  ingredients: RecipeIngredient[];
+  price?: number;
+  notes?: string;
+}
+
 export interface ProductRecipe {
   product_id: string;
   restaurant_id: string;
-  ingredients: RecipeIngredient[];
+  ingredients: RecipeIngredient[]; // Base / default recipe
+  variants?: RecipeVariant[]; // Option-specific recipes (e.g. سادة, زيادة, دبل, إلخ)
   updated_at?: string;
 }
 
@@ -313,16 +324,56 @@ export const DEFAULT_RAW_MATERIALS = (restaurantId: string): RawMaterial[] => [
     min_alert_stock: 100,
     cost_per_unit: 2.80,
     supplier: 'رويال باك لمستلزمات الكافيهات',
+  },
+  {
+    id: 'mat_white_sugar',
+    restaurant_id: restaurantId,
+    name_ar: 'سكر أبيض نقي مطحون/ناعم',
+    name_en: 'Pure White Sugar',
+    category: 'general',
+    unit: 'g',
+    current_stock: 15000, // 15 kg
+    min_alert_stock: 3000,
+    cost_per_unit: 0.035, // 35 EGP/kg
+    supplier: 'شركة السكر والصناعات التكاملية',
+  },
+  {
+    id: 'mat_turkish_coffee',
+    restaurant_id: restaurantId,
+    name_ar: 'بن تركي فاخر محوج',
+    name_en: 'Turkish Coffee Blend',
+    category: 'coffee',
+    unit: 'g',
+    current_stock: 5000, // 5 kg
+    min_alert_stock: 1000,
+    cost_per_unit: 0.65, // 650 EGP/kg
+    supplier: 'بن عبد المعبود / شاهين',
   }
 ];
 
-// Calculation helper for single recipe food cost & margins
+// Helper to calculate total cost for a specific ingredient list
+export function calculateIngredientsCost(
+  ingredients: RecipeIngredient[] | undefined,
+  rawMaterials: RawMaterial[]
+): number {
+  if (!ingredients || ingredients.length === 0) return 0;
+  const materialsMap = new Map<string, RawMaterial>();
+  rawMaterials.forEach(m => materialsMap.set(m.id, m));
+  return Number(ingredients.reduce((sum, ing) => {
+    const mat = materialsMap.get(ing.material_id);
+    return sum + (mat ? (ing.quantity || 0) * (mat.cost_per_unit || 0) : 0);
+  }, 0).toFixed(2));
+}
+
+// Calculation helper for single recipe food cost & margins (supports optional variant ingredients)
 export function calculateRecipeCost(
   recipe: ProductRecipe | undefined,
   rawMaterials: RawMaterial[],
-  sellingPrice: number
+  sellingPrice: number,
+  variantIngredients?: RecipeIngredient[]
 ): RecipeCalculations {
-  if (!recipe || !recipe.ingredients || recipe.ingredients.length === 0) {
+  const activeIngredients = variantIngredients || recipe?.ingredients || [];
+  if (activeIngredients.length === 0) {
     return {
       costOfIngredients: 0,
       sellingPrice: sellingPrice || 0,
@@ -337,7 +388,7 @@ export function calculateRecipeCost(
   rawMaterials.forEach(m => materialsMap.set(m.id, m));
 
   let totalCost = 0;
-  recipe.ingredients.forEach(ing => {
+  activeIngredients.forEach(ing => {
     const mat = materialsMap.get(ing.material_id);
     if (mat) {
       const lineCost = (ing.quantity || 0) * (mat.cost_per_unit || 0);
@@ -892,6 +943,73 @@ export async function recordStocktakeAudit(
   return state;
 }
 
+// Helper to determine the exact ingredients to use for an order item (matching variant or base recipe)
+export function getMatchingRecipeIngredients(recipe: ProductRecipe | undefined, item: any): RecipeIngredient[] {
+  if (!recipe) return [];
+  const baseIngredients = recipe.ingredients || [];
+  if (!recipe.variants || recipe.variants.length === 0) {
+    return baseIngredients;
+  }
+
+  const optionKeywords: string[] = [];
+
+  // 1. Check item.options
+  if (Array.isArray(item.options)) {
+    item.options.forEach((opt: any) => {
+      if (typeof opt === 'string') {
+        optionKeywords.push(opt.toLowerCase().trim());
+      } else if (opt && typeof opt.name === 'string') {
+        optionKeywords.push(opt.name.toLowerCase().trim());
+      } else if (opt && typeof opt.name_ar === 'string') {
+        optionKeywords.push(opt.name_ar.toLowerCase().trim());
+      }
+    });
+  }
+
+  // 2. Check item.selectedOptions
+  if (item.selectedOptions && typeof item.selectedOptions === 'object') {
+    Object.values(item.selectedOptions).forEach((val: any) => {
+      if (typeof val === 'string') optionKeywords.push(val.toLowerCase().trim());
+    });
+  }
+
+  // 3. Check item.sugar_level
+  if (item.sugar_level) {
+    const sl = String(item.sugar_level).toLowerCase();
+    if (sl === 'none') optionKeywords.push('سادة', 'ساده', 'بدون سكر', 'none');
+    if (sl === 'low') optionKeywords.push('سكر خفيف', 'خفيف', 'low');
+    if (sl === 'medium') optionKeywords.push('مضبوط', 'مظبوط', 'وسط', 'medium');
+    if (sl === 'high') optionKeywords.push('زيادة', 'زياده', 'سكر زيادة', 'سكر زياده', 'high');
+  }
+
+  // 4. Check item.notes
+  if (item.notes && typeof item.notes === 'string') {
+    optionKeywords.push(item.notes.toLowerCase().trim());
+  }
+
+  if (optionKeywords.length === 0) {
+    return baseIngredients;
+  }
+
+  // Find best matching variant
+  const matched = recipe.variants.find(v => {
+    const vName = (v.name || '').toLowerCase().trim();
+    const vChoiceId = (v.choice_id || '').toLowerCase().trim();
+    return optionKeywords.some(kw => 
+      kw === vName || 
+      kw === vChoiceId || 
+      kw.includes(vName) || 
+      vName.includes(kw)
+    );
+  });
+
+  if (matched && matched.ingredients && matched.ingredients.length > 0) {
+    return matched.ingredients;
+  }
+
+  return baseIngredients;
+}
+
 // -------------------------------------------------------------
 // CORE DEDUCTION ENGINE (محرك الخصم التلقائي بنسبة 100% عند البيع)
 // Deducts raw materials according to product recipe for all orders
@@ -928,40 +1046,43 @@ export async function deductOrderRecipeStock(
     if (!productId) return;
 
     const recipe = state.recipes[productId];
-    if (recipe && recipe.ingredients && recipe.ingredients.length > 0) {
-      recipe.ingredients.forEach(ing => {
-        const mat = materialsMap.get(ing.material_id);
-        if (mat) {
-          const totalDeduct = (ing.quantity || 0) * orderQty;
-          const prev = mat.current_stock;
-          const next = Math.max(0, prev - totalDeduct);
+    if (recipe) {
+      const ingredientsToDeduct = getMatchingRecipeIngredients(recipe, item);
+      if (ingredientsToDeduct && ingredientsToDeduct.length > 0) {
+        ingredientsToDeduct.forEach(ing => {
+          const mat = materialsMap.get(ing.material_id);
+          if (mat) {
+            const totalDeduct = (ing.quantity || 0) * orderQty;
+            const prev = mat.current_stock;
+            const next = Math.max(0, prev - totalDeduct);
 
-          mat.current_stock = next;
-          mat.updated_at = now;
-          deductedCount++;
+            mat.current_stock = next;
+            mat.updated_at = now;
+            deductedCount++;
 
-          // Check if low stock warning
-          if (next <= mat.min_alert_stock && prev > mat.min_alert_stock) {
-            warnings.push(`المادة الخام (${mat.name_ar}) اقتربت من النفاد! الرصيد المتبقي: ${next} ${mat.unit}`);
+            // Check if low stock warning
+            if (next <= mat.min_alert_stock && prev > mat.min_alert_stock) {
+              warnings.push(`المادة الخام (${mat.name_ar}) اقتربت من النفاد! الرصيد المتبقي: ${next} ${mat.unit}`);
+            }
+
+            state.movements.unshift({
+              id: `mov-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+              restaurant_id: restaurantId,
+              material_id: mat.id,
+              material_name: mat.name_ar,
+              type: 'sale_deduction',
+              quantity: -totalDeduct,
+              prev_stock: prev,
+              new_stock: next,
+              unit: mat.unit,
+              order_id: orderRef,
+              reason: `خصم مبيعات تلقائي: ${item.name} x ${orderQty} (طلب #${orderRef})`,
+              performed_by: cashierOrActor,
+              timestamp: now
+            });
           }
-
-          state.movements.unshift({
-            id: `mov-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
-            restaurant_id: restaurantId,
-            material_id: mat.id,
-            material_name: mat.name_ar,
-            type: 'sale_deduction',
-            quantity: -totalDeduct,
-            prev_stock: prev,
-            new_stock: next,
-            unit: mat.unit,
-            order_id: orderRef,
-            reason: `خصم مبيعات تلقائي: ${item.name} x ${orderQty} (طلب #${orderRef})`,
-            performed_by: cashierOrActor,
-            timestamp: now
-          });
-        }
-      });
+        });
+      }
     }
   });
 
@@ -996,6 +1117,7 @@ export async function restoreOrderRecipeStock(
     product_id?: string;
     name: string;
     quantity: number;
+    options?: any[];
   }>,
   orderRef: string,
   cashierOrActor: string = 'كاشير'
@@ -1017,35 +1139,38 @@ export async function restoreOrderRecipeStock(
     if (!productId) return;
 
     const recipe = state.recipes[productId];
-    if (recipe && recipe.ingredients && recipe.ingredients.length > 0) {
-      recipe.ingredients.forEach(ing => {
-        const mat = materialsMap.get(ing.material_id);
-        if (mat) {
-          const totalRestore = (ing.quantity || 0) * orderQty;
-          const prev = mat.current_stock;
-          const next = prev + totalRestore;
+    if (recipe) {
+      const ingredientsToRestore = getMatchingRecipeIngredients(recipe, item);
+      if (ingredientsToRestore && ingredientsToRestore.length > 0) {
+        ingredientsToRestore.forEach(ing => {
+          const mat = materialsMap.get(ing.material_id);
+          if (mat) {
+            const totalRestore = (ing.quantity || 0) * orderQty;
+            const prev = mat.current_stock;
+            const next = prev + totalRestore;
 
-          mat.current_stock = next;
-          mat.updated_at = now;
-          restoredCount++;
+            mat.current_stock = next;
+            mat.updated_at = now;
+            restoredCount++;
 
-          state.movements.unshift({
-            id: `mov-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
-            restaurant_id: restaurantId,
-            material_id: mat.id,
-            material_name: mat.name_ar,
-            type: 'manual_adjust',
-            quantity: totalRestore,
-            prev_stock: prev,
-            new_stock: next,
-            unit: mat.unit,
-            order_id: orderRef,
-            reason: `استرجاع ريسبي (إلغاء طلب #${orderRef}): ${item.name} x ${orderQty}`,
-            performed_by: cashierOrActor,
-            timestamp: now
-          });
-        }
-      });
+            state.movements.unshift({
+              id: `mov-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+              restaurant_id: restaurantId,
+              material_id: mat.id,
+              material_name: mat.name_ar,
+              type: 'manual_adjust',
+              quantity: totalRestore,
+              prev_stock: prev,
+              new_stock: next,
+              unit: mat.unit,
+              order_id: orderRef,
+              reason: `استرجاع ريسبي (إلغاء طلب #${orderRef}): ${item.name} x ${orderQty}`,
+              performed_by: cashierOrActor,
+              timestamp: now
+            });
+          }
+        });
+      }
     }
   });
 
