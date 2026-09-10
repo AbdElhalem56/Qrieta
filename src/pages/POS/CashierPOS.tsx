@@ -33,6 +33,10 @@ import {
   POSOptionChoice 
 } from '../../lib/posOptionsHelper';
 import {
+  syncAllProductOptions,
+  syncAllCategoryOptions
+} from '../../lib/optionsHelper';
+import {
   getLockedRestaurantId,
   setLockedRestaurantId,
   clearLockedRestaurantId,
@@ -533,6 +537,14 @@ export const CashierPOS: React.FC = () => {
           }
         } catch (e) {
           console.warn('Products query error:', e);
+        }
+
+        // Sync product & category options with custom prices from server
+        try {
+          syncAllProductOptions().catch(() => {});
+          syncAllCategoryOptions().catch(() => {});
+        } catch (syncErr) {
+          console.warn('Options background sync error:', syncErr);
         }
 
         try {
@@ -1264,13 +1276,20 @@ export const CashierPOS: React.FC = () => {
       setCustomizingItem(item);
       setCustomizingGroups(groups);
 
-      // Pre-select default options for single-select groups (e.g. مظبوط for sugar)
+      // Pre-select default options for single-select groups (e.g. مظبوط for sugar, or base size)
       const initialSelections: Record<string, POSOptionChoice[]> = {};
       groups.forEach(g => {
         if (g.type === 'single' && g.choices.length > 0) {
           if (g.id.includes('sugar') || g.name.includes('سكر')) {
             const med = g.choices.find(c => c.id === 'medium' || c.name.includes('مظبوط') || c.name.includes('مضبوط'));
             if (med) initialSelections[g.id] = [med];
+            else initialSelections[g.id] = [g.choices[0]];
+          } else {
+            // For sizes or single-select groups, preselect choice matching base price delta 0 or first choice
+            const matchingBase = g.choices.find(c => c.priceDelta === 0) || g.choices[0];
+            if (matchingBase) {
+              initialSelections[g.id] = [matchingBase];
+            }
           }
         }
       });
@@ -4562,9 +4581,72 @@ export const CashierPOS: React.FC = () => {
                                 </span>
                                 <span>{choice.name}</span>
                               </div>
-                              <span className={`font-mono text-[11px] ${isSelected ? 'text-amber-100 font-bold' : 'text-slate-500'}`}>
-                                {choice.priceDelta > 0 ? `+${choice.priceDelta} ج.م` : 'مجاني'}
-                              </span>
+                              {(() => {
+                                // 1. If choice has an explicit absolute price set by Admin in a single-select group (e.g. Size: Small 80, Medium 120, Large 160)
+                                if (choice.price !== undefined && choice.price !== null && choice.price > 0 && group.type === 'single') {
+                                  return (
+                                    <span className={`font-mono text-xs font-black ${isSelected ? 'text-amber-100' : 'text-slate-800'}`}>
+                                      {choice.price.toFixed(2)} <span className="text-[10px] font-sans">ج.م</span>
+                                    </span>
+                                  );
+                                }
+
+                                // 2. If choice has an explicit price addition (delta > 0)
+                                if (choice.priceDelta > 0) {
+                                  return (
+                                    <span className={`font-mono text-xs font-black ${isSelected ? 'text-amber-100' : 'text-emerald-700'}`}>
+                                      +{choice.priceDelta.toFixed(2)} <span className="text-[10px] font-sans">ج.م</span>
+                                    </span>
+                                  );
+                                }
+
+                                // 3. If choice has a discount or reduction (delta < 0)
+                                if (choice.priceDelta < 0) {
+                                  return (
+                                    <span className={`font-mono text-xs font-black ${isSelected ? 'text-amber-100' : 'text-rose-600'}`}>
+                                      {choice.priceDelta.toFixed(2)} <span className="text-[10px] font-sans">ج.م</span>
+                                    </span>
+                                  );
+                                }
+
+                                // 4. Delta is 0: Check context
+                                const isSugarOrPrep = 
+                                  group.id.includes('sugar') || 
+                                  group.name.includes('سكر') || 
+                                  group.name.includes('طهي') || 
+                                  group.name.includes('ثلج') || 
+                                  group.name.includes('طعم') ||
+                                  group.name.includes('حرارة');
+
+                                if (isSugarOrPrep) {
+                                  return (
+                                    <span className={`text-[10px] font-bold ${isSelected ? 'text-amber-100' : 'text-slate-400'}`}>
+                                      بدون إضافة
+                                    </span>
+                                  );
+                                }
+
+                                if (group.type === 'single') {
+                                  if (customizingItem.price > 0) {
+                                    return (
+                                      <span className={`font-mono text-xs font-black ${isSelected ? 'text-amber-100' : 'text-slate-800'}`}>
+                                        {customizingItem.price.toFixed(2)} <span className="text-[10px] font-sans">ج.م</span>
+                                      </span>
+                                    );
+                                  }
+                                  return (
+                                    <span className={`text-[10px] font-bold ${isSelected ? 'text-amber-100' : 'text-slate-400'}`}>
+                                      ضمن السعر
+                                    </span>
+                                  );
+                                }
+
+                                return (
+                                  <span className={`text-[10px] font-bold ${isSelected ? 'text-amber-100' : 'text-slate-400'}`}>
+                                    بدون تكلفة
+                                  </span>
+                                );
+                              })()}
                             </button>
                           );
                         })}
@@ -4597,15 +4679,22 @@ export const CashierPOS: React.FC = () => {
             {/* Modal Footer */}
             {(() => {
               const optionsDelta = (Object.values(customizingSelections) as POSOptionChoice[][]).flat().reduce((sum, c) => sum + (c.priceDelta || 0), 0);
-              const calculatedTotal = customizingItem.price + optionsDelta;
+              const calculatedTotal = Math.max(0, customizingItem.price + optionsDelta);
 
               return (
                 <div className="p-4 bg-slate-50 border-t border-slate-200 flex items-center justify-between gap-3">
                   <div>
                     <span className="text-[10px] text-slate-500 block">الإجمالي بعد الخيارات</span>
-                    <span className="font-mono font-bold text-lg text-slate-900">
-                      {calculatedTotal.toFixed(2)} <span className="text-xs font-sans text-slate-600">ج.م</span>
-                    </span>
+                    <div className="flex items-baseline gap-2">
+                      <span className="font-mono font-bold text-lg text-slate-900">
+                        {calculatedTotal.toFixed(2)} <span className="text-xs font-sans text-slate-600">ج.م</span>
+                      </span>
+                      {optionsDelta !== 0 && (
+                        <span className={`text-xs font-mono font-bold ${optionsDelta > 0 ? 'text-emerald-600' : 'text-rose-600'}`}>
+                          ({optionsDelta > 0 ? `+${optionsDelta.toFixed(2)}` : optionsDelta.toFixed(2)} ج.م إضافي)
+                        </span>
+                      )}
+                    </div>
                   </div>
 
                   <div className="flex items-center gap-2">

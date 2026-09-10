@@ -153,7 +153,8 @@ export function saveStoredShiftReport(
   restaurantId: string, 
   reportType: 'X' | 'Z', 
   shift: ShiftRecord,
-  shiftName?: string
+  shiftName?: string,
+  orders?: any[]
 ): StoredShiftReport {
   const reports = getStoredShiftReports(restaurantId);
   const newReport: StoredShiftReport = {
@@ -163,7 +164,10 @@ export function saveStoredShiftReport(
     timestamp: new Date().toISOString(),
     cashierName: shift.cashierName || 'كاشير الفرع',
     shiftName: shiftName || (reportType === 'Z' ? 'إغلاق وردية نهائي' : 'تقرير لحظي منتصف اليوم'),
-    shift: { ...shift }
+    shift: { 
+      ...shift,
+      orders: orders || shift.orders || []
+    }
   };
   const updated = [newReport, ...reports];
   try {

@@ -22,7 +22,6 @@ export interface LiveOrder {
   payment_status: 'paid' | 'unpaid';
   payment_method?: string;
   cashier_name?: string;
-  cashier_id?: string;
   items: Array<{
     id?: string;
     name: string;
@@ -209,25 +208,11 @@ export async function fetchLiveOrders(restaurantId: string): Promise<LiveOrder[]
           const phoneMatch = firstNote.match(/هاتف:\s*([^|\]]+)/);
           const addrMatch = firstNote.match(/العنوان:\s*([^|\]]+)/);
 
-          const cashierMatch = firstNote.match(/كاشير:\s*([^|\]]+)/);
-          const cashierName = dbo.cashier_name || (cashierMatch ? cashierMatch[1].trim() : (isCustomer ? 'طلب أونلاين' : 'كاشير الفرع'));
-
-          let payMethod = dbo.payment_method || 'cash';
-          if (firstNote.includes('دفع: card') || firstNote.includes('دفع: visa') || firstNote.includes('فيزا') || firstNote.includes('بطاقة')) {
-            payMethod = 'card';
-          } else if (firstNote.includes('دفع: wallet') || firstNote.includes('دفع: instapay') || firstNote.includes('انستاباي') || firstNote.includes('محفظة')) {
-            payMethod = 'wallet';
-          } else if (firstNote.includes('دفع: split') || firstNote.includes('مقسم') || firstNote.includes('مجزأ')) {
-            payMethod = 'split';
-          }
-
           return {
             id: dbo.id,
             daily_order_number: dailyNum,
             restaurant_id: dbo.restaurant_id,
             source: isCustomer ? 'customer_app' : 'pos',
-            cashier_name: cashierName,
-            payment_method: payMethod,
             order_type: orderType,
             table_id: dbo.table_id,
             table_number: tableNum,
@@ -237,7 +222,7 @@ export async function fetchLiveOrders(restaurantId: string): Promise<LiveOrder[]
             notes: firstNote,
             total_price: Number(dbo.total_price || 0),
             status: dbo.status === 'delivered' ? 'completed' : (dbo.status || 'new'),
-            payment_status: dbo.payment_status || 'unpaid',
+            payment_status: 'unpaid',
             items: (dbo.order_items || []).map((it: any) => ({
               id: it.product_id,
               name: it.products?.name_ar || it.products?.name_en || 'صنف',

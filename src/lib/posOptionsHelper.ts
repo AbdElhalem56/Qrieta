@@ -21,6 +21,7 @@ export interface POSOptionChoice {
   name: string;
   name_en?: string;
   priceDelta: number;
+  price?: number; // Explicit price set by admin (e.g. 80, 120, 160)
 }
 
 export interface POSOptionGroup {
@@ -48,6 +49,7 @@ export function getProductOptionGroups(
 
   const groups: POSOptionGroup[] = [];
   const seenGroupIds = new Set<string>();
+  const baseProdPrice = Number(product.price) || 0;
 
   const prodName = (product.name_ar || product.name_en || (product as any).name || '').toLowerCase();
   const catObj = categories.find(c => String(c.id) === String(product.category_id));
@@ -84,18 +86,35 @@ export function getProductOptionGroups(
           groupName.includes('درجة');
 
         const choices: POSOptionChoice[] = opt.choices.map((ch: any, cIdx: number) => {
+          const hasPrice = ch.price !== undefined && ch.price !== null && !isNaN(Number(ch.price));
+          const numPrice = hasPrice ? Number(ch.price) : undefined;
+
+          const hasDelta = ch.price_delta !== undefined && ch.price_delta !== null && !isNaN(Number(ch.price_delta));
+          const numDelta = hasDelta ? Number(ch.price_delta) : undefined;
+
           let delta = 0;
-          if (ch.price_delta !== undefined && ch.price_delta !== null) {
-            delta = Number(ch.price_delta) || 0;
-          } else if (ch.price !== undefined && ch.price !== null) {
-            delta = Math.max(0, Number(ch.price) - (Number(product.price) || 0));
+          let explicitPrice: number | undefined = undefined;
+
+          if (hasPrice && numPrice !== undefined && numPrice > 0) {
+            explicitPrice = numPrice;
+            delta = baseProdPrice > 0 ? (numPrice - baseProdPrice) : numPrice;
+          } else if (hasDelta && numDelta !== undefined && numDelta !== 0) {
+            delta = numDelta;
+            explicitPrice = baseProdPrice + numDelta;
+          } else if (hasPrice && numPrice !== undefined) {
+            explicitPrice = numPrice;
+            delta = baseProdPrice > 0 ? (numPrice - baseProdPrice) : 0;
+          } else if (hasDelta && numDelta !== undefined) {
+            delta = numDelta;
+            explicitPrice = baseProdPrice + numDelta;
           }
 
           return {
             id: String(ch.id || `choice_${cIdx}`),
             name: ch.name_ar || ch.name_en || ch.id || `خيار ${cIdx + 1}`,
             name_en: ch.name_en,
-            priceDelta: delta
+            priceDelta: delta,
+            price: explicitPrice
           };
         });
 
@@ -121,18 +140,36 @@ export function getProductOptionGroups(
           seenGroupIds.add(legacyGroupId);
         }
 
+        const addPrice = Number(opt.price) || 0;
         legacyGroup.choices.push({
           id: `opt_${idx}`,
           name: opt.name,
-          priceDelta: Number(opt.price) || 0
+          priceDelta: addPrice,
+          price: baseProdPrice + addPrice
         });
       }
     });
   };
 
+  // Helper to safely parse if string
+  const parseOptionsSafe = (raw: any) => {
+    if (!raw) return [];
+    if (Array.isArray(raw)) return raw;
+    if (typeof raw === 'string') {
+      try {
+        const parsed = JSON.parse(raw);
+        return Array.isArray(parsed) ? parsed : [];
+      } catch (e) {
+        return [];
+      }
+    }
+    return [];
+  };
+
   // 1. Check direct product options
-  if (product.options && Array.isArray(product.options) && product.options.length > 0) {
-    parseCategoryOptions(product.options);
+  const directProdOpts = parseOptionsSafe(product.options);
+  if (directProdOpts.length > 0) {
+    parseCategoryOptions(directProdOpts);
   }
 
   // 2. Check local product options storage
@@ -144,8 +181,9 @@ export function getProductOptionGroups(
   }
 
   // 3. Check direct category options
-  if (catObj?.options && Array.isArray(catObj.options) && catObj.options.length > 0) {
-    parseCategoryOptions(catObj.options);
+  const directCatOpts = parseOptionsSafe(catObj?.options);
+  if (directCatOpts.length > 0) {
+    parseCategoryOptions(directCatOpts);
   }
 
   // 4. Check local category options storage
@@ -162,15 +200,20 @@ export function getProductOptionGroups(
     if (recipe && recipe.variants && Array.isArray(recipe.variants) && recipe.variants.length > 0) {
       const hasVariantGroup = groups.some(g => g.id.includes('variant') || g.id.includes('sugar') || g.name.includes('سكر') || g.name.includes('حالة'));
       if (!hasVariantGroup) {
+        const baseP = Number(product.price) || 0;
         groups.push({
           id: 'recipe_variants',
           name: 'حالة الصنف / الريسبي',
           type: 'single',
-          choices: recipe.variants.map((v, vIdx) => ({
-            id: v.id || `var_${vIdx}`,
-            name: v.name,
-            priceDelta: Number(v.price || 0)
-          }))
+          choices: recipe.variants.map((v, vIdx) => {
+            const vPrice = Number(v.price || 0);
+            return {
+              id: v.id || `var_${vIdx}`,
+              name: v.name,
+              priceDelta: vPrice,
+              price: baseP + vPrice
+            };
+          })
         });
         seenGroupIds.add('recipe_variants');
       }
@@ -182,16 +225,17 @@ export function getProductOptionGroups(
   const hasSugarGroup = groups.some(g => g.id.includes('sugar') || g.name.includes('سكر') || g.id === 'recipe_variants');
 
   if (isDrink && !hasSugarGroup) {
+    const baseP = Number(product.price) || 0;
     groups.unshift({
       id: 'sugar_level',
       name: 'درجة السكر',
       name_en: 'Sugar Level',
       type: 'single',
       choices: [
-        { id: 'none', name: 'بدون سكر (سادة)', name_en: 'No Sugar', priceDelta: 0 },
-        { id: 'low', name: 'سكر خفيف', name_en: 'Low Sugar', priceDelta: 0 },
-        { id: 'medium', name: 'مظبوط', name_en: 'Medium', priceDelta: 0 },
-        { id: 'high', name: 'سكر زيادة', name_en: 'Extra Sweet', priceDelta: 0 }
+        { id: 'none', name: 'بدون سكر (سادة)', name_en: 'No Sugar', priceDelta: 0, price: baseP },
+        { id: 'low', name: 'سكر خفيف', name_en: 'Low Sugar', priceDelta: 0, price: baseP },
+        { id: 'medium', name: 'مظبوط', name_en: 'Medium', priceDelta: 0, price: baseP },
+        { id: 'high', name: 'سكر زيادة', name_en: 'Extra Sweet', priceDelta: 0, price: baseP }
       ]
     });
     seenGroupIds.add('sugar_level');

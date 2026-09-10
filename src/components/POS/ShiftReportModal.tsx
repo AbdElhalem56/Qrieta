@@ -9,8 +9,8 @@ interface ShiftReportModalProps {
   reportType: 'X' | 'Z'; // X = Mid-day snapshot, Z = End of Shift Closing
   shift: ShiftRecord;
   restaurantName: string;
-  orders?: any[];
   onCloseShiftConfirm?: (actualCash: number, notes: string) => void;
+  orders?: any[];
 }
 
 export const ShiftReportModal: React.FC<ShiftReportModalProps> = ({
@@ -19,19 +19,57 @@ export const ShiftReportModal: React.FC<ShiftReportModalProps> = ({
   reportType,
   shift,
   restaurantName,
-  orders,
   onCloseShiftConfirm,
+  orders,
 }) => {
   const thermalReportRef = useRef<HTMLDivElement>(null);
   const [activeTab, setActiveTab] = useState<'details' | 'preview'>('details');
 
-  const shiftOrders = orders || shift.orders || [];
-  const cashOrdersCount = shiftOrders.filter((o: any) => o.payment_method === 'cash').length;
-  const cardOrdersCount = shiftOrders.filter((o: any) => o.payment_method === 'card').length;
-  const walletOrdersCount = shiftOrders.filter((o: any) => o.payment_method === 'wallet').length;
+  const shiftOrders: any[] = (orders && orders.length > 0) ? orders : (shift.orders || []);
+
+  // Compute effective payment counts and totals if shift has 0 or orders provide richer data
+  let effectiveCashSales = shift.cashSales;
+  let effectiveCardSales = shift.cardSales;
+  let effectiveWalletSales = shift.walletSales;
+  let effectiveOrdersCount = shift.ordersCount || shiftOrders.length;
+  let effectiveCashCount = shift.cashOrdersCount ?? 0;
+  let effectiveCardCount = shift.cardOrdersCount ?? 0;
+  let effectiveWalletCount = shift.walletOrdersCount ?? 0;
+
+  if (shiftOrders.length > 0 && (effectiveCashSales === 0 && effectiveCardSales === 0 && effectiveWalletSales === 0)) {
+    effectiveCashSales = 0;
+    effectiveCardSales = 0;
+    effectiveWalletSales = 0;
+    effectiveCashCount = 0;
+    effectiveCardCount = 0;
+    effectiveWalletCount = 0;
+
+    shiftOrders.forEach(ord => {
+      const amt = Number(ord.total_price || ord.total_amount || 0);
+      const m = ord.payment_method || 'cash';
+      if (m === 'card') {
+        effectiveCardSales += amt;
+        effectiveCardCount += 1;
+      } else if (m === 'wallet' || m === 'instapay') {
+        effectiveWalletSales += amt;
+        effectiveWalletCount += 1;
+      } else {
+        effectiveCashSales += amt;
+        effectiveCashCount += 1;
+      }
+    });
+    effectiveOrdersCount = shiftOrders.length;
+  } else if (shiftOrders.length > 0 && effectiveCashCount === 0 && effectiveCardCount === 0 && effectiveWalletCount === 0) {
+    shiftOrders.forEach(ord => {
+      const m = ord.payment_method || 'cash';
+      if (m === 'card') effectiveCardCount += 1;
+      else if (m === 'wallet' || m === 'instapay') effectiveWalletCount += 1;
+      else effectiveCashCount += 1;
+    });
+  }
 
   const [actualCashInput, setActualCashInput] = useState<string>(
-    (shift.startingCash + shift.cashSales + shift.transactions.reduce((acc, t) => t.type === 'cash_in' ? acc + t.amount : acc - t.amount, 0)).toFixed(0)
+    (shift.startingCash + effectiveCashSales + shift.transactions.reduce((acc, t) => t.type === 'cash_in' ? acc + t.amount : acc - t.amount, 0)).toFixed(0)
   );
   const [closingNotes, setClosingNotes] = useState<string>('');
 
@@ -39,10 +77,10 @@ export const ShiftReportModal: React.FC<ShiftReportModalProps> = ({
 
   const totalCashIn = shift.transactions.filter(t => t.type === 'cash_in').reduce((s, t) => s + t.amount, 0);
   const totalCashOut = shift.transactions.filter(t => t.type === 'cash_out').reduce((s, t) => s + t.amount, 0);
-  const expectedCashInDrawer = shift.startingCash + shift.cashSales + totalCashIn - totalCashOut;
+  const expectedCashInDrawer = shift.startingCash + effectiveCashSales + totalCashIn - totalCashOut;
   const actualCashNum = parseFloat(actualCashInput) || 0;
   const cashDifference = actualCashNum - expectedCashInDrawer;
-  const totalGrossSales = shift.cashSales + shift.cardSales + shift.walletSales;
+  const totalGrossSales = effectiveCashSales + effectiveCardSales + effectiveWalletSales;
   const netSales = Math.max(0, totalGrossSales - (shift.totalDiscounts || 0));
 
   const handlePrint = () => {
@@ -163,25 +201,40 @@ export const ShiftReportModal: React.FC<ShiftReportModalProps> = ({
                 </div>
 
                 <div className="bg-white border border-slate-200 p-3.5 rounded-2xl shadow-sm">
-                  <span className="text-xs text-slate-500 block mb-1">مبيعات كاش 💵</span>
+                  <div className="flex items-center justify-between mb-1">
+                    <span className="text-xs text-slate-500">مبيعات كاش 💵</span>
+                    <span className="text-[10px] font-bold bg-slate-100 text-slate-700 px-1.5 py-0.5 rounded-md">
+                      {effectiveCashCount} طلب
+                    </span>
+                  </div>
                   <span className="text-lg font-bold font-mono text-slate-800">
-                    {shift.cashSales.toFixed(2)}
+                    {effectiveCashSales.toFixed(2)}
                   </span>
                   <span className="text-[10px] text-slate-400 mr-1">ج.م</span>
                 </div>
 
                 <div className="bg-white border border-slate-200 p-3.5 rounded-2xl shadow-sm">
-                  <span className="text-xs text-slate-500 block mb-1">مبيعات فيزا 💳</span>
+                  <div className="flex items-center justify-between mb-1">
+                    <span className="text-xs text-slate-500">مبيعات فيزا 💳</span>
+                    <span className="text-[10px] font-bold bg-blue-50 text-blue-700 px-1.5 py-0.5 rounded-md">
+                      {effectiveCardCount} طلب
+                    </span>
+                  </div>
                   <span className="text-lg font-bold font-mono text-blue-600">
-                    {shift.cardSales.toFixed(2)}
+                    {effectiveCardSales.toFixed(2)}
                   </span>
                   <span className="text-[10px] text-slate-400 mr-1">ج.م</span>
                 </div>
 
                 <div className="bg-white border border-slate-200 p-3.5 rounded-2xl shadow-sm">
-                  <span className="text-xs text-slate-500 block mb-1">محافظ / إنستاباي 📱</span>
+                  <div className="flex items-center justify-between mb-1">
+                    <span className="text-xs text-slate-500">محافظ / إنستاباي 📱</span>
+                    <span className="text-[10px] font-bold bg-purple-50 text-purple-700 px-1.5 py-0.5 rounded-md">
+                      {effectiveWalletCount} طلب
+                    </span>
+                  </div>
                   <span className="text-lg font-bold font-mono text-purple-600">
-                    {shift.walletSales.toFixed(2)}
+                    {effectiveWalletSales.toFixed(2)}
                   </span>
                   <span className="text-[10px] text-slate-400 mr-1">ج.م</span>
                 </div>
@@ -193,7 +246,7 @@ export const ShiftReportModal: React.FC<ShiftReportModalProps> = ({
 
                 <div className="flex justify-between py-1 border-b border-slate-100 text-slate-600">
                   <span>عدد الفواتير المنفذة (Orders Count):</span>
-                  <span className="font-mono font-bold text-slate-800">{shift.ordersCount} طلب</span>
+                  <span className="font-mono font-bold text-slate-800">{effectiveOrdersCount} طلب</span>
                 </div>
 
                 <div className="flex justify-between py-1 border-b border-slate-100 text-slate-600">
@@ -203,7 +256,7 @@ export const ShiftReportModal: React.FC<ShiftReportModalProps> = ({
 
                 <div className="flex justify-between py-1 border-b border-slate-100 text-slate-600">
                   <span>إجمالي المقبوضات النقدية (Cash Sales):</span>
-                  <span className="font-mono font-bold text-emerald-600">+{shift.cashSales.toFixed(2)} ج.م</span>
+                  <span className="font-mono font-bold text-emerald-600">+{effectiveCashSales.toFixed(2)} ج.م</span>
                 </div>
 
                 <div className="flex justify-between py-1 border-b border-slate-100 text-slate-600">
@@ -248,102 +301,83 @@ export const ShiftReportModal: React.FC<ShiftReportModalProps> = ({
                 </div>
               </div>
 
-              {/* 📋 Cashier Shift Orders Table (سجل فواتير وطلبات الوردية) */}
-              <div className="bg-white border border-slate-200 rounded-2xl p-4 space-y-3 shadow-xs">
-                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-slate-100 pb-3">
-                  <div className="flex items-center gap-2.5">
-                    <div className="w-8 h-8 rounded-xl bg-amber-500/10 text-amber-700 flex items-center justify-center font-bold">
-                      <Receipt size={18} />
-                    </div>
-                    <div>
-                      <h4 className="font-black text-slate-800 text-xs sm:text-sm flex items-center gap-1.5">
-                        <span>سجل فواتير وطلبات الوردية</span>
-                        <span className="bg-slate-100 text-slate-700 px-2 py-0.5 rounded-full text-[11px] font-mono font-bold">
-                          {shiftOrders.length} طلب
-                        </span>
-                      </h4>
-                      <p className="text-[10px] text-slate-400">
-                        كافة العمليات التي تم تنفيذها بواسطة الكاشير خلال هذه الوردية
-                      </p>
-                    </div>
+              {/* 🧾 Orders List of the Shift */}
+              <div className="bg-white border border-slate-200 rounded-2xl p-4 space-y-3 shadow-sm text-xs">
+                <div className="flex items-center justify-between border-b border-slate-100 pb-2.5">
+                  <div className="flex items-center gap-2">
+                    <Receipt size={16} className="text-amber-500" />
+                    <h4 className="font-bold text-slate-800 text-sm">سجل فواتير وأوردرات الوردية</h4>
+                    <span className="bg-amber-100 text-amber-800 text-[10px] font-black px-2 py-0.5 rounded-full">
+                      {shiftOrders.length} فاتورة
+                    </span>
                   </div>
-
-                  <div className="flex items-center gap-1.5 flex-wrap text-xs font-bold">
-                    <span className="bg-emerald-50 text-emerald-800 px-2.5 py-1 rounded-lg border border-emerald-200 text-[10px] flex items-center gap-1">
-                      <span>💵 كاش:</span>
-                      <span className="font-mono font-black">{cashOrdersCount}</span>
-                    </span>
-                    <span className="bg-blue-50 text-blue-800 px-2.5 py-1 rounded-lg border border-blue-200 text-[10px] flex items-center gap-1">
-                      <span>💳 فيزا:</span>
-                      <span className="font-mono font-black">{cardOrdersCount}</span>
-                    </span>
-                    <span className="bg-purple-50 text-purple-800 px-2.5 py-1 rounded-lg border border-purple-200 text-[10px] flex items-center gap-1">
-                      <span>📱 إنستاباي:</span>
-                      <span className="font-mono font-black">{walletOrdersCount}</span>
-                    </span>
+                  <div className="text-[11px] text-slate-500 font-bold flex gap-2">
+                    <span className="text-emerald-700">كاش: {effectiveCashCount}</span>
+                    <span>•</span>
+                    <span className="text-blue-700">فيزا: {effectiveCardCount}</span>
+                    <span>•</span>
+                    <span className="text-purple-700">إنستاباي: {effectiveWalletCount}</span>
                   </div>
                 </div>
 
                 {shiftOrders.length === 0 ? (
-                  <div className="py-8 text-center text-slate-400 text-xs">
-                    لا توجد فواتير مسجلة في هذه الوردية حتى الآن.
+                  <div className="text-center py-6 text-slate-400">
+                    <Receipt size={32} className="mx-auto text-slate-300 mb-1" />
+                    <p className="font-bold text-xs text-slate-600">لم يتم تسجيل فواتير مدفوعة خلال هذه الوردية بعد</p>
+                    <p className="text-[11px] text-slate-400 mt-0.5">ستظهر هنا كافة الفواتير بمجرد إتمام تحصيلها</p>
                   </div>
                 ) : (
-                  <div className="overflow-x-auto max-h-72 overflow-y-auto border border-slate-100 rounded-xl">
-                    <table className="w-full text-right text-xs border-collapse">
-                      <thead className="sticky top-0 bg-slate-100 text-slate-700 font-black border-b border-slate-200 text-[11px]">
+                  <div className="overflow-x-auto max-h-72 overflow-y-auto">
+                    <table className="w-full text-right text-xs">
+                      <thead className="bg-slate-50 text-slate-500 font-bold border-b border-slate-200 sticky top-0">
                         <tr>
-                          <th className="p-2.5">رقم الطلب</th>
-                          <th className="p-2.5">الوقت</th>
-                          <th className="p-2.5">نوع الطلب</th>
-                          <th className="p-2.5">الكاشير المسؤول</th>
-                          <th className="p-2.5">طريقة الدفع</th>
-                          <th className="p-2.5 text-left">قيمة الفاتورة</th>
+                          <th className="py-2 px-2.5">الفاتورة والوقت</th>
+                          <th className="py-2 px-2.5">النوع / الطاولة</th>
+                          <th className="py-2 px-2.5">الكاشير</th>
+                          <th className="py-2 px-2.5">طريقة الدفع</th>
+                          <th className="py-2 px-2.5">الأصناف</th>
+                          <th className="py-2 px-2.5 text-left">القيمة</th>
                         </tr>
                       </thead>
-                      <tbody className="divide-y divide-slate-100 font-medium">
+                      <tbody className="divide-y divide-slate-100">
                         {shiftOrders.map((ord: any, idx: number) => {
-                          const orderNum = ord.daily_order_number || ord.id || (idx + 1);
-                          const dateObj = new Date(ord.created_at || Date.now());
-                          const timeStr = dateObj.toLocaleTimeString('ar-EG', { hour: '2-digit', minute: '2-digit' });
-                          const isCash = ord.payment_method === 'cash';
-                          const isCard = ord.payment_method === 'card';
-                          const isWallet = ord.payment_method === 'wallet';
-                          const totalVal = Number(ord.total_price || ord.total || ord.total_amount || 0);
+                          const ordNum = ord.daily_order_number || ord.id;
+                          const time = new Date(ord.created_at || Date.now()).toLocaleTimeString('ar-EG', { hour: '2-digit', minute: '2-digit' });
+                          const total = Number(ord.total_price || ord.total_amount || 0);
+                          const pay = ord.payment_method || 'cash';
+                          const payLabel = pay === 'card' ? '💳 فيزا' : pay === 'wallet' || pay === 'instapay' ? '📱 إنستاباي' : '💵 كاش';
+                          const cashier = ord.cashier_name || shift.cashierName || 'كاشير الفرع';
 
                           return (
-                            <tr key={ord.id || idx} className="hover:bg-slate-50/80 transition-colors">
-                              <td className="p-2.5 font-mono font-bold text-slate-800">
-                                #{orderNum}
+                            <tr key={idx} className="hover:bg-slate-50/80">
+                              <td className="py-2 px-2.5 font-bold font-mono text-slate-800">
+                                <div className="flex items-center gap-1.5">
+                                  <span className="bg-amber-50 border border-amber-200 text-amber-800 px-1.5 py-0.5 rounded text-[11px]">#{ordNum}</span>
+                                  <span className="text-[10px] text-slate-400 font-normal">{time}</span>
+                                </div>
                               </td>
-                              <td className="p-2.5 font-mono text-slate-500 text-[11px]">
-                                {timeStr}
+                              <td className="py-2 px-2.5 text-slate-600 font-medium">
+                                {ord.order_type === 'dine_in' ? `🍽️ طاولة ${ord.table_number || ord.tables?.table_number || 'صالة'}` : ord.order_type === 'delivery' ? '🛵 دليفري' : '🛍️ سفري'}
                               </td>
-                              <td className="p-2.5">
-                                <span className="font-bold text-slate-700">
-                                  {ord.order_type === 'dine_in' 
-                                    ? `صالة ${ord.table_number ? `(طاولة ${ord.table_number})` : ''}` 
-                                    : ord.order_type === 'delivery' 
-                                    ? 'دليفري (توصيل)' 
-                                    : 'سفري (تيك أواي)'}
-                                </span>
+                              <td className="py-2 px-2.5 text-slate-700 font-bold text-[11px]">
+                                {cashier}
                               </td>
-                              <td className="p-2.5 text-slate-700 font-bold text-[11px]">
-                                👤 {ord.cashier_name || shift.cashierName || 'كاشير الفرع'}
-                              </td>
-                              <td className="p-2.5">
-                                <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-bold ${
-                                  isCard 
-                                    ? 'bg-blue-50 text-blue-700 border border-blue-200' 
-                                    : isWallet 
-                                    ? 'bg-purple-50 text-purple-700 border border-purple-200' 
-                                    : 'bg-emerald-50 text-emerald-700 border border-emerald-200'
+                              <td className="py-2 px-2.5">
+                                <span className={`px-2 py-0.5 rounded-lg text-[10px] font-bold ${
+                                  pay === 'card' ? 'bg-blue-50 text-blue-700 border border-blue-200' : pay === 'wallet' || pay === 'instapay' ? 'bg-purple-50 text-purple-700 border border-purple-200' : 'bg-emerald-50 text-emerald-700 border border-emerald-200'
                                 }`}>
-                                  {isCard ? '💳 فيزا' : isWallet ? '📱 إنستاباي' : '💵 كاش'}
+                                  {payLabel}
                                 </span>
                               </td>
-                              <td className="p-2.5 font-mono font-bold text-emerald-600 text-left">
-                                {totalVal.toFixed(2)} ج.م
+                              <td className="py-2 px-2.5 text-slate-500 text-[11px] truncate max-w-[180px]">
+                                {Array.isArray(ord.items) 
+                                  ? ord.items.map((it: any) => `${it.quantity || 1}x ${it.name}`).join(', ')
+                                  : Array.isArray(ord.order_items)
+                                  ? ord.order_items.map((it: any) => `${it.quantity || 1}x ${it.products?.name_ar || it.products?.name_en || 'صنف'}`).join(', ')
+                                  : '-'}
+                              </td>
+                              <td className="py-2 px-2.5 text-left font-mono font-bold text-slate-900">
+                                {total.toFixed(2)} ج.م
                               </td>
                             </tr>
                           );
@@ -429,7 +463,7 @@ export const ShiftReportModal: React.FC<ShiftReportModalProps> = ({
 
                 <div className="py-1 border-b border-dashed border-slate-300 space-y-1 text-[11px]">
                   <div className="font-bold text-center underline text-slate-800">ملخص المبيعات (SALES)</div>
-                  <div className="flex justify-between"><span>عدد الفواتير:</span><span className="font-bold">{shift.ordersCount} طلب</span></div>
+                  <div className="flex justify-between"><span>عدد الفواتير:</span><span className="font-bold">{effectiveOrdersCount} طلب</span></div>
                   <div className="flex justify-between"><span>إجمالي المبيعات:</span><span className="font-bold">{totalGrossSales.toFixed(2)} ج.م</span></div>
                   {shift.totalDiscounts > 0 && (
                     <div className="flex justify-between text-amber-700"><span>إجمالي الخصومات:</span><span>-{shift.totalDiscounts.toFixed(2)} ج.م</span></div>
@@ -437,39 +471,36 @@ export const ShiftReportModal: React.FC<ShiftReportModalProps> = ({
                   <div className="flex justify-between font-bold border-t border-dotted border-slate-300 pt-0.5">
                     <span>صافي المبيعات:</span><span>{netSales.toFixed(2)} ج.م</span>
                   </div>
-                  <div className="flex justify-between text-[10px]"><span>- مبيعات كاش ({cashOrdersCount} طلب):</span><span>{shift.cashSales.toFixed(2)} ج.م</span></div>
-                  <div className="flex justify-between text-[10px]"><span>- مبيعات فيزا ({cardOrdersCount} طلب):</span><span>{shift.cardSales.toFixed(2)} ج.م</span></div>
-                  <div className="flex justify-between text-[10px]"><span>- محافظ / إنستاباي ({walletOrdersCount} طلب):</span><span>{shift.walletSales.toFixed(2)} ج.م</span></div>
+                  <div className="flex justify-between text-[10px]"><span>- مبيعات كاش ({effectiveCashCount}):</span><span>{effectiveCashSales.toFixed(2)} ج.م</span></div>
+                  <div className="flex justify-between text-[10px]"><span>- مبيعات فيزا ({effectiveCardCount}):</span><span>{effectiveCardSales.toFixed(2)} ج.م</span></div>
+                  <div className="flex justify-between text-[10px]"><span>- محافظ / إنستاباي ({effectiveWalletCount}):</span><span>{effectiveWalletSales.toFixed(2)} ج.م</span></div>
                   <div className="flex justify-between text-[10px]"><span>- ضريبة ق.م 14%:</span><span>{shift.totalTax.toFixed(2)} ج.م</span></div>
                 </div>
 
-                {/* Orders List in Preview Receipt */}
+                {/* Orders breakdown in thermal preview */}
                 {shiftOrders.length > 0 && (
-                  <div className="py-1 border-b border-dashed border-slate-300 space-y-0.5 text-[10px]">
-                    <div className="font-bold text-center underline text-slate-800">بيان فواتير الكاشير ({shiftOrders.length})</div>
-                    {shiftOrders.slice(0, 25).map((o: any, idx: number) => {
-                      const num = o.daily_order_number || o.id || (idx + 1);
-                      const pay = o.payment_method === 'card' ? 'فيزا' : o.payment_method === 'wallet' ? 'إنستاباي' : 'كاش';
-                      const val = Number(o.total_price || o.total || o.total_amount || 0);
-                      return (
-                        <div key={idx} className="flex justify-between font-mono">
-                          <span>#{num} ({pay})</span>
-                          <span>{val.toFixed(2)} ج.م</span>
-                        </div>
-                      );
-                    })}
-                    {shiftOrders.length > 25 && (
-                      <div className="text-center text-[9px] text-slate-400">
-                        + {shiftOrders.length - 25} فواتير أخرى
-                      </div>
-                    )}
+                  <div className="py-1.5 border-b border-dashed border-slate-300 space-y-1 text-[10px]">
+                    <div className="font-bold text-center underline text-slate-800 pb-0.5">فواتير الكاشير بالوردية ({shiftOrders.length})</div>
+                    <div className="space-y-0.5 max-h-48 overflow-y-auto">
+                      {shiftOrders.map((ord: any, idx: number) => {
+                        const ordNum = ord.daily_order_number || ord.id;
+                        const pay = ord.payment_method === 'card' ? 'فيزا' : ord.payment_method === 'wallet' || ord.payment_method === 'instapay' ? 'إنستاباي' : 'كاش';
+                        const total = Number(ord.total_price || ord.total_amount || 0);
+                        return (
+                          <div key={idx} className="flex justify-between border-b border-dotted border-slate-200 pb-0.5">
+                            <span>#{ordNum} [{pay}] {ord.cashier_name ? `(${ord.cashier_name})` : ''}</span>
+                            <span className="font-bold font-mono">{total.toFixed(2)} ج.م</span>
+                          </div>
+                        );
+                      })}
+                    </div>
                   </div>
                 )}
 
                 <div className="py-1 border-b border-dashed border-slate-300 space-y-1 text-[11px]">
                   <div className="font-bold text-center underline text-slate-800">حركة نقدية الدرج (CASH DRAWER)</div>
                   <div className="flex justify-between"><span>العهدة الافتتاحية (+):</span><span>{shift.startingCash.toFixed(2)} ج.م</span></div>
-                  <div className="flex justify-between"><span>المقبوضات النقدية (+):</span><span>{shift.cashSales.toFixed(2)} ج.م</span></div>
+                  <div className="flex justify-between"><span>المقبوضات النقدية (+):</span><span>{effectiveCashSales.toFixed(2)} ج.م</span></div>
                   <div className="flex justify-between"><span>إيداعات بالدرج (+):</span><span>{totalCashIn.toFixed(2)} ج.م</span></div>
                   <div className="flex justify-between"><span>مصروفات ومسحوبات (-):</span><span>{totalCashOut.toFixed(2)} ج.م</span></div>
                   <div className="flex justify-between font-bold border-t border-slate-300 pt-0.5">
@@ -542,7 +573,7 @@ export const ShiftReportModal: React.FC<ShiftReportModalProps> = ({
               <div className="font-bold text-center text-xs pb-0.5 border-b border-gray-200">ملخص المبيعات (SALES SUMMARY)</div>
               <div className="flex justify-between">
                 <span>عدد الفواتير المنفذة:</span>
-                <span className="font-mono font-bold">{shift.ordersCount} طلب</span>
+                <span className="font-mono font-bold">{effectiveOrdersCount} طلب</span>
               </div>
               <div className="flex justify-between">
                 <span>المبيعات الإجمالية (Gross):</span>
@@ -559,16 +590,16 @@ export const ShiftReportModal: React.FC<ShiftReportModalProps> = ({
                 <span className="font-mono">{netSales.toFixed(2)} ج.م</span>
               </div>
               <div className="flex justify-between text-[10px]">
-                <span>- مبيعات نقدية ({cashOrdersCount} طلب):</span>
-                <span className="font-mono">{shift.cashSales.toFixed(2)} ج.م</span>
+                <span>- مبيعات نقدية ({effectiveCashCount}):</span>
+                <span className="font-mono">{effectiveCashSales.toFixed(2)} ج.م</span>
               </div>
               <div className="flex justify-between text-[10px]">
-                <span>- مبيعات بطاقات / فيزا ({cardOrdersCount} طلب):</span>
-                <span className="font-mono">{shift.cardSales.toFixed(2)} ج.م</span>
+                <span>- مبيعات بطاقات / فيزا ({effectiveCardCount}):</span>
+                <span className="font-mono">{effectiveCardSales.toFixed(2)} ج.م</span>
               </div>
               <div className="flex justify-between text-[10px]">
-                <span>- محافظ / إنستاباي ({walletOrdersCount} طلب):</span>
-                <span className="font-mono">{shift.walletSales.toFixed(2)} ج.م</span>
+                <span>- محافظ / إنستاباي ({effectiveWalletCount}):</span>
+                <span className="font-mono">{effectiveWalletSales.toFixed(2)} ج.م</span>
               </div>
               <div className="flex justify-between text-[10px]">
                 <span>- ضريبة القيمة المضافة 14%:</span>
@@ -588,28 +619,23 @@ export const ShiftReportModal: React.FC<ShiftReportModalProps> = ({
               )}
             </div>
 
-            {/* Shift Orders List in Standalone Thermal Print */}
+            {/* List of Orders in Thermal Print */}
             {shiftOrders.length > 0 && (
               <div className="py-2 border-b border-dashed border-gray-400 text-[10px] space-y-1">
-                <div className="font-bold text-center text-xs pb-0.5 border-b border-gray-200">
-                  فواتير الوردية ({shiftOrders.length} فاتورة)
+                <div className="font-bold text-center underline pb-0.5">سجل فواتير وأوردرات الوردية ({shiftOrders.length})</div>
+                <div className="space-y-0.5">
+                  {shiftOrders.map((ord: any, idx: number) => {
+                    const ordNum = ord.daily_order_number || ord.id;
+                    const pay = ord.payment_method === 'card' ? 'فيزا' : ord.payment_method === 'wallet' || ord.payment_method === 'instapay' ? 'إنستاباي' : 'كاش';
+                    const total = Number(ord.total_price || ord.total_amount || 0);
+                    return (
+                      <div key={idx} className="flex justify-between border-b border-dotted border-gray-200 pb-0.5">
+                        <span>#{ordNum} [{pay}] {ord.cashier_name ? `(${ord.cashier_name})` : ''}</span>
+                        <span className="font-bold font-mono">{total.toFixed(2)} ج.م</span>
+                      </div>
+                    );
+                  })}
                 </div>
-                {shiftOrders.slice(0, 30).map((o: any, idx: number) => {
-                  const num = o.daily_order_number || o.id || (idx + 1);
-                  const pay = o.payment_method === 'card' ? 'فيزا' : o.payment_method === 'wallet' ? 'إنستاباي' : 'كاش';
-                  const val = Number(o.total_price || o.total || o.total_amount || 0);
-                  return (
-                    <div key={idx} className="flex justify-between font-mono text-[9px]">
-                      <span>#{num} ({pay})</span>
-                      <span className="font-bold">{val.toFixed(2)} ج.م</span>
-                    </div>
-                  );
-                })}
-                {shiftOrders.length > 30 && (
-                  <div className="text-center text-[9px] text-gray-500">
-                    + {shiftOrders.length - 30} فواتير إضافية
-                  </div>
-                )}
               </div>
             )}
 
@@ -621,7 +647,7 @@ export const ShiftReportModal: React.FC<ShiftReportModalProps> = ({
               </div>
               <div className="flex justify-between">
                 <span>المقبوضات النقدية (+):</span>
-                <span className="font-mono">+{shift.cashSales.toFixed(2)} ج.م</span>
+                <span className="font-mono">+{effectiveCashSales.toFixed(2)} ج.م</span>
               </div>
               <div className="flex justify-between">
                 <span>إيداعات إضافية بالدرج (+):</span>

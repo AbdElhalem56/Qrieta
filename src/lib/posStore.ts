@@ -65,6 +65,9 @@ export interface ShiftRecord {
   cashSales: number;
   cardSales: number;
   walletSales: number;
+  cashOrdersCount?: number;
+  cardOrdersCount?: number;
+  walletOrdersCount?: number;
   totalSales: number;
   totalTax: number;
   totalServiceFee: number;
@@ -73,9 +76,9 @@ export interface ShiftRecord {
   totalVoids: number;
   totalRefunds: number;
   ordersCount: number;
+  orders?: any[];
   transactions: CashTransaction[];
   notes?: string;
-  orders?: any[];
 }
 
 export interface WasteRecord {

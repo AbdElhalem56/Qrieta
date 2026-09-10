@@ -46,14 +46,18 @@ export const ProductOptionsPricingEditor: React.FC<ProductOptionsPricingEditorPr
 
   // Preset 2: Size Preset (Small / Medium / Large)
   const handleAddSizePreset = () => {
+    const bPrice = basePrice || 80;
+    const medPrice = basePrice ? Math.round(basePrice * 1.4) : 120;
+    const lrgPrice = basePrice ? Math.round(basePrice * 1.8) : 160;
+
     const sizeOpt: CategoryOption = {
       id: `item_size_${Date.now()}`,
       name_ar: 'الحجم',
       name_en: 'Size',
       choices: [
-        { id: `small_${Date.now()}`, name_ar: 'صغير', name_en: 'Small', price: basePrice || 80, price_delta: 0 },
-        { id: `medium_${Date.now()}`, name_ar: 'وسط', name_en: 'Medium', price: (basePrice ? Math.round(basePrice * 1.4) : 120), price_delta: 0 },
-        { id: `large_${Date.now()}`, name_ar: 'كبير', name_en: 'Large', price: (basePrice ? Math.round(basePrice * 1.8) : 160), price_delta: 0 }
+        { id: `small_${Date.now()}`, name_ar: 'صغير', name_en: 'Small', price: bPrice, price_delta: 0 },
+        { id: `medium_${Date.now()}`, name_ar: 'وسط', name_en: 'Medium', price: medPrice, price_delta: medPrice - bPrice },
+        { id: `large_${Date.now()}`, name_ar: 'كبير', name_en: 'Large', price: lrgPrice, price_delta: lrgPrice - bPrice }
       ]
     };
 
@@ -95,11 +99,18 @@ export const ProductOptionsPricingEditor: React.FC<ProductOptionsPricingEditorPr
   const handleImportCategoryOptions = () => {
     if (!categoryOptions || categoryOptions.length === 0) return;
     const cloned: CategoryOption[] = JSON.parse(JSON.stringify(categoryOptions));
-    // Ensure all choices have valid prices initialized
+    // Ensure all choices have valid prices and price_delta initialized
     cloned.forEach(opt => {
       opt.choices.forEach(ch => {
         if (ch.price === undefined || ch.price === null || isNaN(Number(ch.price))) {
-          ch.price = basePrice || 0;
+          if (ch.price_delta !== undefined && ch.price_delta !== null && Number(ch.price_delta) !== 0) {
+            ch.price = (basePrice || 0) + Number(ch.price_delta);
+          } else {
+            ch.price = basePrice || 0;
+          }
+        }
+        if (ch.price_delta === undefined || ch.price_delta === null || isNaN(Number(ch.price_delta))) {
+          ch.price_delta = (Number(ch.price) || 0) - (basePrice || 0);
         }
       });
     });
@@ -162,9 +173,11 @@ export const ProductOptionsPricingEditor: React.FC<ProductOptionsPricingEditorPr
     const copy = [...options];
     const target = copy[optIdx];
     const newChoices = [...target.choices];
+    const effectiveBase = basePrice > 0 ? basePrice : (choiceIdx === 0 ? priceVal : 0);
     newChoices[choiceIdx] = {
       ...newChoices[choiceIdx],
-      price: priceVal
+      price: priceVal,
+      price_delta: effectiveBase > 0 ? (priceVal - effectiveBase) : 0
     };
     copy[optIdx] = { ...target, choices: newChoices };
     onChange(copy);
