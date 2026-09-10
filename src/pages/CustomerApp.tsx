@@ -37,7 +37,7 @@ import {
   Trash2
 } from 'lucide-react';
 import { cn, formatCurrency } from '../lib/utils';
-import { getLocalCategoryOptions, syncAllCategoryOptions, resolveProductOptions, calculateProductEffectivePrice, getProductPriceRange } from '../lib/optionsHelper';
+import { getLocalCategoryOptions, syncAllCategoryOptions, syncAllProductOptions, resolveProductOptions, calculateProductEffectivePrice, getProductPriceRange } from '../lib/optionsHelper';
 import { calculateDistanceMeters, getCurrentPosition, fetchAllServerGeofences, getLocalRestaurantGeofence } from '../lib/geoHelper';
 import { DeliveryZone, fetchAllServerDeliveryZones, getLocalDeliveryZones, DEFAULT_DELIVERY_ZONES } from '../lib/deliveryHelper';
 import { initMetaPixel, trackViewContent, trackAddToCart, trackPurchase, trackCallWaiter } from '../lib/analytics';
@@ -80,6 +80,7 @@ export default function CustomerApp() {
   const [categories, setCategories] = useState<Category[]>([]);
   const [products, setProducts] = useState<Product[]>([]);
   const [serverOptions, setServerOptions] = useState<Record<string, CategoryOption[]>>({});
+  const [serverProductOptions, setServerProductOptions] = useState<Record<string, CategoryOption[]>>({});
   const [activeCategory, setActiveCategory] = useState<string | null>('all');
   const [search, setSearch] = useState('');
   const [loading, setLoading] = useState(true);
@@ -258,13 +259,24 @@ export default function CustomerApp() {
       return;
     }
 
-    // 1. First fetch server-synced category options
+    // 1. First fetch server-synced category and product options
     let syncedOpts: Record<string, CategoryOption[]> = {};
     try {
       syncedOpts = await syncAllCategoryOptions();
       setServerOptions(syncedOpts);
     } catch (e) {
-      console.warn('Options sync error:', e);
+      console.warn('Category options sync error:', e);
+    }
+
+    let prodOpts: Record<string, CategoryOption[]> = {};
+    try {
+      const fetchedProdOpts = await syncAllProductOptions();
+      if (fetchedProdOpts) {
+        prodOpts = fetchedProdOpts;
+        setServerProductOptions(fetchedProdOpts);
+      }
+    } catch (e) {
+      console.warn('Product options sync error:', e);
     }
 
     const { data: res } = await supabase
@@ -361,7 +373,21 @@ export default function CustomerApp() {
       }));
 
       setCategories(formattedCategories);
-      setProducts(results[1].data || []);
+      const rawProducts = results[1].data || [];
+      const formattedProducts = rawProducts.map((p: any) => {
+        let pOptions = p.options;
+        if (typeof pOptions === 'string') {
+          try { pOptions = JSON.parse(pOptions); } catch (e) { pOptions = null; }
+        }
+        if ((!pOptions || (Array.isArray(pOptions) && pOptions.length === 0)) && prodOpts && prodOpts[p.id]) {
+          pOptions = prodOpts[p.id];
+        }
+        return {
+          ...p,
+          options: pOptions || undefined
+        };
+      });
+      setProducts(formattedProducts);
       if (results[2]?.data) setTable(results[2].data);
     }
     setLoading(false);
@@ -389,12 +415,16 @@ export default function CustomerApp() {
   // Helper to open product modal with default options pre-selected
   const handleOpenProduct = (product: Product) => {
     const cat = categories.find(c => String(c.id) === String(product.category_id));
-    const catOpts: CategoryOption[] = resolveProductOptions(product, cat, serverOptions);
+    const catOpts: CategoryOption[] = resolveProductOptions(product, cat, serverOptions, serverProductOptions);
 
     const initialSelections: Record<string, string> = {};
     catOpts.forEach(opt => {
       if (opt.choices && opt.choices.length > 0) {
-        initialSelections[opt.id] = opt.choices[0].id;
+        const matched = opt.choices.find(c => 
+          (c.price !== undefined && c.price !== null && Number(c.price) === Number(product.price)) ||
+          (c.price_delta !== undefined && Number(c.price_delta) === 0)
+        ) || opt.choices[0];
+        initialSelections[opt.id] = matched.id;
       }
     });
 
@@ -425,7 +455,7 @@ export default function CustomerApp() {
   ) => {
     // Build human-readable option labels
     const cat = categories.find(c => String(c.id) === String(product.category_id));
-    const catOpts: CategoryOption[] = resolveProductOptions(product, cat, serverOptions);
+    const catOpts: CategoryOption[] = resolveProductOptions(product, cat, serverOptions, serverProductOptions);
     
     // Calculate dynamic effective price according to selected size/options
     const effectivePrice = calculateProductEffectivePrice(product, custom.selectedOptions, catOpts);
@@ -946,32 +976,58 @@ export default function CustomerApp() {
       }
 
       // 4. Deduct stock from inventory
-      cart.forEach(item => {
-        updateProductStock(restaurant.id, {
-          productId: item.product.id,
-          productName: item.product.name_ar || item.product.name_en,
-          delta: -item.quantity,
-          type: 'sale',
-          reason: `طلب زبون أونلاين #${dailySeqNum}`,
-          performedBy: 'تطبيق الزبائن'
-        }).catch(() => {});
-      });
+      await Promise.all(
+        cart.map(item =>
+          updateProductStock(restaurant.id, {
+            productId: item.product.id,
+            productName: item.product.name_ar || item.product.name_en,
+            delta: -item.quantity,
+            type: 'sale',
+            reason: `طلب زبون أونلاين #${dailySeqNum}`,
+            performedBy: 'تطبيق الزبائن'
+          }).catch(err => console.warn('Stock update error:', err))
+        )
+      );
 
       // 4b. Deduct recipe raw materials (matching option-specific recipes e.g. سادة/زيادة)
-      deductOrderRecipeStock(
-        restaurant.id,
-        cart.map(item => ({
-          id: item.product.id,
-          name: item.product.name_ar || item.product.name_en,
-          quantity: item.quantity,
-          options: item.selectedOptionLabels,
-          sugar_level: item.sugar,
-          selectedOptions: item.selectedOptions,
-          notes: item.notes
-        })),
-        String(dailySeqNum),
-        'تطبيق الزبائن'
-      ).catch(() => {});
+      const recipeDeductItems = cart.map(item => ({
+        id: item.product.id,
+        menuItemId: item.product.id,
+        product_id: item.product.id,
+        name: item.product.name_ar || item.product.name_en,
+        quantity: item.quantity,
+        options: item.selectedOptionLabels,
+        sugar_level: item.sugar,
+        selectedOptions: item.selectedOptions,
+        notes: item.notes
+      }));
+
+      try {
+        await deductOrderRecipeStock(
+          restaurant.id,
+          recipeDeductItems,
+          String(dailySeqNum),
+          'تطبيق الزبائن'
+        );
+      } catch (recipeErr) {
+        console.warn('Recipe deduction error:', recipeErr);
+      }
+
+      // Also ensure server recipe endpoint is called directly with restaurant_id
+      try {
+        await fetch('/api/inventory/recipes-deduct', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            restaurant_id: restaurant.id,
+            items: recipeDeductItems,
+            orderRef: String(dailySeqNum),
+            cashierName: 'تطبيق الزبائن'
+          })
+        });
+      } catch (srvErr) {
+        console.warn('Server recipe deduction error:', srvErr);
+      }
 
       setCart([]);
       setIsCartOpen(false);
@@ -1437,7 +1493,7 @@ export default function CustomerApp() {
                 {/* Show available category options indicator if any */}
                 {(() => {
                   const cat = categories.find(c => String(c.id) === String(p.category_id));
-                  const opts = resolveProductOptions(p, cat, serverOptions);
+                  const opts = resolveProductOptions(p, cat, serverOptions, serverProductOptions);
                   if (!opts || opts.length === 0) return null;
                   return (
                     <div className="flex flex-wrap gap-1 mb-2">
@@ -1462,7 +1518,7 @@ export default function CustomerApp() {
                 <div className="mt-auto flex items-center justify-between">
                   {(() => {
                     const cat = categories.find(c => String(c.id) === String(p.category_id));
-                    const catOpts = resolveProductOptions(p, cat, serverOptions);
+                    const catOpts = resolveProductOptions(p, cat, serverOptions, serverProductOptions);
                     const range = getProductPriceRange(p, catOpts);
                     return (
                       <div>
@@ -1549,7 +1605,7 @@ export default function CustomerApp() {
                 <div className="space-y-6">
                   {(() => {
                     const selectedProdCat = categories.find(c => String(c.id) === String(selectedProduct.category_id));
-                    const catOptions: CategoryOption[] = resolveProductOptions(selectedProduct, selectedProdCat, serverOptions);
+                    const catOptions: CategoryOption[] = resolveProductOptions(selectedProduct, selectedProdCat, serverOptions, serverProductOptions);
 
                     if (!catOptions || catOptions.length === 0) {
                       return null;
@@ -1650,7 +1706,7 @@ export default function CustomerApp() {
               {/* Sticky Action Footer */}
               {(() => {
                 const selectedProdCat = categories.find(c => String(c.id) === String(selectedProduct.category_id));
-                const catOptions = resolveProductOptions(selectedProduct, selectedProdCat, serverOptions);
+                const catOptions = resolveProductOptions(selectedProduct, selectedProdCat, serverOptions, serverProductOptions);
                 const currentDynamicPrice = calculateProductEffectivePrice(selectedProduct, customization.selectedOptions, catOptions);
 
                 return (

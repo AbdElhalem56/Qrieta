@@ -495,7 +495,40 @@ async function startServer() {
   });
 
   // Get All Product Options API
-  app.get("/api/product-options", (req, res) => {
+  app.get("/api/product-options", async (req, res) => {
+    try {
+      const supabaseUrl = process.env.VITE_SUPABASE_URL || process.env.SUPABASE_URL;
+      const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+      const anonKey = process.env.VITE_SUPABASE_ANON_KEY || process.env.SUPABASE_ANON_KEY;
+
+      if (supabaseUrl) {
+        const client = serviceRoleKey
+          ? createClient(supabaseUrl, serviceRoleKey)
+          : createClient(supabaseUrl, anonKey || "");
+
+        const { data } = await client
+          .from("products")
+          .select("id, options")
+          .not("options", "is", null);
+
+        if (data && Array.isArray(data)) {
+          data.forEach((p: any) => {
+            let opts = p.options;
+            if (typeof opts === "string") {
+              try { opts = JSON.parse(opts); } catch (e) { opts = null; }
+            }
+            if (Array.isArray(opts) && opts.length > 0) {
+              if (!productOptionsStore[p.id] || productOptionsStore[p.id].length === 0) {
+                productOptionsStore[p.id] = opts;
+              }
+            }
+          });
+          persistProductOptions();
+        }
+      }
+    } catch (e) {
+      console.warn("Could not sync product options from Supabase:", e);
+    }
     res.status(200).json({ options: productOptionsStore });
   });
 
@@ -1042,7 +1075,7 @@ async function startServer() {
   // PATCH /api/orders/live/:id/status - Update status of an order
   app.patch("/api/orders/live/:id/status", async (req, res) => {
     const orderId = req.params.id;
-    const { restaurant_id, status, payment_status } = req.body;
+    const { restaurant_id, status, payment_status, cashier_name } = req.body;
     if (!restaurant_id) {
       return res.status(400).json({ error: "معرف المطعم مطلوب." });
     }
@@ -1060,6 +1093,7 @@ async function startServer() {
       if (order) {
         if (status) order.status = status;
         if (payment_status) order.payment_status = payment_status;
+        if (cashier_name) order.cashier_name = cashier_name;
         order.updated_at = new Date().toISOString();
         persistLiveOrders();
       } else {
@@ -1069,6 +1103,7 @@ async function startServer() {
           restaurant_id,
           status: status || 'new',
           payment_status: payment_status || 'unpaid',
+          cashier_name: cashier_name || undefined,
           updated_at: new Date().toISOString()
         });
         persistLiveOrders();
@@ -1335,7 +1370,8 @@ async function startServer() {
 
   // POST /api/inventory/recipes-data - Save all raw materials, recipes, and movements
   app.post("/api/inventory/recipes-data", async (req, res) => {
-    const { restaurant_id, data } = req.body;
+    const restaurant_id = req.body.restaurant_id || req.body.restaurantId;
+    const data = req.body.data;
     if (!restaurant_id || !data) {
       return res.status(400).json({ error: "بيانات غير مكتملة." });
     }
@@ -1360,7 +1396,14 @@ async function startServer() {
 
   // POST /api/inventory/recipes-deduct - Auto-deduct raw materials for completed orders
   app.post("/api/inventory/recipes-deduct", async (req, res) => {
-    const { restaurant_id, items, orderRef, cashierName } = req.body;
+    let restaurant_id = req.body.restaurant_id || req.body.restaurantId || (req.query.restaurant_id as string);
+    if (!restaurant_id && Object.keys(recipesStore).length > 0) {
+      restaurant_id = Object.keys(recipesStore)[0];
+    }
+    const items = req.body.items;
+    const orderRef = req.body.orderRef || req.body.dailySeqNum || 'طلب';
+    const cashierName = req.body.cashierName || req.body.performedBy || 'الكاشير';
+
     if (!restaurant_id || !items || !Array.isArray(items)) {
       return res.status(400).json({ error: "بيانات غير مكتملة." });
     }
@@ -1371,7 +1414,15 @@ async function startServer() {
         if (cloudRec) {
           recipesStore[restaurant_id] = cloudRec;
         } else {
-          return res.status(200).json({ success: true, deducted: 0 });
+          recipesStore[restaurant_id] = {
+            materials: [],
+            categories: [],
+            recipes: {},
+            purchases: [],
+            wastes: [],
+            audits: [],
+            movements: []
+          };
         }
       }
 
@@ -1385,9 +1436,45 @@ async function startServer() {
       items.forEach((item: any) => {
         const prodId = item.id || item.menuItemId || item.product_id;
         const qty = Math.max(1, item.quantity || 1);
-        if (!prodId || !rest.recipes[prodId]) return;
+        if (!prodId) return;
 
-        const recipe = rest.recipes[prodId];
+        // Also deduct direct product stock if present in inventoryStore
+        if (inventoryStore[restaurant_id]) {
+          const inv = inventoryStore[restaurant_id];
+          if (inv.stock && (inv.stock[prodId] !== undefined || inv.stock[String(prodId)] !== undefined)) {
+            const key = inv.stock[prodId] !== undefined ? prodId : String(prodId);
+            const prevStock = inv.stock[key] || 0;
+            inv.stock[key] = Math.max(0, prevStock - qty);
+            if (!Array.isArray(inv.movements)) {
+              inv.movements = [];
+            }
+            inv.movements.unshift({
+              id: `mov-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+              restaurant_id,
+              product_id: key,
+              product_name: item.name,
+              type: 'sale',
+              quantity: -qty,
+              prev_stock: prevStock,
+              new_stock: inv.stock[key],
+              reason: `طلب #${orderRef} (${cashierName})`,
+              performed_by: cashierName,
+              timestamp: now
+            });
+            persistInventory(restaurant_id);
+          }
+        }
+
+        let recipe = rest.recipes[prodId];
+        if (!recipe && item.name) {
+          recipe = Object.values(rest.recipes).find((r: any) =>
+            (r.product_id && String(r.product_id) === String(prodId)) ||
+            (r.product_name_ar && (item.name.includes(r.product_name_ar) || r.product_name_ar.includes(item.name))) ||
+            (r.product_name_en && item.name.toLowerCase().includes(r.product_name_en.toLowerCase()))
+          );
+        }
+        if (!recipe) return;
+
         let ingredientsToDeduct = Array.isArray(recipe.ingredients) ? recipe.ingredients : [];
 
         // Check if item matches any option-specific recipe variant
@@ -1399,6 +1486,8 @@ async function startServer() {
               if (typeof opt === 'string') optionKeywords.push(opt.toLowerCase().trim());
               else if (opt?.name) optionKeywords.push(String(opt.name).toLowerCase().trim());
               else if (opt?.name_ar) optionKeywords.push(String(opt.name_ar).toLowerCase().trim());
+              else if (opt?.choiceName) optionKeywords.push(String(opt.choiceName).toLowerCase().trim());
+              else if (opt?.optionName) optionKeywords.push(String(opt.optionName).toLowerCase().trim());
             });
           }
 
@@ -1479,7 +1568,11 @@ async function startServer() {
 
   // POST /api/inventory/recipes-restore - Restore raw materials for cancelled orders
   app.post("/api/inventory/recipes-restore", async (req, res) => {
-    const { restaurant_id, items, orderRef, cashierName } = req.body;
+    const restaurant_id = req.body.restaurant_id || req.body.restaurantId;
+    const items = req.body.items;
+    const orderRef = req.body.orderRef || req.body.dailySeqNum || 'طلب';
+    const cashierName = req.body.cashierName || req.body.performedBy || 'الكاشير';
+
     if (!restaurant_id || !items || !Array.isArray(items)) {
       return res.status(400).json({ error: "بيانات غير مكتملة." });
     }
@@ -1518,6 +1611,8 @@ async function startServer() {
               if (typeof opt === 'string') optionKeywords.push(opt.toLowerCase().trim());
               else if (opt?.name) optionKeywords.push(String(opt.name).toLowerCase().trim());
               else if (opt?.name_ar) optionKeywords.push(String(opt.name_ar).toLowerCase().trim());
+              else if (opt?.choiceName) optionKeywords.push(String(opt.choiceName).toLowerCase().trim());
+              else if (opt?.optionName) optionKeywords.push(String(opt.optionName).toLowerCase().trim());
             });
           }
 
@@ -1576,7 +1671,7 @@ async function startServer() {
                 new_stock: next,
                 unit: mat.unit,
                 order_id: orderRef,
-                reason: `استرجاع ريسبي (إلغاء/مرتجع #${orderRef}): ${item.name} x ${qty}`,
+                reason: `استرجاع ريسبي (إلغاء/مرتجع طلب #${orderRef}): ${item.name} x ${qty}`,
                 performed_by: cashierName || 'الكاشير',
                 timestamp: now
               });

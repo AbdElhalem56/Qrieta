@@ -343,15 +343,31 @@ export default function AdminDashboard() {
         (so.daily_order_number && o.daily_order_number && Number(so.daily_order_number) === Number(o.daily_order_number))
       );
 
+      // Resolve Order Type
+      let orderType: 'dine_in' | 'delivery' | 'takeaway' = 'dine_in';
+      if (live?.order_type) {
+        orderType = live.order_type;
+      } else if (matchingShiftOrder?.order_type) {
+        orderType = matchingShiftOrder.order_type;
+      } else if (noteText.includes('دليفري') || noteText.includes('توصيل')) {
+        orderType = 'delivery';
+      } else if (noteText.includes('سفري') || noteText.includes('تيك أواي') || noteText.includes('takeaway')) {
+        orderType = 'takeaway';
+      } else if (o.tables || o.table_id) {
+        orderType = 'dine_in';
+      }
+
       // Resolve Cashier Name
       const cashierMatch = noteText.match(/كاشير:\s*([^|\]]+)/);
-      let cashierName = live?.cashier_name || 
-                        (o as any).cashier_name || 
-                        (cashierMatch ? cashierMatch[1].trim() : null) ||
-                        matchingShiftOrder?.cashier_name;
+      let rawCashier = live?.cashier_name || 
+                       (o as any).cashier_name || 
+                       (cashierMatch ? cashierMatch[1].trim() : null) ||
+                       matchingShiftOrder?.cashier_name;
 
-      if (!cashierName) {
-        cashierName = isCustomerApp ? 'تطبيق الزبائن (أونلاين)' : fallbackCashier;
+      let cashierName = rawCashier;
+      if (!cashierName || cashierName.includes('تطبيق الزبائن')) {
+        // For delivery orders or whenever branch cashier is needed, display responsible cashier
+        cashierName = (orderType === 'delivery' || !isCustomerApp) ? fallbackCashier : (rawCashier || fallbackCashier || 'كاشير 1');
       }
 
       // Resolve Payment Method
@@ -369,20 +385,6 @@ export default function AdminDashboard() {
         } else {
           paymentMethod = 'cash';
         }
-      }
-
-      // Resolve Order Type
-      let orderType: 'dine_in' | 'delivery' | 'takeaway' = 'dine_in';
-      if (live?.order_type) {
-        orderType = live.order_type;
-      } else if (matchingShiftOrder?.order_type) {
-        orderType = matchingShiftOrder.order_type;
-      } else if (noteText.includes('دليفري') || noteText.includes('توصيل')) {
-        orderType = 'delivery';
-      } else if (noteText.includes('سفري') || noteText.includes('تيك أواي') || noteText.includes('takeaway')) {
-        orderType = 'takeaway';
-      } else if (o.tables || o.table_id) {
-        orderType = 'dine_in';
       }
 
       // Resolve Table Number
@@ -418,7 +420,11 @@ export default function AdminDashboard() {
         const noteText = lo.notes || '';
         const isCustomerApp = lo.source === 'customer_app' || Boolean(noteText.includes('طلب زبون') || noteText.includes('تطبيق الزبائن'));
         const cashierMatch = noteText.match(/كاشير:\s*([^|\]]+)/);
-        const cashierName = lo.cashier_name || (cashierMatch ? cashierMatch[1].trim() : (isCustomerApp ? 'تطبيق الزبائن (أونلاين)' : fallbackCashier));
+        const isDelivery = lo.order_type === 'delivery';
+        let cashierName = lo.cashier_name || (cashierMatch ? cashierMatch[1].trim() : null);
+        if (!cashierName || cashierName.includes('تطبيق الزبائن')) {
+          cashierName = (isDelivery || !isCustomerApp) ? fallbackCashier : (cashierName || fallbackCashier || 'كاشير 1');
+        }
 
         let payMethod = lo.payment_method;
         if (!payMethod) {
@@ -1263,6 +1269,7 @@ export default function AdminDashboard() {
 
     const payload = {
       ...editingProduct,
+      options: editingProductOptions,
       restaurant_id: profile.restaurant_id,
     };
 
@@ -2527,7 +2534,20 @@ export default function AdminDashboard() {
                       <div className="flex justify-between">
                         <span className="text-gray-500 font-bold">الكاشير المسؤول:</span>
                         <span className="font-black text-amber-700">
-                          👤 {selectedOrderForDetails.cashier_name || 'كاشير الفرع'}
+                          👤 {(() => {
+                            const cName = selectedOrderForDetails.cashier_name;
+                            if (cName && !cName.includes('تطبيق الزبائن')) {
+                              return cName;
+                            }
+                            try {
+                              const active = localStorage.getItem(`qrieta_active_shift_${restaurant?.id}`);
+                              if (active) {
+                                const parsed = JSON.parse(active);
+                                if (parsed.cashierName) return parsed.cashierName;
+                              }
+                            } catch (e) {}
+                            return cName || 'كاشير الفرع';
+                          })()}
                         </span>
                       </div>
                       <div className="flex justify-between">

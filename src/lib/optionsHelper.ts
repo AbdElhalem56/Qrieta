@@ -278,32 +278,40 @@ export function getLocalProductOptions(productId: string): CategoryOption[] {
 }
 
 export function resolveProductOptions(
-  product: { id?: string; name_ar?: string; name_en?: string; category_id?: string; options?: CategoryOption[] },
-  category?: { id?: string; name_ar?: string; name_en?: string; options?: CategoryOption[] },
+  product: { id?: string; name_ar?: string; name_en?: string; category_id?: string; options?: any },
+  category?: { id?: string; name_ar?: string; name_en?: string; options?: any },
   serverCategoryOptionsMap?: Record<string, CategoryOption[]>,
   serverProductOptionsMap?: Record<string, CategoryOption[]>
 ): CategoryOption[] {
   // 1. Direct product options if attached to product object
-  if (product?.options && product.options.length > 0) {
-    return product.options;
+  let directProductOpts = product?.options;
+  if (typeof directProductOpts === 'string') {
+    try { directProductOpts = JSON.parse(directProductOpts); } catch (e) { directProductOpts = undefined; }
+  }
+  if (Array.isArray(directProductOpts) && directProductOpts.length > 0) {
+    return directProductOpts;
   }
 
   // 2. Server product-specific options (with explicit size pricing)
-  if (product?.id && serverProductOptionsMap && serverProductOptionsMap[product.id] && serverProductOptionsMap[product.id].length > 0) {
+  if (product?.id && serverProductOptionsMap && serverProductOptionsMap[product.id] && Array.isArray(serverProductOptionsMap[product.id]) && serverProductOptionsMap[product.id].length > 0) {
     return serverProductOptionsMap[product.id];
   }
 
   // 3. Local product-specific options
   if (product?.id) {
     const localProdOpts = getLocalProductOptions(product.id);
-    if (localProdOpts && localProdOpts.length > 0) {
+    if (localProdOpts && Array.isArray(localProdOpts) && localProdOpts.length > 0) {
       return localProdOpts;
     }
   }
 
   // 4. Category options if present on category object
-  if (category?.options && category.options.length > 0) {
-    return category.options;
+  let directCatOpts = category?.options;
+  if (typeof directCatOpts === 'string') {
+    try { directCatOpts = JSON.parse(directCatOpts); } catch (e) { directCatOpts = undefined; }
+  }
+  if (Array.isArray(directCatOpts) && directCatOpts.length > 0) {
+    return directCatOpts;
   }
 
   // 5. Server category options map
@@ -339,26 +347,39 @@ export function calculateProductEffectivePrice(
   selectedOptionsMap: Record<string, string> = {},
   optionsList: CategoryOption[] = []
 ): number {
-  let basePrice = Number(product.price) || 0;
-  let hasExplicitChoicePrice = false;
-  let explicitPrice = basePrice;
+  const basePrice = Number(product.price) || 0;
   let totalDelta = 0;
+  let hasExplicitStandalonePrice = false;
+  let standalonePrice = 0;
 
   optionsList.forEach((opt) => {
     const selectedChoiceId = selectedOptionsMap[opt.id] || (opt.choices[0]?.id);
     const choice = opt.choices.find(c => c.id === selectedChoiceId);
     if (choice) {
-      if (choice.price !== undefined && choice.price !== null && !isNaN(Number(choice.price)) && Number(choice.price) > 0) {
-        explicitPrice = Number(choice.price);
-        hasExplicitChoicePrice = true;
-      } else if (choice.price_delta !== undefined && choice.price_delta !== null && !isNaN(Number(choice.price_delta))) {
-        totalDelta += Number(choice.price_delta);
+      const hasPrice = choice.price !== undefined && choice.price !== null && !isNaN(Number(choice.price));
+      const hasDelta = choice.price_delta !== undefined && choice.price_delta !== null && !isNaN(Number(choice.price_delta));
+      const numPrice = hasPrice ? Number(choice.price) : undefined;
+      const numDelta = hasDelta ? Number(choice.price_delta) : undefined;
+
+      if (hasDelta && numDelta !== undefined && numDelta !== 0) {
+        totalDelta += numDelta;
+      } else if (hasPrice && numPrice !== undefined && basePrice > 0) {
+        // Delta relative to base product price
+        totalDelta += (numPrice - basePrice);
+      } else if (hasPrice && numPrice !== undefined && basePrice === 0) {
+        // If product base price is 0, this choice defines the standalone price
+        if (!hasExplicitStandalonePrice) {
+          standalonePrice = numPrice;
+          hasExplicitStandalonePrice = true;
+        } else {
+          totalDelta += numPrice;
+        }
       }
     }
   });
 
-  if (hasExplicitChoicePrice) {
-    return Math.max(0, explicitPrice + totalDelta);
+  if (hasExplicitStandalonePrice) {
+    return Math.max(0, standalonePrice + totalDelta);
   }
 
   return Math.max(0, basePrice + totalDelta);
@@ -369,21 +390,32 @@ export function getProductPriceRange(
   optionsList: CategoryOption[] = []
 ): { minPrice: number; maxPrice: number; hasMultiplePrices: boolean } {
   const base = Number(product.price) || 0;
-  const prices: number[] = [base];
+  const prices: number[] = [];
+
+  if (base > 0) {
+    prices.push(base);
+  }
 
   optionsList.forEach(opt => {
     opt.choices.forEach(ch => {
-      if (ch.price !== undefined && ch.price !== null && !isNaN(Number(ch.price)) && Number(ch.price) > 0) {
+      const hasPrice = ch.price !== undefined && ch.price !== null && !isNaN(Number(ch.price)) && Number(ch.price) > 0;
+      const hasDelta = ch.price_delta !== undefined && ch.price_delta !== null && !isNaN(Number(ch.price_delta)) && Number(ch.price_delta) !== 0;
+
+      if (hasPrice) {
         prices.push(Number(ch.price));
-      } else if (ch.price_delta !== undefined && ch.price_delta !== null && Number(ch.price_delta) !== 0) {
-        prices.push(base + Number(ch.price_delta));
+      } else if (hasDelta && base > 0) {
+        prices.push(Math.max(0, base + Number(ch.price_delta)));
       }
     });
   });
 
+  if (prices.length === 0) {
+    prices.push(base);
+  }
+
   const minPrice = Math.min(...prices);
   const maxPrice = Math.max(...prices);
-  const hasMultiplePrices = minPrice !== maxPrice;
+  const hasMultiplePrices = minPrice !== maxPrice && maxPrice > 0;
 
   return { minPrice, maxPrice, hasMultiplePrices };
 }

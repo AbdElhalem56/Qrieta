@@ -915,10 +915,10 @@ export const CashierPOS: React.FC = () => {
 
     try {
       // 1. Update status in live service, Supabase, and Server API
-      await updateLiveOrderStatus(order.id, selectedRestaurant.id, 'completed', 'paid');
+      await updateLiveOrderStatus(order.id, selectedRestaurant.id, 'completed', 'paid', shift.cashierName || 'كاشير');
 
       // 2. Update local customer live orders state
-      setCustomerLiveOrders(prev => prev.map(o => o.id === order.id ? { ...o, status: 'completed', payment_status: 'paid' } : o));
+      setCustomerLiveOrders(prev => prev.map(o => o.id === order.id ? { ...o, status: 'completed', payment_status: 'paid', cashier_name: shift.cashierName } : o));
 
       // 3. Remove any corresponding held bill (from kitchen KOT sending)
       const orderNumStr = String(order.daily_order_number || '');
@@ -956,6 +956,7 @@ export const CashierPOS: React.FC = () => {
         payment_method: order.payment_status === 'paid' ? 'card' : 'cash',
         payment_status: 'paid',
         status: 'delivered',
+        cashier_name: shift.cashierName || 'كاشير',
         items: order.items.map(it => ({
           id: it.id,
           name: it.name,
@@ -981,36 +982,35 @@ export const CashierPOS: React.FC = () => {
         cardSales: prev.cardSales + (order.payment_status === 'paid' ? order.total_price : 0)
       }));
 
-      // 7. Deduct inventory if not already deducted by customer app
-      if (order.source !== 'customer_app') {
-        order.items.forEach(it => {
-          if (it.id) {
-            updateProductStock(selectedRestaurant.id, {
-              productId: it.id,
-              productName: it.name,
-              delta: -it.quantity,
-              type: 'sale',
-              reason: `تسليم طلب #${displayNum}`,
-              performedBy: shift.cashierName || 'كاشير'
-            }).catch(() => {});
-          }
-        });
+      // 7. Deduct inventory & recipe ingredients for the order
+      order.items.forEach(it => {
+        const prodId = it.id || (it as any).product_id || (it as any).menuItemId;
+        if (prodId) {
+          updateProductStock(selectedRestaurant.id, {
+            productId: prodId,
+            productName: it.name,
+            delta: -it.quantity,
+            type: 'sale',
+            reason: `تسليم طلب ${order.order_type === 'delivery' ? 'دليفري' : 'زبائن'} #${displayNum}`,
+            performedBy: shift.cashierName || 'كاشير'
+          }).catch(() => {});
+        }
+      });
 
-        deductOrderRecipeStock(
-          selectedRestaurant.id,
-          order.items.map(it => ({
-            id: it.id,
-            name: it.name,
-            quantity: it.quantity,
-            options: (it as any).options,
-            notes: (it as any).notes,
-            sugar_level: (it as any).sugar_level,
-            selectedOptions: (it as any).selectedOptions
-          })),
-          String(displayNum),
-          shift.cashierName || 'كاشير'
-        ).catch(() => {});
-      }
+      deductOrderRecipeStock(
+        selectedRestaurant.id,
+        order.items.map(it => ({
+          id: it.id || (it as any).product_id || (it as any).menuItemId,
+          name: it.name,
+          quantity: it.quantity,
+          options: (it as any).options,
+          notes: (it as any).notes,
+          sugar_level: (it as any).sugar_level,
+          selectedOptions: (it as any).selectedOptions
+        })),
+        String(displayNum),
+        shift.cashierName || 'كاشير'
+      ).catch(() => {});
 
       // 8. Log shift audit
       logShiftAuditRecord(selectedRestaurant.id, {
@@ -1027,6 +1027,78 @@ export const CashierPOS: React.FC = () => {
       console.error('Error completing customer order:', err);
       alert('حدث خطأ أثناء إنهاء الطلب: ' + (err?.message || 'يرجى المحاولة مرة أخرى'));
     }
+  };
+
+  const handleRefundCustomerOrder = (order: LiveOrder) => {
+    if (!selectedRestaurant) return;
+    const orderTotal = Number(order.total_price) || 0;
+    const isDelivery = order.order_type === 'delivery';
+    const displayNum = getDisplayOrderNumber(order);
+
+    setManagerAuthReq({
+      isOpen: true,
+      title: isDelivery ? 'إرجاع ومرتجع طلب دليفري (Delivery Refund)' : 'إلغاء ومرتجع طلب (Refund)',
+      description: `سيتم إرجاع قيمة الطلب (${orderTotal} ج.م) وإلغاء تسجيله من مبيعات الوردية وإعادة المواد الخام والمخزون. يلزم موافقة المدير.`,
+      action: async () => {
+        try {
+          // 1. Update status in live service and Supabase
+          await updateLiveOrderStatus(order.id, selectedRestaurant.id, 'cancelled', 'refunded', shift.cashierName);
+
+          await supabase
+            .from('orders')
+            .update({ status: 'cancelled', payment_status: 'refunded' })
+            .eq('id', order.id);
+
+          // 2. Update local live orders state
+          setCustomerLiveOrders(prev => prev.map(o => o.id === order.id ? { ...o, status: 'cancelled', payment_status: 'refunded' } : o));
+
+          // 3. Remove/update in activeOrders
+          setActiveOrders(prev => prev.map(o => (String(o.id) === String(order.id) || String(o.id) === `ord-${order.id}`) ? { ...o, status: 'cancelled', payment_status: 'refunded' } : o));
+
+          // 4. Update Shift sales & refunds
+          setShift(prev => ({
+            ...prev,
+            totalRefunds: prev.totalRefunds + orderTotal,
+            totalSales: Math.max(0, prev.totalSales - orderTotal),
+            cashSales: prev.cashSales >= orderTotal ? prev.cashSales - orderTotal : prev.cashSales,
+            ordersCount: Math.max(0, prev.ordersCount - 1)
+          }));
+
+          // 5. Restore product stock & recipe ingredients
+          if (order.items && Array.isArray(order.items)) {
+            order.items.forEach(it => {
+              const pid = it.id || (it as any).product_id || (it as any).menuItemId;
+              if (pid) {
+                updateProductStock(selectedRestaurant.id, {
+                  productId: pid,
+                  productName: it.name,
+                  delta: it.quantity || 1,
+                  type: 'adjustment',
+                  reason: `مرتجع طلب ${isDelivery ? 'دليفري ' : ''}#${displayNum}`,
+                  performedBy: shift.cashierName || 'كاشير'
+                }).catch(() => {});
+              }
+            });
+
+            restoreOrderRecipeStock(
+              selectedRestaurant.id,
+              order.items.map(it => ({
+                id: it.id || (it as any).product_id || (it as any).menuItemId,
+                name: it.name,
+                quantity: it.quantity || 1
+              })),
+              String(displayNum),
+              shift.cashierName || 'كاشير'
+            ).catch(() => {});
+          }
+
+          addAuditLog('refund_order', `مرتجع طلب ${isDelivery ? 'دليفري ' : ''}#${displayNum} بقيمة ${orderTotal} ج.م`);
+          alert(`تم إتمام مرتجع الطلب #${displayNum} بنجاح وإعادة المواد للمخزون!`);
+        } catch (e: any) {
+          alert('فشل في إتمام المرتجع: ' + (e?.message || 'خطأ غير معروف'));
+        }
+      }
+    });
   };
 
   const handleCancelCustomerOrder = async (order: LiveOrder) => {
@@ -3680,6 +3752,15 @@ export const CashierPOS: React.FC = () => {
                                 <Check size={13} />
                                 <span>إنهاء وتسليم الطلب</span>
                               </button>
+                            ) : (ord.status === 'completed' || ord.status === 'delivered') ? (
+                              <button
+                                onClick={() => handleRefundCustomerOrder(ord)}
+                                className="px-2.5 py-1.5 bg-rose-600 hover:bg-rose-700 text-white rounded-xl text-xs font-black flex items-center justify-center gap-1 transition-all cursor-pointer shadow-sm"
+                                title="إرجاع ومرتجع الطلب واستعادة المخزون والمبيعات"
+                              >
+                                <RotateCcw size={13} />
+                                <span>مرتجع {ord.order_type === 'delivery' ? 'دليفري' : 'الطلب'}</span>
+                              </button>
                             ) : (
                               <button
                                 onClick={() => handleLoadCustomerOrderToCart(ord)}
@@ -4053,6 +4134,15 @@ export const CashierPOS: React.FC = () => {
                             >
                               <Check size={14} />
                               <span>✅ إنهاء وتسليم الطلب</span>
+                            </button>
+                          ) : (ord.status === 'completed' || ord.status === 'delivered') ? (
+                            <button
+                              onClick={() => handleRefundCustomerOrder(ord)}
+                              className="col-span-2 py-2 bg-rose-600 hover:bg-rose-700 text-white rounded-xl text-xs font-black flex items-center justify-center gap-1 shadow cursor-pointer transition-all"
+                              title="إرجاع ومرتجع الطلب واستعادة المخزون والمبيعات"
+                            >
+                              <RotateCcw size={14} />
+                              <span>↩️ مرتجع {ord.order_type === 'delivery' ? 'دليفري' : 'الطلب'}</span>
                             </button>
                           ) : null}
 

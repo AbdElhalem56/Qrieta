@@ -61,6 +61,8 @@ export interface RecipeVariant {
 export interface ProductRecipe {
   product_id: string;
   restaurant_id: string;
+  product_name_ar?: string;
+  product_name_en?: string;
   ingredients: RecipeIngredient[]; // Base / default recipe
   variants?: RecipeVariant[]; // Option-specific recipes (e.g. سادة, زيادة, دبل, إلخ)
   updated_at?: string;
@@ -962,6 +964,10 @@ export function getMatchingRecipeIngredients(recipe: ProductRecipe | undefined, 
         optionKeywords.push(opt.name.toLowerCase().trim());
       } else if (opt && typeof opt.name_ar === 'string') {
         optionKeywords.push(opt.name_ar.toLowerCase().trim());
+      } else if (opt && typeof opt.choiceName === 'string') {
+        optionKeywords.push(opt.choiceName.toLowerCase().trim());
+      } else if (opt && typeof opt.optionName === 'string') {
+        optionKeywords.push(opt.optionName.toLowerCase().trim());
       }
     });
   }
@@ -1045,7 +1051,14 @@ export async function deductOrderRecipeStock(
 
     if (!productId) return;
 
-    const recipe = state.recipes[productId];
+    let recipe = state.recipes[productId];
+    if (!recipe && item.name) {
+      recipe = Object.values(state.recipes).find(r =>
+        (r.product_id && String(r.product_id) === String(productId)) ||
+        (r.product_name_ar && (item.name.includes(r.product_name_ar) || r.product_name_ar.includes(item.name))) ||
+        (r.product_name_en && item.name.toLowerCase().includes(r.product_name_en.toLowerCase()))
+      );
+    }
     if (recipe) {
       const ingredientsToDeduct = getMatchingRecipeIngredients(recipe, item);
       if (ingredientsToDeduct && ingredientsToDeduct.length > 0) {
@@ -1096,6 +1109,19 @@ export async function deductOrderRecipeStock(
 
   // Sync to server
   try {
+    await fetch('/api/inventory/recipes-deduct', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        restaurant_id: restaurantId,
+        items,
+        orderRef,
+        cashierName: cashierOrActor
+      })
+    });
+  } catch (e) {}
+
+  try {
     await fetch('/api/inventory/recipes-data', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -1138,7 +1164,14 @@ export async function restoreOrderRecipeStock(
     const orderQty = Math.max(1, item.quantity || 1);
     if (!productId) return;
 
-    const recipe = state.recipes[productId];
+    let recipe = state.recipes[productId];
+    if (!recipe && item.name) {
+      recipe = Object.values(state.recipes).find(r =>
+        (r.product_id && String(r.product_id) === String(productId)) ||
+        (r.product_name_ar && (item.name.includes(r.product_name_ar) || r.product_name_ar.includes(item.name))) ||
+        (r.product_name_en && item.name.toLowerCase().includes(r.product_name_en.toLowerCase()))
+      );
+    }
     if (recipe) {
       const ingredientsToRestore = getMatchingRecipeIngredients(recipe, item);
       if (ingredientsToRestore && ingredientsToRestore.length > 0) {
@@ -1164,7 +1197,7 @@ export async function restoreOrderRecipeStock(
               new_stock: next,
               unit: mat.unit,
               order_id: orderRef,
-              reason: `استرجاع ريسبي (إلغاء طلب #${orderRef}): ${item.name} x ${orderQty}`,
+              reason: `استرجاع ريسبي (إلغاء/مرتجع طلب #${orderRef}): ${item.name} x ${orderQty}`,
               performed_by: cashierOrActor,
               timestamp: now
             });
@@ -1179,6 +1212,19 @@ export async function restoreOrderRecipeStock(
   }
 
   localStorage.setItem(getLocalKey(restaurantId), JSON.stringify(state));
+
+  try {
+    await fetch('/api/inventory/recipes-restore', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        restaurant_id: restaurantId,
+        items,
+        orderRef,
+        cashierName: cashierOrActor
+      })
+    });
+  } catch (e) {}
 
   try {
     await fetch('/api/inventory/recipes-data', {
