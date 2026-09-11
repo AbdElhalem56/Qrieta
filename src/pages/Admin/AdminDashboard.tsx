@@ -127,8 +127,6 @@ export default function AdminDashboard() {
   const [newCatOptions, setNewCatOptions] = useState<CategoryOption[]>([]);
   const [editingCategoryOptions, setEditingCategoryOptions] = useState<CategoryOption[]>([]);
   const [restaurant, setRestaurant] = useState<any>(null);
-  const [availableRestaurants, setAvailableRestaurants] = useState<any[]>([]);
-  const [isMultiCafeSelectorOpen, setIsMultiCafeSelectorOpen] = useState(false);
   const [isSavingColors, setIsSavingColors] = useState(false);
   const [deleteModalItem, setDeleteModalItem] = useState<{ type: 'product' | 'category'; id: string; name: string } | null>(null);
   const [isDeleting, setIsDeleting] = useState(false);
@@ -143,8 +141,6 @@ export default function AdminDashboard() {
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   const [copySuccess, setCopySuccess] = useState(false);
   const [copiedDeliveryLink, setCopiedDeliveryLink] = useState(false);
-  const [menuSearchTerm, setMenuSearchTerm] = useState('');
-  const [menuCategoryFilter, setMenuCategoryFilter] = useState('all');
 
   // Delivery Zones State
   const [deliveryZones, setDeliveryZones] = useState<DeliveryZone[]>([]);
@@ -343,31 +339,15 @@ export default function AdminDashboard() {
         (so.daily_order_number && o.daily_order_number && Number(so.daily_order_number) === Number(o.daily_order_number))
       );
 
-      // Resolve Order Type
-      let orderType: 'dine_in' | 'delivery' | 'takeaway' = 'dine_in';
-      if (live?.order_type) {
-        orderType = live.order_type;
-      } else if (matchingShiftOrder?.order_type) {
-        orderType = matchingShiftOrder.order_type;
-      } else if (noteText.includes('دليفري') || noteText.includes('توصيل')) {
-        orderType = 'delivery';
-      } else if (noteText.includes('سفري') || noteText.includes('تيك أواي') || noteText.includes('takeaway')) {
-        orderType = 'takeaway';
-      } else if (o.tables || o.table_id) {
-        orderType = 'dine_in';
-      }
-
       // Resolve Cashier Name
       const cashierMatch = noteText.match(/كاشير:\s*([^|\]]+)/);
-      let rawCashier = live?.cashier_name || 
-                       (o as any).cashier_name || 
-                       (cashierMatch ? cashierMatch[1].trim() : null) ||
-                       matchingShiftOrder?.cashier_name;
+      let cashierName = live?.cashier_name || 
+                        (o as any).cashier_name || 
+                        (cashierMatch ? cashierMatch[1].trim() : null) ||
+                        matchingShiftOrder?.cashier_name;
 
-      let cashierName = rawCashier;
-      if (!cashierName || cashierName.includes('تطبيق الزبائن')) {
-        // For delivery orders or whenever branch cashier is needed, display responsible cashier
-        cashierName = (orderType === 'delivery' || !isCustomerApp) ? fallbackCashier : (rawCashier || fallbackCashier || 'كاشير 1');
+      if (!cashierName) {
+        cashierName = isCustomerApp ? 'تطبيق الزبائن (أونلاين)' : fallbackCashier;
       }
 
       // Resolve Payment Method
@@ -385,6 +365,20 @@ export default function AdminDashboard() {
         } else {
           paymentMethod = 'cash';
         }
+      }
+
+      // Resolve Order Type
+      let orderType: 'dine_in' | 'delivery' | 'takeaway' = 'dine_in';
+      if (live?.order_type) {
+        orderType = live.order_type;
+      } else if (matchingShiftOrder?.order_type) {
+        orderType = matchingShiftOrder.order_type;
+      } else if (noteText.includes('دليفري') || noteText.includes('توصيل')) {
+        orderType = 'delivery';
+      } else if (noteText.includes('سفري') || noteText.includes('تيك أواي') || noteText.includes('takeaway')) {
+        orderType = 'takeaway';
+      } else if (o.tables || o.table_id) {
+        orderType = 'dine_in';
       }
 
       // Resolve Table Number
@@ -420,11 +414,7 @@ export default function AdminDashboard() {
         const noteText = lo.notes || '';
         const isCustomerApp = lo.source === 'customer_app' || Boolean(noteText.includes('طلب زبون') || noteText.includes('تطبيق الزبائن'));
         const cashierMatch = noteText.match(/كاشير:\s*([^|\]]+)/);
-        const isDelivery = lo.order_type === 'delivery';
-        let cashierName = lo.cashier_name || (cashierMatch ? cashierMatch[1].trim() : null);
-        if (!cashierName || cashierName.includes('تطبيق الزبائن')) {
-          cashierName = (isDelivery || !isCustomerApp) ? fallbackCashier : (cashierName || fallbackCashier || 'كاشير 1');
-        }
+        const cashierName = lo.cashier_name || (cashierMatch ? cashierMatch[1].trim() : (isCustomerApp ? 'تطبيق الزبائن (أونلاين)' : fallbackCashier));
 
         let payMethod = lo.payment_method;
         if (!payMethod) {
@@ -508,17 +498,6 @@ export default function AdminDashboard() {
     return list;
   }, [orders, adminLiveOrders, ordersSourceFilter, ordersTypeFilter, ordersStatusFilter, ordersSearchTerm, restaurant]);
 
-  // Filtered products for Menu Items tab
-  const filteredProducts = useMemo(() => {
-    return products.filter(p => {
-      const matchCat = menuCategoryFilter === 'all' || p.category_id === menuCategoryFilter;
-      const matchSearch = !menuSearchTerm.trim() || 
-        (p.name_ar && p.name_ar.toLowerCase().includes(menuSearchTerm.toLowerCase())) ||
-        (p.name_en && p.name_en.toLowerCase().includes(menuSearchTerm.toLowerCase()));
-      return matchCat && matchSearch;
-    });
-  }, [products, menuSearchTerm, menuCategoryFilter]);
-
   const handleSaveCashierPin = (e?: React.FormEvent) => {
     if (e) e.preventDefault();
     if (!restaurant?.id) return;
@@ -567,18 +546,7 @@ export default function AdminDashboard() {
 
   useEffect(() => {
     const initData = async () => {
-      // Fetch all cafes in system for multi-branch switching
-      const { data: allRests } = await supabase.from('restaurants').select('*').order('name');
-      if (allRests && allRests.length > 0) {
-        setAvailableRestaurants(allRests);
-      }
-
-      const savedResId = localStorage.getItem('admin_selected_restaurant_id');
-      let resId = savedResId || profile?.restaurant_id;
-      if (!resId || (allRests && allRests.length > 0 && !allRests.some((r: any) => r.id === resId))) {
-        resId = allRests?.[0]?.id || profile?.restaurant_id;
-      }
-
+      const resId = profile?.restaurant_id;
       if (resId) {
         fetchData(resId);
         fetchStaff(resId);
@@ -590,16 +558,6 @@ export default function AdminDashboard() {
 
     initData();
   }, [profile, selectedDate, analyticsMode]);
-
-  const handleSwitchRestaurant = (newResId: string) => {
-    localStorage.setItem('admin_selected_restaurant_id', newResId);
-    setIsMultiCafeSelectorOpen(false);
-    fetchData(newResId);
-    fetchStaff(newResId);
-    fetchRestaurant(newResId);
-    fetchTables(newResId);
-    fetchDeliveryZones(newResId);
-  };
 
   const fetchDeliveryZones = async (resId?: string) => {
     const targetId = resId || profile?.restaurant_id || restaurant?.id;
@@ -1269,7 +1227,6 @@ export default function AdminDashboard() {
 
     const payload = {
       ...editingProduct,
-      options: editingProductOptions,
       restaurant_id: profile.restaurant_id,
     };
 
@@ -1530,48 +1487,46 @@ export default function AdminDashboard() {
           <span className="font-black text-xl italic tracking-tighter">Qrieta</span>
         </div>
 
-        <nav className="flex-grow space-y-1.5 mt-4 md:mt-0">
+        <nav className="flex-grow space-y-2 mt-4 md:mt-0">
           <a
             href={restaurant?.id ? `/pos?restaurant_id=${restaurant.id}&restaurant_slug=${restaurant.slug}` : '/pos'}
             target="_blank"
             rel="noreferrer"
-            className="w-full flex items-center justify-between px-3.5 py-2.5 rounded-xl transition-all text-right bg-slate-900 hover:bg-slate-800 text-white font-black shadow-xs mb-3 group border border-slate-800"
+            className="w-full flex items-center justify-between px-4 py-3 rounded-xl transition-all text-right bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 text-white font-black shadow-md shadow-blue-500/20 mb-3 group"
           >
-            <div className="flex items-center gap-2.5">
-              <span className="w-7 h-7 rounded-lg bg-amber-500/20 text-amber-400 flex items-center justify-center">
-                <MonitorCheck size={16} />
-              </span>
-              <span className="text-xs">شاشة الكاشير (POS)</span>
+            <div className="flex items-center gap-3">
+              <MonitorCheck size={20} className="text-blue-200" />
+              <span>شاشة الكاشير (POS)</span>
             </div>
-            <ExternalLink size={13} className="text-slate-400 group-hover:text-white transition-colors" />
+            <ExternalLink size={14} className="opacity-70 group-hover:opacity-100 transition-opacity" />
           </a>
 
           <button 
             onClick={() => { setActiveTab('categories'); setIsMobileMenuOpen(false); }}
-            className={cn("w-full flex items-center gap-3 px-3.5 py-2.5 rounded-xl transition-all text-right text-xs", activeTab === 'categories' ? "bg-amber-500 text-white font-black shadow-xs shadow-amber-500/25" : "text-slate-600 hover:text-slate-900 hover:bg-slate-100 font-bold")}
+            className={cn("w-full flex items-center gap-3 px-4 py-3 rounded-xl transition-all text-right", activeTab === 'categories' ? "bg-orange-500 text-white font-bold shadow-lg" : "text-gray-500 hover:bg-gray-100")}
           >
-            <Tags size={18} />
+            <Tags size={20} />
             <span>التصنيفات</span>
           </button>
           <button 
             onClick={() => { setActiveTab('menu'); setIsMobileMenuOpen(false); }}
-            className={cn("w-full flex items-center gap-3 px-3.5 py-2.5 rounded-xl transition-all text-right text-xs", activeTab === 'menu' ? "bg-amber-500 text-white font-black shadow-xs shadow-amber-500/25" : "text-slate-600 hover:text-slate-900 hover:bg-slate-100 font-bold")}
+            className={cn("w-full flex items-center gap-3 px-4 py-3 rounded-xl transition-all text-right", activeTab === 'menu' ? "bg-orange-500 text-white font-bold shadow-lg" : "text-gray-500 hover:bg-gray-100")}
           >
-            <Package size={18} />
+            <Package size={20} />
             <span>قائمة الطعام</span>
           </button>
           <button 
             onClick={() => { setActiveTab('tables_qr'); setIsMobileMenuOpen(false); }}
-            className={cn("w-full flex items-center gap-3 px-3.5 py-2.5 rounded-xl transition-all text-right text-xs", activeTab === 'tables_qr' ? "bg-amber-500 text-white font-black shadow-xs shadow-amber-500/25" : "text-slate-600 hover:text-slate-900 hover:bg-slate-100 font-bold")}
+            className={cn("w-full flex items-center gap-3 px-4 py-3 rounded-xl transition-all text-right", activeTab === 'tables_qr' ? "bg-orange-500 text-white font-bold shadow-lg" : "text-gray-500 hover:bg-gray-100")}
           >
-            <QrCode size={18} />
+            <QrCode size={20} />
             <span>QR Code الطاولات</span>
           </button>
           <button 
             onClick={() => { setActiveTab('orders'); setIsMobileMenuOpen(false); }}
-            className={cn("w-full flex items-center gap-3 px-3.5 py-2.5 rounded-xl transition-all text-right text-xs", activeTab === 'orders' ? "bg-amber-500 text-white font-black shadow-xs shadow-amber-500/25" : "text-slate-600 hover:text-slate-900 hover:bg-slate-100 font-bold")}
+            className={cn("w-full flex items-center gap-3 px-4 py-3 rounded-xl transition-all text-right", activeTab === 'orders' ? "bg-orange-500 text-white font-bold shadow-lg" : "text-gray-500 hover:bg-gray-100")}
           >
-            <History size={18} />
+            <History size={20} />
             <span>سجل الطلبات</span>
             {adminLiveOrders.filter(o => o.status === 'new').length > 0 && (
               <span className="w-5 h-5 rounded-full bg-rose-500 text-white font-mono font-bold text-[10px] flex items-center justify-center mr-auto animate-pulse">
@@ -1581,54 +1536,54 @@ export default function AdminDashboard() {
           </button>
           <button 
             onClick={() => { setActiveTab('shifts'); setIsMobileMenuOpen(false); }}
-            className={cn("w-full flex items-center gap-3 px-3.5 py-2.5 rounded-xl transition-all text-right text-xs", activeTab === 'shifts' ? "bg-amber-500 text-white font-black shadow-xs shadow-amber-500/25" : "text-slate-600 hover:text-slate-900 hover:bg-slate-100 font-bold")}
+            className={cn("w-full flex items-center gap-3 px-4 py-3 rounded-xl transition-all text-right", activeTab === 'shifts' ? "bg-orange-500 text-white font-bold shadow-lg" : "text-gray-500 hover:bg-gray-100")}
           >
-            <Clock size={18} />
+            <Clock size={20} />
             <span>الورديات وتقارير X/Z</span>
           </button>
           <button 
             onClick={() => { setActiveTab('inventory'); setIsMobileMenuOpen(false); }}
-            className={cn("w-full flex items-center gap-3 px-3.5 py-2.5 rounded-xl transition-all text-right text-xs", activeTab === 'inventory' ? "bg-amber-500 text-white font-black shadow-xs shadow-amber-500/25" : "text-slate-600 hover:text-slate-900 hover:bg-slate-100 font-bold")}
+            className={cn("w-full flex items-center gap-3 px-4 py-3 rounded-xl transition-all text-right", activeTab === 'inventory' ? "bg-orange-500 text-white font-bold shadow-lg" : "text-gray-500 hover:bg-gray-100")}
           >
-            <Boxes size={18} />
+            <Boxes size={20} />
             <span>المخزون والـ Recipe 🥩</span>
           </button>
           <button 
             onClick={() => { setActiveTab('staff'); setIsMobileMenuOpen(false); }}
-            className={cn("w-full flex items-center gap-3 px-3.5 py-2.5 rounded-xl transition-all text-right text-xs", activeTab === 'staff' ? "bg-amber-500 text-white font-black shadow-xs shadow-amber-500/25" : "text-slate-600 hover:text-slate-900 hover:bg-slate-100 font-bold")}
+            className={cn("w-full flex items-center gap-3 px-4 py-3 rounded-xl transition-all text-right", activeTab === 'staff' ? "bg-orange-500 text-white font-bold shadow-lg" : "text-gray-500 hover:bg-gray-100")}
           >
-            <Users size={18} />
+            <Users size={20} />
             <span>طاقم العمل</span>
           </button>
           <button 
             onClick={() => { setActiveTab('analytics'); setIsMobileMenuOpen(false); }}
-            className={cn("w-full flex items-center gap-3 px-3.5 py-2.5 rounded-xl transition-all text-right text-xs", activeTab === 'analytics' ? "bg-amber-500 text-white font-black shadow-xs shadow-amber-500/25" : "text-slate-600 hover:text-slate-900 hover:bg-slate-100 font-bold")}
+            className={cn("w-full flex items-center gap-3 px-4 py-3 rounded-xl transition-all text-right", activeTab === 'analytics' ? "bg-orange-500 text-white font-bold shadow-lg" : "text-gray-500 hover:bg-gray-100")}
           >
-            <BarChart3 size={18} />
+            <BarChart3 size={20} />
             <span>الإحصائيات</span>
           </button>
           <button 
             onClick={() => { setActiveTab('settings'); setIsMobileMenuOpen(false); }}
-            className={cn("w-full flex items-center gap-3 px-3.5 py-2.5 rounded-xl transition-all text-right text-xs", activeTab === 'settings' ? "bg-amber-500 text-white font-black shadow-xs shadow-amber-500/25" : "text-slate-600 hover:text-slate-900 hover:bg-slate-100 font-bold")}
+            className={cn("w-full flex items-center gap-3 px-4 py-3 rounded-xl transition-all text-right", activeTab === 'settings' ? "bg-orange-500 text-white font-bold shadow-lg" : "text-gray-500 hover:bg-gray-100")}
           >
-            <Settings size={18} />
+            <Settings size={20} />
             <span>الإعدادات</span>
           </button>
           <button 
             onClick={() => { setActiveTab('support'); setIsMobileMenuOpen(false); }}
-            className={cn("w-full flex items-center gap-3 px-3.5 py-2.5 rounded-xl transition-all text-right text-xs", activeTab === 'support' ? "bg-amber-500 text-white font-black shadow-xs shadow-amber-500/25" : "text-slate-600 hover:text-slate-900 hover:bg-slate-100 font-bold")}
+            className={cn("w-full flex items-center gap-3 px-4 py-3 rounded-xl transition-all text-right", activeTab === 'support' ? "bg-orange-500 text-white font-bold shadow-lg" : "text-gray-500 hover:bg-gray-100")}
           >
-            <Headphones size={18} />
+            <Headphones size={20} />
             <span>مشاكل متعلقة بالسيستم</span>
           </button>
         </nav>
 
-        <div className="pt-4 mt-auto border-t border-slate-200/80">
+        <div className="pt-4 mt-auto border-t">
           <button 
             onClick={() => signOut()}
-            className="w-full flex items-center gap-3 px-3.5 py-2.5 rounded-xl transition-all text-right text-xs text-rose-600 hover:bg-rose-50 font-bold"
+            className="w-full flex items-center gap-3 px-4 py-3 rounded-xl transition-all text-right text-red-600 hover:bg-red-50 font-bold"
           >
-            <LogOut size={18} />
+            <LogOut size={20} />
             <span>تسجيل الخروج</span>
           </button>
         </div>
@@ -1639,73 +1594,32 @@ export default function AdminDashboard() {
           {/* Header */}
           <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-8">
             <div>
-              <div className="flex flex-wrap items-center gap-3 mb-1">
-                <h2 className="text-2xl md:text-3xl font-black text-slate-900 capitalize italic">
-                  {activeTab === 'menu' ? 'المنتجات' : 
-                   activeTab === 'categories' ? 'التصنيفات' : 
-                   activeTab === 'tables_qr' ? 'رموز QR للطاولات' :
-                   activeTab === 'shifts' ? 'ورديات الكاشير وتقارير الإغلاق X/Z' :
-                   activeTab === 'staff' ? 'الموظفين' : 
-                   activeTab === 'orders' ? 'سجل الطلبات الحية والتاريخية' : 
-                   activeTab === 'inventory' ? 'إدارة المخزون وتكلفة المواد' :
-                   activeTab === 'settings' ? 'إعدادات المطعم' : 
-                   activeTab === 'support' ? 'مشاكل متعلقة بالسيستم' : 'التحليلات'}
-                </h2>
-
-                {/* Multi-Branch Switcher Dropdown */}
-                {availableRestaurants.length > 1 ? (
-                  <div className="relative">
-                    <button
-                      type="button"
-                      onClick={() => setIsMultiCafeSelectorOpen(!isMultiCafeSelectorOpen)}
-                      className="flex items-center gap-2 px-3 py-1.5 bg-white border border-slate-200/90 hover:border-slate-300 rounded-xl text-xs font-bold text-slate-700 shadow-2xs hover:bg-slate-50 transition-all cursor-pointer"
-                    >
-                      <Store size={14} className="text-amber-600" />
-                      <span>{restaurant?.name || 'اختر الفرع'}</span>
-                      <ChevronDown size={14} className={cn("text-slate-400 transition-transform", isMultiCafeSelectorOpen ? "rotate-180" : "")} />
-                    </button>
-
-                    {isMultiCafeSelectorOpen && (
-                      <div className="absolute right-0 top-full mt-1.5 w-56 bg-white border border-slate-200 rounded-xl shadow-lg p-1.5 z-50 text-right space-y-1 animate-in fade-in zoom-in-95">
-                        <div className="px-2.5 py-1 text-[10px] font-black text-slate-400 uppercase tracking-wider">
-                          تبديل الفرع / المطعم
-                        </div>
-                        {availableRestaurants.map(r => (
-                          <button
-                            key={r.id}
-                            type="button"
-                            onClick={() => handleSwitchRestaurant(r.id)}
-                            className={cn(
-                              "w-full flex items-center justify-between px-3 py-2 rounded-lg text-xs font-bold transition-all text-right cursor-pointer",
-                              r.id === restaurant?.id 
-                                ? "bg-amber-50 text-amber-900 font-black border border-amber-200/60" 
-                                : "text-slate-600 hover:bg-slate-100 hover:text-slate-900"
-                            )}
-                          >
-                            <span>{r.name}</span>
-                            {r.id === restaurant?.id && <span className="text-amber-600 text-xs">✓</span>}
-                          </button>
-                        ))}
-                      </div>
-                    )}
-                  </div>
-                ) : restaurant?.name ? (
-                  <span className="inline-flex items-center gap-1.5 px-3 py-1 bg-amber-50 border border-amber-200/70 text-amber-900 rounded-xl text-xs font-black">
-                    <Store size={13} className="text-amber-600" />
-                    <span>{restaurant.name}</span>
-                  </span>
-                ) : null}
-              </div>
+              <h2 className="text-2xl md:text-3xl font-black text-gray-900 capitalize italic mb-1">
+                {activeTab === 'menu' ? 'المنتجات' : 
+                 activeTab === 'categories' ? 'التصنيفات' : 
+                 activeTab === 'tables_qr' ? 'رموز QR للطاولات' :
+                 activeTab === 'shifts' ? 'ورديات الكاشير وتقارير الإغلاق X/Z' :
+                 activeTab === 'staff' ? 'الموظفين' : 
+                 activeTab === 'orders' ? 'سجل الطلبات الحية والتاريخية' : 
+                 activeTab === 'inventory' ? 'إدارة المخزون وتكلفة المواد' :
+                 activeTab === 'settings' ? 'إعدادات المطعم' : 
+                 activeTab === 'support' ? 'مشاكل متعلقة بالسيستم' : 'التحليلات'}
+              </h2>
+              {restaurant?.name && (
+                <p className="text-xs text-gray-500 font-bold flex items-center gap-1.5">
+                  <span className="text-gray-800 font-black">{restaurant.name}</span>
+                </p>
+              )}
             </div>
 
             <div className="flex flex-wrap items-center gap-3">
               {activeTab === 'menu' && (
                 <button 
                   onClick={openAddProductModal}
-                  className="bg-slate-900 hover:bg-slate-800 text-white px-4 py-2.5 rounded-xl font-bold flex items-center justify-center gap-2 transition-all shadow-xs cursor-pointer text-xs"
+                  className="bg-gray-900 text-white px-5 py-2.5 rounded-2xl font-bold flex items-center justify-center gap-2 hover:bg-gray-800 transition-all shadow-md cursor-pointer text-xs"
                 >
                   <Plus size={16} />
-                  <span>إضافة منتج جديد</span>
+                  <span>إضافة منتج</span>
                 </button>
               )}
             </div>
@@ -1714,46 +1628,46 @@ export default function AdminDashboard() {
           {/* Analytics View */}
           {activeTab === 'analytics' && (
             <div className="grid gap-6">
-              <div className="bg-white p-5 rounded-2xl border border-slate-200/80 shadow-2xs flex flex-col md:flex-row items-center justify-between gap-4">
-                <div className="flex gap-1.5 bg-slate-100 p-1.5 rounded-xl w-full md:w-auto">
+              <div className="bg-white p-6 rounded-3xl border shadow-sm flex flex-col md:flex-row items-center justify-between gap-4">
+                <div className="flex gap-2 bg-gray-100 p-1 rounded-2xl w-full md:w-auto">
                   <button 
                     onClick={() => setAnalyticsMode('daily')}
-                    className={cn("flex-grow md:flex-none px-5 py-2 rounded-lg font-bold text-xs transition-all cursor-pointer", analyticsMode === 'daily' ? "bg-slate-900 shadow-xs text-white" : "text-slate-600 hover:text-slate-900")}
+                    className={cn("flex-grow md:flex-none px-6 py-2 rounded-xl font-bold transition-all", analyticsMode === 'daily' ? "bg-white shadow-sm text-orange-600" : "text-gray-500")}
                   >
                     يومي
                   </button>
                   <button 
                     onClick={() => setAnalyticsMode('weekly')}
-                    className={cn("flex-grow md:flex-none px-5 py-2 rounded-lg font-bold text-xs transition-all cursor-pointer", analyticsMode === 'weekly' ? "bg-slate-900 shadow-xs text-white" : "text-slate-600 hover:text-slate-900")}
+                    className={cn("flex-grow md:flex-none px-6 py-2 rounded-xl font-bold transition-all", analyticsMode === 'weekly' ? "bg-white shadow-sm text-orange-600" : "text-gray-500")}
                   >
                     أسبوعي
                   </button>
                   <button 
                     onClick={() => setAnalyticsMode('monthly')}
-                    className={cn("flex-grow md:flex-none px-5 py-2 rounded-lg font-bold text-xs transition-all cursor-pointer", analyticsMode === 'monthly' ? "bg-slate-900 shadow-xs text-white" : "text-slate-600 hover:text-slate-900")}
+                    className={cn("flex-grow md:flex-none px-6 py-2 rounded-xl font-bold transition-all", analyticsMode === 'monthly' ? "bg-white shadow-sm text text-orange-600" : "text-gray-500")}
                   >
                     شهري
                   </button>
                 </div>
-                <div className="flex items-center gap-3 w-full md:w-auto">
-                  <span className="font-bold text-xs text-slate-500">التاريخ:</span>
+                <div className="flex items-center gap-4 w-full md:w-auto">
+                  <span className="font-bold text-gray-400">التاريخ:</span>
                   <input 
                     type={analyticsMode === 'monthly' ? "month" : "date"}
                     value={analyticsMode === 'monthly' ? selectedDate.substring(0, 7) : selectedDate}
                     onChange={(e) => setSelectedDate(e.target.value)}
-                    className="flex-grow md:flex-none bg-slate-50 border border-slate-200 px-4 py-2 rounded-xl outline-none font-bold text-xs text-slate-800 focus:border-amber-500"
+                    className="flex-grow md:flex-none bg-gray-50 border px-6 py-2 rounded-2xl outline-none font-bold"
                   />
                 </div>
               </div>
 
               {analyticsMode === 'weekly' && (
-                <div className="bg-amber-50/70 border border-amber-200/80 p-4 rounded-2xl flex items-center gap-3 animate-in fade-in slide-in-from-top-2">
-                  <div className="w-10 h-10 bg-amber-500 rounded-xl flex items-center justify-center text-white shadow-xs">
+                <div className="bg-orange-50 border border-orange-100 p-4 rounded-2xl flex items-center gap-3 animate-in fade-in slide-in-from-top-2">
+                  <div className="w-10 h-10 bg-orange-500 rounded-xl flex items-center justify-center text-white shadow-sm">
                     <Calendar size={20} />
                   </div>
                   <div>
-                    <p className="text-[10px] font-black text-amber-800/80 uppercase tracking-widest mb-0.5">النطاق الزمني الأسبوعي (السبت - الجمعة)</p>
-                    <p className="text-sm font-black text-amber-900">
+                    <p className="text-[10px] font-black text-orange-400 uppercase tracking-widest mb-0.5">النطاق الزمني الأسبوعي (السبت - الجمعة)</p>
+                    <p className="text-sm font-black text-orange-700">
                       {(() => {
                         const d = new Date(selectedDate);
                         const day = d.getDay();
@@ -1769,74 +1683,74 @@ export default function AdminDashboard() {
                 </div>
               )}
 
-              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-                <div className="bg-white p-5 rounded-2xl border border-slate-200/80 shadow-2xs text-right">
-                  <div className="flex items-center justify-between mb-3">
-                    <div className="p-2.5 bg-slate-100 text-slate-700 rounded-xl"><TrendingUp size={20} /></div>
-                    <span className="text-slate-500 font-bold uppercase tracking-wider text-[11px]">عدد الطلبات</span>
+              <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
+                <div className="bg-white p-6 rounded-3xl border shadow-sm text-right">
+                  <div className="flex items-center justify-between mb-4">
+                    <div className="p-3 bg-blue-50 text-blue-600 rounded-2xl"><TrendingUp /></div>
+                    <span className="text-gray-500 font-bold uppercase tracking-widest text-xs">عدد الطلبات</span>
                   </div>
-                  <p className="text-3xl font-black font-mono text-slate-900">{toEnglishDigits(orderCount)}</p>
+                  <p className="text-4xl font-black">{orderCount}</p>
                 </div>
-                <div className="bg-white p-5 rounded-2xl border border-slate-200/80 shadow-2xs text-right">
-                  <div className="flex items-center justify-between mb-3">
-                    <div className="p-2.5 bg-amber-50 text-amber-700 rounded-xl"><Package size={20} /></div>
-                    <span className="text-slate-500 font-bold uppercase tracking-wider text-[11px]">الأصناف المباعة</span>
+                <div className="bg-white p-6 rounded-3xl border shadow-sm text-right">
+                  <div className="flex items-center justify-between mb-4">
+                    <div className="p-3 bg-green-50 text-green-600 rounded-2xl"><Package /></div>
+                    <span className="text-gray-500 font-bold uppercase tracking-widest text-xs">الأصناف المباعة</span>
                   </div>
-                  <p className="text-3xl font-black font-mono text-slate-900">{toEnglishDigits(itemSoldCount)}</p>
+                  <p className="text-4xl font-black">{itemSoldCount}</p>
                 </div>
-                <div className="bg-white p-5 rounded-2xl border border-slate-200/80 shadow-2xs text-right">
-                  <div className="flex items-center justify-between mb-3">
-                    <div className="p-2.5 bg-emerald-50 text-emerald-700 rounded-xl"><DollarSign size={20} /></div>
-                    <span className="text-slate-500 font-bold uppercase tracking-wider text-[11px]">الإيرادات</span>
+                <div className="bg-white p-6 rounded-3xl border shadow-sm text-right">
+                  <div className="flex items-center justify-between mb-4">
+                    <div className="p-3 bg-purple-50 text-purple-600 rounded-2xl"><DollarSign /></div>
+                    <span className="text-gray-500 font-bold uppercase tracking-widest text-xs">الإيرادات</span>
                   </div>
-                  <p className="text-3xl font-black font-mono text-slate-900">{formatCurrency(totalRevenue)}</p>
+                  <p className="text-4xl font-black">{formatCurrency(totalRevenue)}</p>
                 </div>
-                <div className="bg-white p-5 rounded-2xl border border-slate-200/80 shadow-2xs text-right">
-                  <div className="flex items-center justify-between mb-3">
-                    <div className="p-2.5 bg-slate-100 text-slate-700 rounded-xl"><Coffee size={20} /></div>
-                    <span className="text-slate-500 font-bold uppercase tracking-wider text-[11px]">الأصناف المتاحة</span>
+                <div className="bg-white p-6 rounded-3xl border shadow-sm text-right">
+                  <div className="flex items-center justify-between mb-4">
+                    <div className="p-3 bg-orange-50 text-orange-600 rounded-2xl"><Coffee /></div>
+                    <span className="text-gray-500 font-bold uppercase tracking-widest text-xs">الأصناف المتاحة</span>
                   </div>
-                  <p className="text-3xl font-black font-mono text-slate-900">{toEnglishDigits(products.length)}</p>
+                  <p className="text-4xl font-black">{products.length}</p>
                 </div>
               </div>
 
-              <div className="bg-white pt-6 pb-4 rounded-2xl border border-slate-200/80 shadow-2xs overflow-hidden">
-                <h3 className="text-base font-black text-slate-900 mb-6 px-6 text-right">تحليل الإيرادات اليومية</h3>
+              <div className="bg-white pt-8 pb-4 rounded-3xl border shadow-sm overflow-hidden">
+                <h3 className="text-xl font-bold mb-8 px-8 text-right">تحليل الإيرادات اليومية</h3>
                 <div className="h-80 w-full">
                   <ResponsiveContainer width="100%" height="100%">
                     <BarChart data={revenueData} margin={{ top: 0, right: 10, left: 30, bottom: 0 }}>
-                      <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
-                      <XAxis dataKey="name" axisLine={false} tickLine={false} tick={{ fontSize: 11, fill: '#64748b' }} />
-                      <YAxis axisLine={false} tickLine={false} width={60} tick={{ dx: -10, fontSize: 11, fill: '#64748b' }} />
-                      <Tooltip cursor={{fill: '#f59e0b10'}} contentStyle={{borderRadius: '12px', border: '1px solid #e2e8f0', boxShadow: '0 4px 12px rgba(0,0,0,0.06)'}} />
-                      <Bar dataKey="revenue" fill="#f59e0b" radius={[6, 6, 0, 0]} />
+                      <CartesianGrid strokeDasharray="3 3" vertical={false} />
+                      <XAxis dataKey="name" axisLine={false} tickLine={false} />
+                      <YAxis axisLine={false} tickLine={false} width={60} tick={{ dx: -10 }} />
+                      <Tooltip cursor={{fill: '#8b5cf610'}} contentStyle={{borderRadius: '16px', border: 'none', boxShadow: '0 4px 12px rgba(0,0,0,0.1)'}} />
+                      <Bar dataKey="revenue" fill="#8b5cf6" radius={[8, 8, 0, 0]} />
                     </BarChart>
                   </ResponsiveContainer>
                 </div>
               </div>
 
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                <div className="bg-white pt-6 pb-4 rounded-2xl border border-slate-200/80 shadow-2xs overflow-hidden">
-                  <h3 className="text-base font-black text-slate-900 mb-6 px-6 text-right">أكثر الأصناف طلباً</h3>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                <div className="bg-white pt-8 pb-4 rounded-3xl border shadow-sm overflow-hidden">
+                  <h3 className="text-xl font-bold mb-8 px-8 text-right">أكثر الأصناف طلباً</h3>
                   <div className="h-80 w-full">
                     <ResponsiveContainer width="100%" height="100%">
                       <BarChart data={analytics} margin={{ top: 0, right: 10, left: 30, bottom: 0 }}>
-                        <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
-                        <XAxis dataKey="name" axisLine={false} tickLine={false} tick={{ fontSize: 11, fill: '#64748b' }} />
-                        <YAxis axisLine={false} tickLine={false} width={60} tick={{ dx: -10, fontSize: 11, fill: '#64748b' }} />
-                        <Tooltip cursor={{fill: '#0f172a10'}} contentStyle={{borderRadius: '12px', border: '1px solid #e2e8f0', boxShadow: '0 4px 12px rgba(0,0,0,0.06)'}} />
-                        <Bar dataKey="value" fill="#0f172a" radius={[6, 6, 0, 0]} />
+                        <CartesianGrid strokeDasharray="3 3" vertical={false} />
+                        <XAxis dataKey="name" axisLine={false} tickLine={false} />
+                        <YAxis axisLine={false} tickLine={false} width={60} tick={{ dx: -10 }} />
+                        <Tooltip cursor={{fill: '#f9731610'}} contentStyle={{borderRadius: '16px', border: 'none', boxShadow: '0 4px 12px rgba(0,0,0,0.1)'}} />
+                        <Bar dataKey="value" fill="#f97316" radius={[8, 8, 0, 0]} />
                       </BarChart>
                     </ResponsiveContainer>
                   </div>
                 </div>
 
-                <div className="bg-white pt-6 pb-4 rounded-2xl border border-slate-200/80 shadow-2xs overflow-hidden">
-                  <h3 className="text-base font-black text-slate-900 mb-6 px-6 text-right">تحليل ساعات الذروة (عدد الطلبات)</h3>
+                <div className="bg-white pt-8 pb-4 rounded-3xl border shadow-sm overflow-hidden">
+                  <h3 className="text-xl font-bold mb-8 px-8 text-right">تحليل ساعات الذروة (عدد الطلبات)</h3>
                   <div className="h-80 w-full">
                     <ResponsiveContainer width="100%" height="100%">
                       <BarChart data={peakHoursData} margin={{ top: 0, right: 10, left: 30, bottom: 0 }}>
-                        <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
+                        <CartesianGrid strokeDasharray="3 3" vertical={false} />
                         <XAxis 
                           dataKey="hour" 
                           axisLine={false} 
@@ -1848,12 +1762,12 @@ export default function AdminDashboard() {
                             const displayHour = hour % 12 || 12;
                             return `${displayHour} ${period}`;
                           }}
-                          style={{ fontSize: '10px', fontWeight: 'bold', fill: '#64748b' }}
+                          style={{ fontSize: '10px', fontWeight: 'bold' }}
                         />
-                        <YAxis axisLine={false} tickLine={false} allowDecimals={false} width={60} tick={{ dx: -10, fontSize: 11, fill: '#64748b' }} />
+                        <YAxis axisLine={false} tickLine={false} allowDecimals={false} width={60} tick={{ dx: -10 }} />
                         <Tooltip 
-                          cursor={{fill: '#d9770610'}} 
-                          contentStyle={{borderRadius: '12px', border: '1px solid #e2e8f0', boxShadow: '0 4px 12px rgba(0,0,0,0.06)'}}
+                          cursor={{fill: '#3b82f610'}} 
+                          contentStyle={{borderRadius: '16px', border: 'none', boxShadow: '0 4px 12px rgba(0,0,0,0.1)'}}
                           labelFormatter={(value) => {
                             const hour = parseInt(value);
                             const period = hour >= 12 ? 'م' : 'ص';
@@ -1861,7 +1775,7 @@ export default function AdminDashboard() {
                             return `${displayHour}:00 ${period}`;
                           }}
                         />
-                        <Bar dataKey="count" fill="#d97706" radius={[6, 6, 0, 0]} />
+                        <Bar dataKey="count" fill="#3b82f6" radius={[4, 4, 0, 0]} />
                       </BarChart>
                     </ResponsiveContainer>
                   </div>
@@ -2017,25 +1931,25 @@ export default function AdminDashboard() {
               </div>
 
               {/* 📋 2. The Unified Orders Sheet (الشيت وسجل الطلبات المتكامل) */}
-              <div className="bg-white rounded-2xl p-6 border border-slate-200/80 shadow-2xs space-y-6">
+              <div className="bg-white rounded-[32px] p-6 md:p-8 border border-gray-100 shadow-xl space-y-6">
                 {/* Header with Title & Quick Export */}
-                <div className="flex flex-col lg:flex-row items-start lg:items-center justify-between gap-4 border-b border-slate-100 pb-5">
+                <div className="flex flex-col lg:flex-row items-start lg:items-center justify-between gap-4 border-b border-gray-100 pb-5">
                   <div className="flex items-center gap-3">
-                    <div className="w-11 h-11 rounded-xl bg-slate-900 text-amber-400 flex items-center justify-center shadow-xs">
-                      <History size={22} />
+                    <div className="w-12 h-12 rounded-2xl bg-gradient-to-br from-orange-500 to-amber-500 text-white flex items-center justify-center shadow-lg shadow-orange-500/25">
+                      <History size={24} />
                     </div>
                     <div>
                       <div className="flex items-center gap-2">
-                        <h3 className="text-lg font-black text-slate-900">شيت وسجل الطلبات المتكامل</h3>
+                        <h3 className="text-xl font-black text-gray-900">شيت وسجل الطلبات المتكامل</h3>
                         <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-emerald-50 text-emerald-700 border border-emerald-200 text-[11px] font-bold">
-                          <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
+                          <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
                           <span>بث وتحديث مباشر</span>
                         </span>
-                        <span className="text-xs text-slate-400 font-bold mr-1">
-                          ({toEnglishDigits(displayedSheetOrders.length)} طلب)
+                        <span className="text-xs text-gray-400 font-bold mr-1">
+                          ({displayedSheetOrders.length} طلب)
                         </span>
                       </div>
-                      <p className="text-xs text-slate-500 font-medium mt-0.5">
+                      <p className="text-xs text-gray-500 font-medium mt-0.5">
                         عرض جدولي متكامل لجميع الطلبات الصادرة من كاشير الفرع وتطبيق الزبائن مع إمكانية البحث والتصفية وتحديث الحالة فوراً
                       </p>
                     </div>
@@ -2046,7 +1960,7 @@ export default function AdminDashboard() {
                     <button
                       type="button"
                       onClick={handleExportCurrentSheet}
-                      className="flex-1 sm:flex-none px-3.5 py-2 bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border border-emerald-200 rounded-xl text-xs font-bold flex items-center justify-center gap-1.5 transition-colors cursor-pointer"
+                      className="flex-1 sm:flex-none px-4 py-2 bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border border-emerald-200 rounded-xl text-xs font-bold flex items-center justify-center gap-1.5 transition-colors cursor-pointer"
                       title="تصدير الشيت الحالي المفلتر المعروض على الشاشة فوراً"
                     >
                       <Download size={14} />
@@ -2062,7 +1976,7 @@ export default function AdminDashboard() {
                           fetchData();
                         }
                       }}
-                      className="flex-1 sm:flex-none px-3.5 py-2 bg-slate-50 hover:bg-slate-100 text-slate-700 rounded-xl border border-slate-200 text-xs font-bold flex items-center justify-center gap-1.5 transition-colors cursor-pointer"
+                      className="flex-1 sm:flex-none px-4 py-2 bg-gray-50 hover:bg-gray-100 text-gray-700 rounded-xl border border-gray-200 text-xs font-bold flex items-center justify-center gap-1.5 transition-colors cursor-pointer"
                     >
                       <RefreshCw size={14} className={isUpdatingOrderStatus ? "animate-spin" : ""} />
                       <span>تحديث فوري</span>
@@ -2072,71 +1986,79 @@ export default function AdminDashboard() {
 
                 {/* 📊 Compact KPI Stat Strip for the Sheet */}
                 <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
-                  <div className="bg-slate-50 border border-slate-200/70 p-3.5 rounded-xl">
-                    <span className="text-[10px] font-black text-slate-400 block mb-0.5">إجمالي الطلبات</span>
-                    <p className="text-xl font-black text-slate-900 font-mono">{toEnglishDigits(displayedSheetOrders.length)}</p>
-                    <span className="text-[10px] text-slate-500 font-medium">طلب مسجل</span>
+                  <div className="bg-gray-50 border border-gray-100 p-3.5 rounded-2xl">
+                    <span className="text-[10px] font-black text-gray-400 block mb-0.5">إجمالي الطلبات</span>
+                    <p className="text-xl font-black text-gray-900 font-mono">{displayedSheetOrders.length}</p>
+                    <span className="text-[10px] text-gray-400 font-medium">طلب مسجل</span>
                   </div>
 
-                  <div className="bg-emerald-50/70 border border-emerald-200/70 p-3.5 rounded-xl">
-                    <span className="text-[10px] font-black text-emerald-700 block mb-0.5">إجمالي المبيعات</span>
-                    <p className="text-lg font-black text-emerald-900 font-mono">
+                  <div className="bg-emerald-50/60 border border-emerald-100 p-3.5 rounded-2xl">
+                    <span className="text-[10px] font-black text-emerald-600 block mb-0.5">إجمالي المبيعات</span>
+                    <p className="text-lg font-black text-emerald-900">
                       {formatCurrency(displayedSheetOrders.reduce((sum, o) => sum + Number(o.total_price || 0), 0))}
                     </p>
-                    <span className="text-[10px] text-emerald-700/80 font-medium">قيمة الفواتير</span>
+                    <span className="text-[10px] text-emerald-600/80 font-medium">قيمة الفواتير</span>
                   </div>
 
-                  <div className="bg-slate-50 border border-slate-200/70 p-3.5 rounded-xl">
-                    <span className="text-[10px] font-black text-indigo-600 block mb-0.5">تطبيق الزبائن</span>
-                    <p className="text-xl font-black text-indigo-900 font-mono">
+                  <div className="bg-purple-50/60 border border-purple-100 p-3.5 rounded-2xl">
+                    <span className="text-[10px] font-black text-purple-600 block mb-0.5">تطبيق الزبائن</span>
+                    <p className="text-xl font-black text-purple-900 font-mono">
                       {toEnglishDigits(displayedSheetOrders.filter(o => o.source === 'customer_app').length)}
                     </p>
-                    <span className="text-[10px] text-indigo-600/80 font-medium">طلب أونلاين</span>
+                    <span className="text-[10px] text-purple-600/80 font-medium">طلب أونلاين</span>
                   </div>
 
-                  <div className="bg-amber-50/70 border border-amber-200/70 p-3.5 rounded-xl">
-                    <span className="text-[10px] font-black text-amber-700 block mb-0.5">بيع مباشر من الكاشير</span>
+                  <div className="bg-amber-50/60 border border-amber-100 p-3.5 rounded-2xl">
+                    <span className="text-[10px] font-black text-amber-600 block mb-0.5">بيع مباشر من الكاشير</span>
                     <p className="text-xl font-black text-amber-900 font-mono">
                       {toEnglishDigits(displayedSheetOrders.filter(o => o.source === 'cashier_pos').length)}
                     </p>
-                    <span className="text-[10px] text-amber-700/80 font-medium">فاتورة كاشير</span>
+                    <span className="text-[10px] text-amber-600/80 font-medium">فاتورة كاشير</span>
                   </div>
 
-                  <div className="bg-slate-50 border border-slate-200/70 p-3.5 rounded-xl">
-                    <span className="text-[10px] font-black text-slate-500 block mb-0.5">طلبات الصالة</span>
-                    <p className="text-xl font-black text-slate-800 font-mono">
+                  <div className="bg-blue-50/60 border border-blue-100 p-3.5 rounded-2xl">
+                    <span className="text-[10px] font-black text-blue-600 block mb-0.5">طلبات الصالة</span>
+                    <p className="text-xl font-black text-blue-900 font-mono">
                       {toEnglishDigits(displayedSheetOrders.filter(o => o.order_type === 'dine_in').length)}
                     </p>
-                    <span className="text-[10px] text-slate-500 font-medium">طاولات</span>
+                    <span className="text-[10px] text-blue-600/80 font-medium">طاولات</span>
                   </div>
 
-                  <div className="bg-slate-50 border border-slate-200/70 p-3.5 rounded-xl">
-                    <span className="text-[10px] font-black text-slate-500 block mb-0.5">دليفري وتيك أواي</span>
-                    <p className="text-xl font-black text-slate-800 font-mono">
-                      {toEnglishDigits(displayedSheetOrders.filter(o => o.order_type === 'delivery' || o.order_type === 'takeaway').length)}
+                  <div className="bg-teal-50/60 border border-teal-100 p-3.5 rounded-2xl">
+                    <span className="text-[10px] font-black text-teal-600 block mb-0.5">طلبات دليفري</span>
+                    <p className="text-xl font-black text-teal-900 font-mono">
+                      {toEnglishDigits(displayedSheetOrders.filter(o => o.order_type === 'delivery').length)}
                     </p>
-                    <span className="text-[10px] text-slate-500 font-medium">سفري / توصيل</span>
+                    <span className="text-[10px] text-teal-600/80 font-medium">توصيل منزلي</span>
+                  </div>
+
+                  <div className="bg-orange-50/60 border border-orange-100 p-3.5 rounded-2xl">
+                    <span className="text-[10px] font-black text-orange-600 block mb-0.5">طلبات تيك أواي</span>
+                    <p className="text-xl font-black text-orange-900 font-mono">
+                      {toEnglishDigits(displayedSheetOrders.filter(o => o.order_type === 'takeaway').length)}
+                    </p>
+                    <span className="text-[10px] text-orange-600/80 font-medium">سفري / استلام</span>
                   </div>
                 </div>
 
                 {/* 🔍 Filter & Search Bar */}
-                <div className="space-y-4 pt-2 border-t border-slate-100">
+                <div className="space-y-4 pt-2 border-t border-gray-100">
                   <div className="flex flex-col md:flex-row items-center justify-between gap-4">
                     {/* Search box */}
                     <div className="relative w-full md:w-80">
-                      <Search size={16} className="absolute right-3.5 top-1/2 -translate-y-1/2 text-slate-400" />
+                      <Search size={16} className="absolute right-3.5 top-1/2 -translate-y-1/2 text-gray-400" />
                       <input
                         type="text"
                         value={ordersSearchTerm}
                         onChange={(e) => setOrdersSearchTerm(e.target.value)}
                         placeholder="بحث برقم الطلب، العميل، الهاتف، أو الصنف..."
-                        className="w-full bg-slate-50 border border-slate-200 pr-10 pl-4 py-2.5 rounded-xl text-xs font-bold outline-none focus:border-amber-500 focus:bg-white transition-all text-slate-800"
+                        className="w-full bg-gray-50 border border-gray-200 pr-10 pl-4 py-2.5 rounded-2xl text-xs font-bold outline-none focus:ring-2 focus:ring-orange-500/20 focus:bg-white transition-all"
                       />
                       {ordersSearchTerm && (
                         <button
                           type="button"
                           onClick={() => setOrdersSearchTerm('')}
-                          className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 cursor-pointer"
+                          className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600"
                         >
                           <X size={14} />
                         </button>
@@ -2145,25 +2067,25 @@ export default function AdminDashboard() {
 
                     {/* Date mode & picker */}
                     <div className="flex flex-wrap items-center gap-2 w-full md:w-auto">
-                      <div className="flex gap-1 bg-slate-100 p-1 rounded-xl w-full sm:w-auto">
+                      <div className="flex gap-1 bg-gray-100 p-1 rounded-2xl w-full sm:w-auto">
                         <button
                           type="button"
                           onClick={() => setAnalyticsMode('daily')}
-                          className={cn("flex-1 sm:flex-none px-3.5 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer", analyticsMode === 'daily' ? "bg-slate-900 shadow-xs text-white" : "text-slate-600 hover:text-slate-900")}
+                          className={cn("flex-1 sm:flex-none px-4 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer", analyticsMode === 'daily' ? "bg-white shadow-sm text-orange-600" : "text-gray-500")}
                         >
                           يومي
                         </button>
                         <button
                           type="button"
                           onClick={() => setAnalyticsMode('weekly')}
-                          className={cn("flex-1 sm:flex-none px-3.5 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer", analyticsMode === 'weekly' ? "bg-slate-900 shadow-xs text-white" : "text-slate-600 hover:text-slate-900")}
+                          className={cn("flex-1 sm:flex-none px-4 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer", analyticsMode === 'weekly' ? "bg-white shadow-sm text-orange-600" : "text-gray-500")}
                         >
                           أسبوعي
                         </button>
                         <button
                           type="button"
                           onClick={() => setAnalyticsMode('monthly')}
-                          className={cn("flex-1 sm:flex-none px-3.5 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer", analyticsMode === 'monthly' ? "bg-slate-900 shadow-xs text-white" : "text-slate-600 hover:text-slate-900")}
+                          className={cn("flex-1 sm:flex-none px-4 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer", analyticsMode === 'monthly' ? "bg-white shadow-sm text-orange-600" : "text-gray-500")}
                         >
                           شهري
                         </button>
@@ -2174,7 +2096,7 @@ export default function AdminDashboard() {
                           type={analyticsMode === 'monthly' ? "month" : "date"}
                           value={analyticsMode === 'monthly' ? selectedDate.substring(0, 7) : selectedDate}
                           onChange={(e) => setSelectedDate(e.target.value)}
-                          className="w-full sm:w-auto bg-slate-50 border border-slate-200 px-3.5 py-2 rounded-xl outline-none font-bold text-xs text-slate-800 focus:border-amber-500"
+                          className="w-full sm:w-auto bg-gray-50 border border-gray-200 px-4 py-2 rounded-2xl outline-none font-bold text-xs"
                         />
                       </div>
                     </div>
@@ -2184,7 +2106,7 @@ export default function AdminDashboard() {
                   <div className="space-y-2.5 pt-2">
                     {/* Primary Classification: بيع مباشر من الكاشير vs تطبيق الزبائن */}
                     <div className="flex flex-wrap items-center gap-2">
-                      <span className="text-xs font-black text-slate-700 ml-1">التصنيف:</span>
+                      <span className="text-xs font-black text-gray-700 ml-1">التصنيف:</span>
                       {[
                         { id: 'all', label: 'الكل' },
                         { id: 'cashier_pos', label: '🏬 بيع مباشر من الكاشير' },
@@ -2195,10 +2117,10 @@ export default function AdminDashboard() {
                           type="button"
                           onClick={() => setOrdersSourceFilter(tab.id as any)}
                           className={cn(
-                            "px-3 py-1.5 rounded-lg text-xs font-black transition-all cursor-pointer",
+                            "px-3.5 py-1.5 rounded-xl text-xs font-black transition-all cursor-pointer",
                             ordersSourceFilter === tab.id
-                              ? "bg-slate-900 text-white shadow-xs"
-                              : "bg-slate-100 hover:bg-slate-200 text-slate-700"
+                              ? "bg-gray-900 text-white shadow-sm ring-2 ring-gray-900/20"
+                              : "bg-gray-100 hover:bg-gray-200 text-gray-700"
                           )}
                         >
                           {tab.label}
@@ -2209,7 +2131,7 @@ export default function AdminDashboard() {
                     {/* Sub-classification: صالة وانهي طاولة / دليفري / تيك أواي */}
                     <div className="flex flex-wrap items-center justify-between gap-3">
                       <div className="flex flex-wrap items-center gap-1.5">
-                        <span className="text-xs font-black text-slate-500 ml-1">نوع الطلب:</span>
+                        <span className="text-xs font-black text-gray-500 ml-1">نوع الطلب:</span>
                         {[
                           { id: 'all', label: 'الكل' },
                           { id: 'dine_in', label: '🍽️ صالة' },
@@ -2221,10 +2143,10 @@ export default function AdminDashboard() {
                             type="button"
                             onClick={() => setOrdersTypeFilter(typeTab.id as any)}
                             className={cn(
-                              "px-3 py-1 rounded-lg text-xs font-bold transition-all cursor-pointer",
+                              "px-3 py-1 rounded-xl text-xs font-bold transition-all cursor-pointer",
                               ordersTypeFilter === typeTab.id
-                                ? "bg-amber-500 text-white shadow-xs font-black"
-                                : "bg-slate-100 hover:bg-slate-200 text-slate-600"
+                                ? "bg-orange-500 text-white shadow-xs"
+                                : "bg-gray-100 hover:bg-gray-200 text-gray-600"
                             )}
                           >
                             {typeTab.label}
@@ -2234,7 +2156,7 @@ export default function AdminDashboard() {
 
                       {/* Status Filters */}
                       <div className="flex flex-wrap items-center gap-1.5">
-                        <span className="text-xs font-black text-slate-500 ml-1">الحالة:</span>
+                        <span className="text-xs font-black text-gray-500 ml-1">الحالة:</span>
                         {[
                           { id: 'all', label: 'الكل' },
                           { id: 'new', label: 'جديد' },
@@ -2248,10 +2170,10 @@ export default function AdminDashboard() {
                             type="button"
                             onClick={() => setOrdersStatusFilter(tab.id as any)}
                             className={cn(
-                              "px-2.5 py-1 rounded-lg text-xs font-bold transition-all cursor-pointer",
+                              "px-2.5 py-1 rounded-xl text-xs font-bold transition-all cursor-pointer",
                               ordersStatusFilter === tab.id
-                                ? "bg-slate-800 text-white shadow-xs font-black"
-                                : "bg-slate-100 hover:bg-slate-200 text-slate-600"
+                                ? "bg-orange-600 text-white shadow-sm"
+                                : "bg-gray-100 hover:bg-gray-200 text-gray-600"
                             )}
                           >
                             {tab.label}
@@ -2263,10 +2185,10 @@ export default function AdminDashboard() {
                 </div>
 
                 {/* 📋 The Sheet Table */}
-                <div className="rounded-xl border border-slate-200 overflow-hidden shadow-2xs">
+                <div className="rounded-2xl border border-gray-200 overflow-hidden shadow-xs">
                   <div className="overflow-x-auto text-right">
                     <table className="w-full min-w-[900px] border-collapse">
-                      <thead className="bg-slate-50 border-b border-slate-200 text-slate-700 text-xs font-black uppercase tracking-wider">
+                      <thead className="bg-gray-50/90 border-b border-gray-200 text-gray-600 text-xs font-black uppercase tracking-wider">
                         <tr>
                           <th className="px-5 py-3.5">رقم الطلب والوقت</th>
                           <th className="px-5 py-3.5">التصنيف والنوع</th>
@@ -2534,20 +2456,7 @@ export default function AdminDashboard() {
                       <div className="flex justify-between">
                         <span className="text-gray-500 font-bold">الكاشير المسؤول:</span>
                         <span className="font-black text-amber-700">
-                          👤 {(() => {
-                            const cName = selectedOrderForDetails.cashier_name;
-                            if (cName && !cName.includes('تطبيق الزبائن')) {
-                              return cName;
-                            }
-                            try {
-                              const active = localStorage.getItem(`qrieta_active_shift_${restaurant?.id}`);
-                              if (active) {
-                                const parsed = JSON.parse(active);
-                                if (parsed.cashierName) return parsed.cashierName;
-                              }
-                            } catch (e) {}
-                            return cName || 'كاشير الفرع';
-                          })()}
+                          👤 {selectedOrderForDetails.cashier_name || 'كاشير الفرع'}
                         </span>
                       </div>
                       <div className="flex justify-between">
@@ -2667,137 +2576,79 @@ export default function AdminDashboard() {
 
           {/* Menu Items View */}
           {activeTab === 'menu' && (
-            <div className="space-y-4 mb-10">
-              {/* Search & Filter Bar */}
-              <div className="bg-white p-4 rounded-2xl border border-slate-200/80 shadow-2xs flex flex-col md:flex-row items-center justify-between gap-3">
-                {/* Search */}
-                <div className="relative w-full md:w-80">
-                  <Search size={16} className="absolute right-3.5 top-1/2 -translate-y-1/2 text-slate-400" />
-                  <input
-                    type="text"
-                    value={menuSearchTerm}
-                    onChange={(e) => setMenuSearchTerm(e.target.value)}
-                    placeholder="بحث في قائمة الطعام..."
-                    className="w-full bg-slate-50 border border-slate-200 pr-10 pl-4 py-2 rounded-xl text-xs font-bold outline-none focus:border-amber-500 focus:bg-white transition-all text-slate-800"
-                  />
-                  {menuSearchTerm && (
-                    <button
-                      type="button"
-                      onClick={() => setMenuSearchTerm('')}
-                      className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 cursor-pointer"
-                    >
-                      <X size={14} />
-                    </button>
-                  )}
-                </div>
-
-                {/* Category Filter */}
-                <div className="flex items-center gap-2 w-full md:w-auto">
-                  <span className="text-xs font-bold text-slate-500 shrink-0">التصنيف:</span>
-                  <select
-                    value={menuCategoryFilter}
-                    onChange={(e) => setMenuCategoryFilter(e.target.value)}
-                    className="bg-slate-50 border border-slate-200 px-3 py-2 rounded-xl text-xs font-bold outline-none focus:border-amber-500 text-slate-700 w-full md:w-48 cursor-pointer"
-                  >
-                    <option value="all">جميع التصنيفات ({products.length})</option>
-                    {categories.map(c => (
-                      <option key={c.id} value={c.id}>
-                        {c.name_ar} ({products.filter(p => p.category_id === c.id).length})
-                      </option>
-                    ))}
-                  </select>
-                </div>
-              </div>
-
-              {/* Table */}
-              <div className="bg-white rounded-2xl border border-slate-200/80 shadow-2xs overflow-x-auto text-right">
-                <table className="w-full min-w-[700px]">
-                  <thead className="bg-slate-50 border-b border-slate-200 text-slate-600 text-xs font-black uppercase tracking-wider">
-                    <tr>
-                      <th className="px-6 py-4">المنتج</th>
-                      <th className="px-6 py-4">السعر</th>
-                      <th className="px-6 py-4">التصنيف</th>
-                      <th className="px-6 py-4 text-center">الحالة</th>
-                      <th className="px-6 py-4 text-left">الإجراءات</th>
+            <div className="bg-white rounded-3xl border shadow-sm overflow-x-auto text-right mb-10">
+              <table className="w-full min-w-[700px]">
+                <thead className="bg-gray-50 text-gray-500 text-xs font-black uppercase tracking-widest">
+                  <tr>
+                    <th className="px-6 py-4">المنتج</th>
+                    <th className="px-6 py-4">السعر</th>
+                    <th className="px-6 py-4">التصنيف</th>
+                    <th className="px-6 py-4 text-center">الحالة</th>
+                    <th className="px-6 py-4 text-left">الإجراءات</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-gray-100">
+                  {products.map(p => (
+                    <tr key={p.id} className="hover:bg-gray-50/50 transition-colors">
+                      <td className="px-6 py-4">
+                        <div className="flex items-center gap-4">
+                          <div className="w-12 h-12 rounded-2xl bg-orange-50 border border-orange-100/80 text-orange-600 flex items-center justify-center font-black text-base shadow-sm shrink-0">
+                            <Coffee size={22} className="text-orange-500" />
+                          </div>
+                          <div className="text-right">
+                            <p className="font-bold text-gray-900">{p.name_ar}</p>
+                            <p className="text-xs text-gray-400">{p.name_en}</p>
+                          </div>
+                        </div>
+                      </td>
+                      <td className="px-6 py-4 font-bold">{formatCurrency(p.price)}</td>
+                      <td className="px-6 py-4 text-sm text-gray-500">
+                        {categories.find(c => c.id === p.category_id)?.name_ar || 'غير مصنف'}
+                      </td>
+                      <td className="px-6 py-4">
+                        <div className="flex justify-center">
+                          <button 
+                            onClick={() => toggleAvailability(p)}
+                            className={cn(
+                              "flex items-center gap-2 px-3 py-1 rounded-full text-xs font-bold transition-all",
+                              p.availability ? "bg-green-50 text-green-600" : "bg-gray-100 text-gray-400"
+                            )}
+                          >
+                            {p.availability ? <Eye size={14}/> : <EyeOff size={14}/>}
+                            {p.availability ? 'متاح' : 'معطل'}
+                          </button>
+                        </div>
+                      </td>
+                      <td className="px-6 py-4 text-left">
+                        <div className="flex items-center justify-start gap-2">
+                          <button 
+                            type="button"
+                            onClick={() => openEditProductModal(p)}
+                            className="p-2.5 hover:bg-orange-50 text-gray-400 hover:text-orange-600 rounded-xl transition-colors cursor-pointer"
+                            title={isRTL ? "تعديل" : "Edit"}
+                          >
+                            <Edit size={18} />
+                          </button>
+                          <button 
+                            type="button"
+                            onClick={() => {
+                              setDeleteModalItem({
+                                type: 'product',
+                                id: p.id,
+                                name: p.name_ar || p.name_en || 'هذا المنتج'
+                              });
+                            }}
+                            className="p-2.5 bg-red-50 text-red-600 hover:bg-red-600 hover:text-white rounded-xl border border-red-100 transition-all shadow-sm flex items-center justify-center cursor-pointer active:scale-95"
+                            title={isRTL ? "حذف المنتج" : "Delete Product"}
+                          >
+                            <Trash2 size={18} />
+                          </button>
+                        </div>
+                      </td>
                     </tr>
-                  </thead>
-                  <tbody className="divide-y divide-slate-100">
-                    {filteredProducts.length === 0 ? (
-                      <tr>
-                        <td colSpan={5} className="py-12 text-center text-slate-400 text-xs font-bold">
-                          لا توجد منتجات مطابقة لخيارات البحث أو التصنيف
-                        </td>
-                      </tr>
-                    ) : (
-                      filteredProducts.map(p => (
-                        <tr key={p.id} className="hover:bg-slate-50/60 transition-colors">
-                          <td className="px-6 py-4">
-                            <div className="flex items-center gap-3.5">
-                              <div className="w-11 h-11 rounded-xl bg-amber-50 border border-amber-200/70 text-amber-700 flex items-center justify-center font-black text-base shadow-2xs shrink-0">
-                                <Coffee size={20} className="text-amber-600" />
-                              </div>
-                              <div className="text-right">
-                                <p className="font-bold text-xs text-slate-900">{p.name_ar}</p>
-                                {p.name_en && <p className="text-[11px] text-slate-400">{p.name_en}</p>}
-                              </div>
-                            </div>
-                          </td>
-                          <td className="px-6 py-4 font-black font-mono text-xs text-slate-900">
-                            {formatCurrency(p.price)}
-                          </td>
-                          <td className="px-6 py-4 text-xs font-bold text-slate-600">
-                            <span className="inline-block px-2.5 py-1 bg-slate-100 rounded-lg text-slate-700">
-                              {categories.find(c => c.id === p.category_id)?.name_ar || 'غير مصنف'}
-                            </span>
-                          </td>
-                          <td className="px-6 py-4">
-                            <div className="flex justify-center">
-                              <button 
-                                onClick={() => toggleAvailability(p)}
-                                className={cn(
-                                  "flex items-center gap-1.5 px-3 py-1 rounded-lg text-xs font-bold transition-all cursor-pointer",
-                                  p.availability 
-                                    ? "bg-emerald-50 text-emerald-700 border border-emerald-200/80" 
-                                    : "bg-slate-100 text-slate-400 border border-slate-200"
-                                )}
-                              >
-                                {p.availability ? <Eye size={13}/> : <EyeOff size={13}/>}
-                                <span>{p.availability ? 'متاح' : 'معطل'}</span>
-                              </button>
-                            </div>
-                          </td>
-                          <td className="px-6 py-4 text-left">
-                            <div className="flex items-center justify-start gap-1.5">
-                              <button 
-                                type="button"
-                                onClick={() => openEditProductModal(p)}
-                                className="p-2 hover:bg-amber-50 text-slate-400 hover:text-amber-700 rounded-lg transition-colors cursor-pointer"
-                                title={isRTL ? "تعديل" : "Edit"}
-                              >
-                                <Edit size={16} />
-                              </button>
-                              <button 
-                                type="button"
-                                onClick={() => {
-                                  setDeleteModalItem({
-                                    type: 'product',
-                                    id: p.id,
-                                    name: p.name_ar || p.name_en || 'هذا المنتج'
-                                  });
-                                }}
-                                className="p-2 text-rose-500 hover:bg-rose-50 hover:text-rose-700 rounded-lg transition-all cursor-pointer"
-                                title={isRTL ? "حذف المنتج" : "Delete Product"}
-                              >
-                                <Trash2 size={16} />
-                              </button>
-                            </div>
-                          </td>
-                        </tr>
-                      ))
-                    )}
-                  </tbody>
-                </table>
-              </div>
+                  ))}
+                </tbody>
+              </table>
             </div>
           )}
 

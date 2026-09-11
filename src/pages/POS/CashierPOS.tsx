@@ -33,10 +33,6 @@ import {
   POSOptionChoice 
 } from '../../lib/posOptionsHelper';
 import {
-  syncAllProductOptions,
-  syncAllCategoryOptions
-} from '../../lib/optionsHelper';
-import {
   getLockedRestaurantId,
   setLockedRestaurantId,
   clearLockedRestaurantId,
@@ -49,7 +45,7 @@ import {
   clearSyncedOfflineOrders,
   getInitialOfflineFallbackData
 } from '../../lib/posOfflineStore';
-import { printThermalElement } from '../../lib/printHelper';
+import { printThermalElement, printKitchenTicket } from '../../lib/printHelper';
 import { KOTModal } from '../../components/POS/KOTModal';
 import { ShiftReportModal } from '../../components/POS/ShiftReportModal';
 import { SplitBillModal } from '../../components/POS/SplitBillModal';
@@ -539,14 +535,6 @@ export const CashierPOS: React.FC = () => {
           console.warn('Products query error:', e);
         }
 
-        // Sync product & category options with custom prices from server
-        try {
-          syncAllProductOptions().catch(() => {});
-          syncAllCategoryOptions().catch(() => {});
-        } catch (syncErr) {
-          console.warn('Options background sync error:', syncErr);
-        }
-
         try {
           const tablesRes = await supabase.from('tables').select('*').eq('restaurant_id', restaurantId).order('table_number');
           if (tablesRes.data && tablesRes.data.length > 0) {
@@ -915,10 +903,10 @@ export const CashierPOS: React.FC = () => {
 
     try {
       // 1. Update status in live service, Supabase, and Server API
-      await updateLiveOrderStatus(order.id, selectedRestaurant.id, 'completed', 'paid', shift.cashierName || 'كاشير');
+      await updateLiveOrderStatus(order.id, selectedRestaurant.id, 'completed', 'paid');
 
       // 2. Update local customer live orders state
-      setCustomerLiveOrders(prev => prev.map(o => o.id === order.id ? { ...o, status: 'completed', payment_status: 'paid', cashier_name: shift.cashierName } : o));
+      setCustomerLiveOrders(prev => prev.map(o => o.id === order.id ? { ...o, status: 'completed', payment_status: 'paid' } : o));
 
       // 3. Remove any corresponding held bill (from kitchen KOT sending)
       const orderNumStr = String(order.daily_order_number || '');
@@ -956,7 +944,6 @@ export const CashierPOS: React.FC = () => {
         payment_method: order.payment_status === 'paid' ? 'card' : 'cash',
         payment_status: 'paid',
         status: 'delivered',
-        cashier_name: shift.cashierName || 'كاشير',
         items: order.items.map(it => ({
           id: it.id,
           name: it.name,
@@ -982,35 +969,36 @@ export const CashierPOS: React.FC = () => {
         cardSales: prev.cardSales + (order.payment_status === 'paid' ? order.total_price : 0)
       }));
 
-      // 7. Deduct inventory & recipe ingredients for the order
-      order.items.forEach(it => {
-        const prodId = it.id || (it as any).product_id || (it as any).menuItemId;
-        if (prodId) {
-          updateProductStock(selectedRestaurant.id, {
-            productId: prodId,
-            productName: it.name,
-            delta: -it.quantity,
-            type: 'sale',
-            reason: `تسليم طلب ${order.order_type === 'delivery' ? 'دليفري' : 'زبائن'} #${displayNum}`,
-            performedBy: shift.cashierName || 'كاشير'
-          }).catch(() => {});
-        }
-      });
+      // 7. Deduct inventory if not already deducted by customer app
+      if (order.source !== 'customer_app') {
+        order.items.forEach(it => {
+          if (it.id) {
+            updateProductStock(selectedRestaurant.id, {
+              productId: it.id,
+              productName: it.name,
+              delta: -it.quantity,
+              type: 'sale',
+              reason: `تسليم طلب #${displayNum}`,
+              performedBy: shift.cashierName || 'كاشير'
+            }).catch(() => {});
+          }
+        });
 
-      deductOrderRecipeStock(
-        selectedRestaurant.id,
-        order.items.map(it => ({
-          id: it.id || (it as any).product_id || (it as any).menuItemId,
-          name: it.name,
-          quantity: it.quantity,
-          options: (it as any).options,
-          notes: (it as any).notes,
-          sugar_level: (it as any).sugar_level,
-          selectedOptions: (it as any).selectedOptions
-        })),
-        String(displayNum),
-        shift.cashierName || 'كاشير'
-      ).catch(() => {});
+        deductOrderRecipeStock(
+          selectedRestaurant.id,
+          order.items.map(it => ({
+            id: it.id,
+            name: it.name,
+            quantity: it.quantity,
+            options: (it as any).options,
+            notes: (it as any).notes,
+            sugar_level: (it as any).sugar_level,
+            selectedOptions: (it as any).selectedOptions
+          })),
+          String(displayNum),
+          shift.cashierName || 'كاشير'
+        ).catch(() => {});
+      }
 
       // 8. Log shift audit
       logShiftAuditRecord(selectedRestaurant.id, {
@@ -1027,78 +1015,6 @@ export const CashierPOS: React.FC = () => {
       console.error('Error completing customer order:', err);
       alert('حدث خطأ أثناء إنهاء الطلب: ' + (err?.message || 'يرجى المحاولة مرة أخرى'));
     }
-  };
-
-  const handleRefundCustomerOrder = (order: LiveOrder) => {
-    if (!selectedRestaurant) return;
-    const orderTotal = Number(order.total_price) || 0;
-    const isDelivery = order.order_type === 'delivery';
-    const displayNum = getDisplayOrderNumber(order);
-
-    setManagerAuthReq({
-      isOpen: true,
-      title: isDelivery ? 'إرجاع ومرتجع طلب دليفري (Delivery Refund)' : 'إلغاء ومرتجع طلب (Refund)',
-      description: `سيتم إرجاع قيمة الطلب (${orderTotal} ج.م) وإلغاء تسجيله من مبيعات الوردية وإعادة المواد الخام والمخزون. يلزم موافقة المدير.`,
-      action: async () => {
-        try {
-          // 1. Update status in live service and Supabase
-          await updateLiveOrderStatus(order.id, selectedRestaurant.id, 'cancelled', 'refunded', shift.cashierName);
-
-          await supabase
-            .from('orders')
-            .update({ status: 'cancelled', payment_status: 'refunded' })
-            .eq('id', order.id);
-
-          // 2. Update local live orders state
-          setCustomerLiveOrders(prev => prev.map(o => o.id === order.id ? { ...o, status: 'cancelled', payment_status: 'refunded' } : o));
-
-          // 3. Remove/update in activeOrders
-          setActiveOrders(prev => prev.map(o => (String(o.id) === String(order.id) || String(o.id) === `ord-${order.id}`) ? { ...o, status: 'cancelled', payment_status: 'refunded' } : o));
-
-          // 4. Update Shift sales & refunds
-          setShift(prev => ({
-            ...prev,
-            totalRefunds: prev.totalRefunds + orderTotal,
-            totalSales: Math.max(0, prev.totalSales - orderTotal),
-            cashSales: prev.cashSales >= orderTotal ? prev.cashSales - orderTotal : prev.cashSales,
-            ordersCount: Math.max(0, prev.ordersCount - 1)
-          }));
-
-          // 5. Restore product stock & recipe ingredients
-          if (order.items && Array.isArray(order.items)) {
-            order.items.forEach(it => {
-              const pid = it.id || (it as any).product_id || (it as any).menuItemId;
-              if (pid) {
-                updateProductStock(selectedRestaurant.id, {
-                  productId: pid,
-                  productName: it.name,
-                  delta: it.quantity || 1,
-                  type: 'adjustment',
-                  reason: `مرتجع طلب ${isDelivery ? 'دليفري ' : ''}#${displayNum}`,
-                  performedBy: shift.cashierName || 'كاشير'
-                }).catch(() => {});
-              }
-            });
-
-            restoreOrderRecipeStock(
-              selectedRestaurant.id,
-              order.items.map(it => ({
-                id: it.id || (it as any).product_id || (it as any).menuItemId,
-                name: it.name,
-                quantity: it.quantity || 1
-              })),
-              String(displayNum),
-              shift.cashierName || 'كاشير'
-            ).catch(() => {});
-          }
-
-          addAuditLog('refund_order', `مرتجع طلب ${isDelivery ? 'دليفري ' : ''}#${displayNum} بقيمة ${orderTotal} ج.م`);
-          alert(`تم إتمام مرتجع الطلب #${displayNum} بنجاح وإعادة المواد للمخزون!`);
-        } catch (e: any) {
-          alert('فشل في إتمام المرتجع: ' + (e?.message || 'خطأ غير معروف'));
-        }
-      }
-    });
   };
 
   const handleCancelCustomerOrder = async (order: LiveOrder) => {
@@ -1348,20 +1264,13 @@ export const CashierPOS: React.FC = () => {
       setCustomizingItem(item);
       setCustomizingGroups(groups);
 
-      // Pre-select default options for single-select groups (e.g. مظبوط for sugar, or base size)
+      // Pre-select default options for single-select groups (e.g. مظبوط for sugar)
       const initialSelections: Record<string, POSOptionChoice[]> = {};
       groups.forEach(g => {
         if (g.type === 'single' && g.choices.length > 0) {
           if (g.id.includes('sugar') || g.name.includes('سكر')) {
             const med = g.choices.find(c => c.id === 'medium' || c.name.includes('مظبوط') || c.name.includes('مضبوط'));
             if (med) initialSelections[g.id] = [med];
-            else initialSelections[g.id] = [g.choices[0]];
-          } else {
-            // For sizes or single-select groups, preselect choice matching base price delta 0 or first choice
-            const matchingBase = g.choices.find(c => c.priceDelta === 0) || g.choices[0];
-            if (matchingBase) {
-              initialSelections[g.id] = [matchingBase];
-            }
           }
         }
       });
@@ -1597,6 +1506,42 @@ export const CashierPOS: React.FC = () => {
     setSelectedTable(null);
 
     addAuditLog('void_item', `تم تعليق الفاتورة وإرسالها للطاولة (${title}) بإجمالي ${finalTotal.toFixed(2)} ج.م`);
+  };
+
+  // إرسال الطلب للمطبخ مع طباعة بون المطبخ الموحد تلقائياً وبشكل فوري
+  const handleSendOrderToKitchenAndPrint = async () => {
+    if (cart.length === 0) {
+      alert('السلة فارغة! يرجى إضافة أصناف أولاً قبل الإرسال للمطبخ.');
+      return;
+    }
+
+    let dailyOrderNum = parseInt(customOrderNumber) || 0;
+    if (!dailyOrderNum && selectedRestaurant) {
+      dailyOrderNum = await getNextDailyOrderNumber(selectedRestaurant.id);
+    }
+    if (!dailyOrderNum) dailyOrderNum = activeOrders.length + 1;
+
+    // طباعة البون الموحد للمطبخ تلقائياً وفوراً
+    printKitchenTicket({
+      restaurantName: selectedRestaurant?.name || 'مطعم وكافيه كريتا',
+      orderNumber: dailyOrderNum,
+      orderType,
+      tableNumber: selectedTable?.table_number,
+      customerName: customerName.trim() || undefined,
+      customerPhone: customerPhone.trim() || undefined,
+      deliveryAddress: customerAddress.trim() || undefined,
+      cashierName: shift.cashierName || 'الرئيسي',
+      items: cart.map(it => ({
+        name: it.name,
+        quantity: it.quantity,
+        notes: it.notes,
+        options: it.options
+      })),
+      orderNotes: orderNotes.trim() || undefined
+    });
+
+    // حفظ الطلب في المعلقات والطلبات الحية لجميع شاشات المطبخ والبار
+    await handleHoldBill();
   };
 
   // Settle Table Account (تحصيل وسداد حساب الطاولة وإخلاءها)
@@ -3286,7 +3231,34 @@ export const CashierPOS: React.FC = () => {
                               title="طباعة الإيصال"
                             >
                               <Printer size={12} />
-                              <span>طباعة</span>
+                              <span>فاتورة</span>
+                            </button>
+
+                            <button
+                              onClick={() => {
+                                printKitchenTicket({
+                                  restaurantName: selectedRestaurant?.name || 'مطعم وكافيه كريتا',
+                                  orderNumber: getDisplayOrderNumber(ord),
+                                  orderType: ord.order_type || 'dine_in',
+                                  tableNumber: ord.table_number,
+                                  customerName: ord.customer_name,
+                                  customerPhone: ord.customer_phone,
+                                  deliveryAddress: ord.delivery_address,
+                                  cashierName: shift.cashierName || 'الرئيسي',
+                                  items: Array.isArray(ord.items) ? ord.items.map((it: any) => ({
+                                    name: it.name,
+                                    quantity: it.quantity,
+                                    notes: it.notes,
+                                    options: it.options,
+                                  })) : [],
+                                  orderNotes: ord.notes,
+                                });
+                              }}
+                              className="px-2.5 py-1 bg-amber-50 hover:bg-amber-100 text-amber-800 border border-amber-200 rounded-lg text-[11px] font-bold flex items-center gap-1 transition-all cursor-pointer"
+                              title="طباعة بون المطبخ الموحد"
+                            >
+                              <ChefHat size={12} />
+                              <span>بون مطبخ</span>
                             </button>
 
                             {ord.status !== 'cancelled' && (
@@ -3752,15 +3724,6 @@ export const CashierPOS: React.FC = () => {
                                 <Check size={13} />
                                 <span>إنهاء وتسليم الطلب</span>
                               </button>
-                            ) : (ord.status === 'completed' || ord.status === 'delivered') ? (
-                              <button
-                                onClick={() => handleRefundCustomerOrder(ord)}
-                                className="px-2.5 py-1.5 bg-rose-600 hover:bg-rose-700 text-white rounded-xl text-xs font-black flex items-center justify-center gap-1 transition-all cursor-pointer shadow-sm"
-                                title="إرجاع ومرتجع الطلب واستعادة المخزون والمبيعات"
-                              >
-                                <RotateCcw size={13} />
-                                <span>مرتجع {ord.order_type === 'delivery' ? 'دليفري' : 'الطلب'}</span>
-                              </button>
                             ) : (
                               <button
                                 onClick={() => handleLoadCustomerOrderToCart(ord)}
@@ -4134,15 +4097,6 @@ export const CashierPOS: React.FC = () => {
                             >
                               <Check size={14} />
                               <span>✅ إنهاء وتسليم الطلب</span>
-                            </button>
-                          ) : (ord.status === 'completed' || ord.status === 'delivered') ? (
-                            <button
-                              onClick={() => handleRefundCustomerOrder(ord)}
-                              className="col-span-2 py-2 bg-rose-600 hover:bg-rose-700 text-white rounded-xl text-xs font-black flex items-center justify-center gap-1 shadow cursor-pointer transition-all"
-                              title="إرجاع ومرتجع الطلب واستعادة المخزون والمبيعات"
-                            >
-                              <RotateCcw size={14} />
-                              <span>↩️ مرتجع {ord.order_type === 'delivery' ? 'دليفري' : 'الطلب'}</span>
                             </button>
                           ) : null}
 
@@ -4531,26 +4485,41 @@ export const CashierPOS: React.FC = () => {
               </div>
             )}
 
-            {/* Complete Payment Button */}
-            <div className="flex items-center gap-2 pt-1">
-              <button
-                type="button"
-                onClick={handleClearCart}
-                disabled={cart.length === 0}
-                className="p-3 bg-slate-100 hover:bg-rose-50 text-slate-500 hover:text-rose-600 rounded-2xl border border-slate-200 transition-all cursor-pointer disabled:opacity-40"
-                title="إلغاء الفاتورة بالكامل"
-              >
-                <Trash2 size={18} />
-              </button>
+            {/* Action Buttons: Large Send to Kitchen & Complete Payment side by side */}
+            <div className="flex flex-col sm:flex-row items-stretch gap-2 pt-1">
+              <div className="flex items-center gap-2 flex-1">
+                <button
+                  type="button"
+                  onClick={handleClearCart}
+                  disabled={cart.length === 0}
+                  className="p-3 bg-slate-100 hover:bg-rose-50 text-slate-500 hover:text-rose-600 rounded-2xl border border-slate-200 transition-all cursor-pointer disabled:opacity-40 shrink-0"
+                  title="إلغاء الفاتورة بالكامل"
+                >
+                  <Trash2 size={18} />
+                </button>
 
+                {/* زر إرسال للمطبخ كبير ومميز بجانب إتمام الدفع */}
+                <button
+                  type="button"
+                  onClick={handleSendOrderToKitchenAndPrint}
+                  disabled={cart.length === 0}
+                  className="flex-1 py-3.5 px-3 bg-gradient-to-r from-amber-500 via-amber-600 to-orange-500 hover:from-amber-600 hover:to-orange-600 active:scale-98 disabled:opacity-50 text-white font-black text-xs md:text-sm rounded-2xl flex items-center justify-center gap-2 shadow-lg shadow-amber-500/25 transition-all cursor-pointer border border-amber-400/30"
+                  title="إرسال الطلب للمطبخ وطباعة بون التشغيل فوراً"
+                >
+                  <ChefHat size={20} className="shrink-0 animate-pulse" />
+                  <span className="whitespace-nowrap">إرسال للمطبخ وطباعة البون</span>
+                </button>
+              </div>
+
+              {/* زر إتمام الدفع والفاتورة */}
               <button
                 type="button"
                 onClick={() => handleProcessPayment()}
                 disabled={cart.length === 0}
-                className="flex-1 py-3 bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white font-bold text-xs md:text-sm rounded-2xl flex items-center justify-center gap-2 shadow-lg shadow-emerald-600/20 active:scale-98 transition-all cursor-pointer"
+                className="flex-1 py-3.5 px-3 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-700 hover:to-teal-700 disabled:opacity-50 text-white font-black text-xs md:text-sm rounded-2xl flex items-center justify-center gap-2 shadow-lg shadow-emerald-600/25 active:scale-98 transition-all cursor-pointer border border-emerald-500/30"
               >
-                <CheckCircle2 size={18} />
-                <span>إتمام الدفع وطباعة الفاتورة ({finalTotal.toFixed(2)} ج.م)</span>
+                <CheckCircle2 size={20} className="shrink-0" />
+                <span className="whitespace-nowrap">إتمام الدفع ({finalTotal.toFixed(2)} ج.م)</span>
               </button>
             </div>
           </div>
@@ -4671,72 +4640,15 @@ export const CashierPOS: React.FC = () => {
                                 </span>
                                 <span>{choice.name}</span>
                               </div>
-                              {(() => {
-                                // 1. If choice has an explicit absolute price set by Admin in a single-select group (e.g. Size: Small 80, Medium 120, Large 160)
-                                if (choice.price !== undefined && choice.price !== null && choice.price > 0 && group.type === 'single') {
-                                  return (
-                                    <span className={`font-mono text-xs font-black ${isSelected ? 'text-amber-100' : 'text-slate-800'}`}>
-                                      {choice.price.toFixed(2)} <span className="text-[10px] font-sans">ج.م</span>
-                                    </span>
-                                  );
-                                }
-
-                                // 2. If choice has an explicit price addition (delta > 0)
-                                if (choice.priceDelta > 0) {
-                                  return (
-                                    <span className={`font-mono text-xs font-black ${isSelected ? 'text-amber-100' : 'text-emerald-700'}`}>
-                                      +{choice.priceDelta.toFixed(2)} <span className="text-[10px] font-sans">ج.م</span>
-                                    </span>
-                                  );
-                                }
-
-                                // 3. If choice has a discount or reduction (delta < 0)
-                                if (choice.priceDelta < 0) {
-                                  return (
-                                    <span className={`font-mono text-xs font-black ${isSelected ? 'text-amber-100' : 'text-rose-600'}`}>
-                                      {choice.priceDelta.toFixed(2)} <span className="text-[10px] font-sans">ج.م</span>
-                                    </span>
-                                  );
-                                }
-
-                                // 4. Delta is 0: Check context
-                                const isSugarOrPrep = 
-                                  group.id.includes('sugar') || 
-                                  group.name.includes('سكر') || 
-                                  group.name.includes('طهي') || 
-                                  group.name.includes('ثلج') || 
-                                  group.name.includes('طعم') ||
-                                  group.name.includes('حرارة');
-
-                                if (isSugarOrPrep) {
-                                  return (
-                                    <span className={`text-[10px] font-bold ${isSelected ? 'text-amber-100' : 'text-slate-400'}`}>
-                                      بدون إضافة
-                                    </span>
-                                  );
-                                }
-
-                                if (group.type === 'single') {
-                                  if (customizingItem.price > 0) {
-                                    return (
-                                      <span className={`font-mono text-xs font-black ${isSelected ? 'text-amber-100' : 'text-slate-800'}`}>
-                                        {customizingItem.price.toFixed(2)} <span className="text-[10px] font-sans">ج.م</span>
-                                      </span>
-                                    );
-                                  }
-                                  return (
-                                    <span className={`text-[10px] font-bold ${isSelected ? 'text-amber-100' : 'text-slate-400'}`}>
-                                      ضمن السعر
-                                    </span>
-                                  );
-                                }
-
-                                return (
-                                  <span className={`text-[10px] font-bold ${isSelected ? 'text-amber-100' : 'text-slate-400'}`}>
-                                    بدون تكلفة
-                                  </span>
-                                );
-                              })()}
+                              <span className={`font-mono text-[11px] ${isSelected ? 'text-amber-100 font-bold' : 'text-slate-500'}`}>
+                                {choice.priceDelta > 0 
+                                  ? `+${choice.priceDelta} ج.م` 
+                                  : choice.priceDelta < 0
+                                    ? `${choice.priceDelta} ج.م`
+                                    : (choice.price !== undefined && choice.price > 0)
+                                      ? `${choice.price} ج.م`
+                                      : 'مجاني'}
+                              </span>
                             </button>
                           );
                         })}
@@ -4769,22 +4681,15 @@ export const CashierPOS: React.FC = () => {
             {/* Modal Footer */}
             {(() => {
               const optionsDelta = (Object.values(customizingSelections) as POSOptionChoice[][]).flat().reduce((sum, c) => sum + (c.priceDelta || 0), 0);
-              const calculatedTotal = Math.max(0, customizingItem.price + optionsDelta);
+              const calculatedTotal = customizingItem.price + optionsDelta;
 
               return (
                 <div className="p-4 bg-slate-50 border-t border-slate-200 flex items-center justify-between gap-3">
                   <div>
                     <span className="text-[10px] text-slate-500 block">الإجمالي بعد الخيارات</span>
-                    <div className="flex items-baseline gap-2">
-                      <span className="font-mono font-bold text-lg text-slate-900">
-                        {calculatedTotal.toFixed(2)} <span className="text-xs font-sans text-slate-600">ج.م</span>
-                      </span>
-                      {optionsDelta !== 0 && (
-                        <span className={`text-xs font-mono font-bold ${optionsDelta > 0 ? 'text-emerald-600' : 'text-rose-600'}`}>
-                          ({optionsDelta > 0 ? `+${optionsDelta.toFixed(2)}` : optionsDelta.toFixed(2)} ج.م إضافي)
-                        </span>
-                      )}
-                    </div>
+                    <span className="font-mono font-bold text-lg text-slate-900">
+                      {calculatedTotal.toFixed(2)} <span className="text-xs font-sans text-slate-600">ج.م</span>
+                    </span>
                   </div>
 
                   <div className="flex items-center gap-2">
@@ -4819,12 +4724,14 @@ export const CashierPOS: React.FC = () => {
         dailyOrderNumber={customOrderNumber || activeOrders.length + 1}
         orderType={orderType}
         tableNumber={selectedTable?.table_number}
+        customerName={customerName.trim() || undefined}
+        customerPhone={customerPhone.trim() || undefined}
+        deliveryAddress={customerAddress.trim() || undefined}
         cashierName={shift.cashierName}
         cart={cart}
         orderNotes={orderNotes}
         onConfirmSend={() => {
           handleHoldBill();
-          alert('تم إرسال بونات التشغيل للمطبخ والأقسام وحفظ الطلب بنجاح! 👨‍🍳');
         }}
       />
 
