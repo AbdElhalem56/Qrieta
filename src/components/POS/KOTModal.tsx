@@ -61,9 +61,9 @@ export const KOTModal: React.FC<KOTModalProps> = ({
   const dateFormatted = now.toLocaleDateString('ar-EG', { day: 'numeric', month: 'short', year: 'numeric' });
 
   const getOrderTypeLabel = () => {
-    if (orderType === 'dine_in') return `صالة - طاولة #${tableNumber || '؟'}`;
-    if (orderType === 'takeaway') return 'سفري (تيك أواي)';
-    return 'توصيل (دليفري)';
+    if (orderType === 'dine_in') return `🍽️ صالة - طاولة #${tableNumber || '؟'}`;
+    if (orderType === 'takeaway') return '🥡 سفري (تيك أواي)';
+    return '🛵 توصيل (دليفري)';
   };
 
   const totalItemsCount = cart.reduce((sum, item) => sum + (item.quantity || 1), 0);

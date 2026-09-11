@@ -96,7 +96,7 @@ export interface WasteRecord {
 
 export interface POSAuditLog {
   id: string;
-  action: 'void_item' | 'apply_large_discount' | 'refund_order' | 'cash_out' | 'open_shift' | 'close_shift' | 'override_stock';
+  action: 'void_item' | 'create_order' | 'apply_large_discount' | 'refund_order' | 'cash_out' | 'open_shift' | 'close_shift' | 'override_stock';
   description: string;
   performedBy: string;
   authorizedBy?: string;

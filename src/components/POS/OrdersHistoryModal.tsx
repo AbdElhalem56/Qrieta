@@ -47,21 +47,28 @@ export const OrdersHistoryModal: React.FC<OrdersHistoryModalProps> = ({
 
   if (!isOpen) return null;
 
-  const filteredOrders = orders.filter((ord: any) => {
-    const matchesType = filterType === 'all' || ord.order_type === filterType;
-    const query = searchQuery.trim().toLowerCase();
-    if (!query) return matchesType;
+  const filteredOrders = React.useMemo(() => {
+    const seen = new Set<string>();
+    return orders.filter((ord: any) => {
+      const id = String(ord.id);
+      if (seen.has(id)) return false;
+      seen.add(id);
 
-    const idMatch = String(ord.id).toLowerCase().includes(query) || 
-                    String(ord.daily_order_number || '').toLowerCase().includes(query);
-    const customerMatch = (ord.customer_name || '').toLowerCase().includes(query) || 
-                          (ord.customer_phone || '').includes(query);
-    const itemsMatch = Array.isArray(ord.items) && ord.items.some((it: any) => 
-      (it.name || '').toLowerCase().includes(query)
-    );
+      const matchesType = filterType === 'all' || ord.order_type === filterType;
+      const query = searchQuery.trim().toLowerCase();
+      if (!query) return matchesType;
 
-    return matchesType && (idMatch || customerMatch || itemsMatch);
-  });
+      const idMatch = String(ord.id).toLowerCase().includes(query) || 
+                      String(ord.daily_order_number || '').toLowerCase().includes(query);
+      const customerMatch = (ord.customer_name || '').toLowerCase().includes(query) || 
+                            (ord.customer_phone || '').includes(query);
+      const itemsMatch = Array.isArray(ord.items) && ord.items.some((it: any) => 
+        (it.name || '').toLowerCase().includes(query)
+      );
+
+      return matchesType && (idMatch || customerMatch || itemsMatch);
+    });
+  }, [orders, filterType, searchQuery]);
 
   const handlePrintReceipt = (ord: any) => {
     const receiptData: TaxReceiptData = {

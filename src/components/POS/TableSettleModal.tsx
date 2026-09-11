@@ -42,9 +42,14 @@ export const TableSettleModal: React.FC<TableSettleModalProps> = ({
 
   if (!isOpen || !table) return null;
 
-  const totalDue = Number(table.totalDue || 0);
   const activeOrders = Array.isArray(table.activeOrders) ? table.activeOrders : [];
-  const heldBills = Array.isArray(table.heldBills) ? table.heldBills : [];
+  const activeOrderIds = new Set(activeOrders.map((o: any) => String(o.id)));
+  const heldBills = Array.isArray(table.heldBills) 
+    ? table.heldBills.filter((h: any) => !activeOrderIds.has(String(h.id))) 
+    : [];
+
+  const totalDue = Number(table.totalDue || 0);
+  const totalOrdersCount = activeOrders.length + heldBills.length;
 
   const cashAmount = parseFloat(cashTendered) || 0;
   const changeDue = Math.max(0, cashAmount - totalDue);
@@ -112,7 +117,7 @@ export const TableSettleModal: React.FC<TableSettleModalProps> = ({
               <div className="text-left bg-black/20 px-3.5 py-2 rounded-xl border border-white/10">
                 <span className="text-[11px] text-rose-100 block">عدد الطلبات:</span>
                 <span className="text-sm font-mono font-bold">
-                  {activeOrders.length + heldBills.length} طلبات نشطة
+                  {totalOrdersCount} {totalOrdersCount === 1 ? 'طلب نشط' : 'طلبات نشطة'}
                 </span>
               </div>
             </div>
@@ -125,7 +130,7 @@ export const TableSettleModal: React.FC<TableSettleModalProps> = ({
                   <span>تفاصيل أصناف الطاولة المعلقة:</span>
                 </span>
                 <span className="text-[11px] font-mono text-slate-500">
-                  {activeOrders.length + heldBills.length} طلب
+                  {totalOrdersCount} طلب
                 </span>
               </div>
 

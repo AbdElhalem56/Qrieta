@@ -143,7 +143,6 @@ export const CashierPOS: React.FC = () => {
   const [selectedRestaurant, setSelectedRestaurant] = useState<Restaurant | null>(null);
   const [restaurantGeofence, setRestaurantGeofence] = useState<RestaurantGeofence | null>(null);
   const [loading, setLoading] = useState<boolean>(true);
-  const [isBranchModalOpen, setIsBranchModalOpen] = useState<boolean>(false);
 
   // Menu, Tables & Orders Data
   const [categories, setCategories] = useState<Category[]>([]);
@@ -203,6 +202,7 @@ export const CashierPOS: React.FC = () => {
 
   // Cart State
   const [cart, setCart] = useState<POSCartItem[]>([]);
+  const [loadedOrderIds, setLoadedOrderIds] = useState<string[]>([]);
   const [discountType, setDiscountType] = useState<'fixed' | 'percentage'>('percentage');
   const [discountValue, setDiscountValue] = useState<number>(0);
   const [tipsAmount, setTipsAmount] = useState<number>(0);
@@ -478,6 +478,9 @@ export const CashierPOS: React.FC = () => {
           }
 
           if (targetRest) {
+            // Strictly scope available restaurants to this single branch only
+            setRestaurants([targetRest]);
+
             // If switching from another restaurant, reset cart & current inputs
             if (selectedRestaurant && selectedRestaurant.id !== targetRest.id) {
               setCart([]);
@@ -1144,11 +1147,13 @@ export const CashierPOS: React.FC = () => {
         return match && (ord.order_type === 'dine_in' || !ord.order_type || firstNote.includes('صالة'));
       });
 
-      // Find held/parked bills for this table
+      // Find held/parked bills for this table (strictly exclude any that share an ID with an active order)
+      const matchedOrderIds = new Set(matchedOrders.map(o => String(o.id)));
       const matchedHeld = heldBills.filter(h => {
         const hTableNum = String(h.tableNumber || '').trim();
         const hTableId = String(h.tableId || '').trim();
-        return hTableNum === tableNum || hTableId === tableId;
+        const matchesTable = (hTableNum && hTableNum === tableNum) || (hTableId && hTableId === tableId);
+        return matchesTable && !matchedOrderIds.has(String(h.id));
       });
 
       const ordersSum = matchedOrders.reduce((sum, o) => sum + (Number(o.total_price || o.total_amount) || 0), 0);
@@ -1404,22 +1409,24 @@ export const CashierPOS: React.FC = () => {
     if (cart.length > 2) {
       if (confirm('هل تريد مسح جميع الأصناف من الفاتورة؟')) {
         setCart([]);
+        setLoadedOrderIds([]);
         setDiscountValue(0);
         setTipsAmount(0);
         setOrderNotes('');
       }
     } else {
       setCart([]);
+      setLoadedOrderIds([]);
       setDiscountValue(0);
       setTipsAmount(0);
       setOrderNotes('');
     }
   };
 
-  // Hold Current Bill or Send to Kitchen as Table Order
+  // Hold Current Bill (تعليق الفاتورة محلياً على جهاز الكاشير بدون إرسالها للمطبخ وبدون تكرار)
   const handleHoldBill = async () => {
     if (cart.length === 0) {
-      alert('لا توجد أصناف لتعليق الفاتورة أو إرسالها للطاولة!');
+      alert('لا توجد أصناف لتعليق الفاتورة!');
       return;
     }
 
@@ -1428,12 +1435,6 @@ export const CashierPOS: React.FC = () => {
       : orderType === 'takeaway'
       ? `سفري - ${customerName || 'عميل كاشير'}`
       : `دليفري - ${customerName || 'طلب خارجي'}`;
-
-    let dailyOrderNum = parseInt(customOrderNumber) || 0;
-    if (!dailyOrderNum && selectedRestaurant) {
-      dailyOrderNum = await getNextDailyOrderNumber(selectedRestaurant.id);
-    }
-    if (!dailyOrderNum) dailyOrderNum = activeOrders.length + 1;
 
     const newOrderId = `pos-hold-${Date.now()}`;
 
@@ -1456,13 +1457,71 @@ export const CashierPOS: React.FC = () => {
 
     setHeldBills(prev => [newHeldBill, ...prev]);
 
-    // Register live order so it persists on server and appears across all screens
+    // If table order, mark table as occupied
+    if (selectedTable?.id) {
+      setTables(prev => prev.map(t => t.id === selectedTable.id ? { ...t, is_occupied: true } : t));
+      supabase.from('tables').update({ is_occupied: true }).eq('id', selectedTable.id).then(() => {}, () => {});
+    }
+
+    setCart([]);
+    setLoadedOrderIds([]);
+    setDiscountValue(0);
+    setTipsAmount(0);
+    setOrderNotes('');
+    setCustomerName('');
+    setCustomerPhone('');
+    setSelectedTable(null);
+
+    addAuditLog('void_item', `تم تعليق الفاتورة (${title}) بإجمالي ${finalTotal.toFixed(2)} ج.م`);
+  };
+
+  // إرسال الطلب للمطبخ مع طباعة بون المطبخ الموحد تلقائياً وبشكل فوري (طلب واحد غير مكرر)
+  const handleSendOrderToKitchenAndPrint = async () => {
+    if (cart.length === 0) {
+      alert('السلة فارغة! يرجى إضافة أصناف أولاً قبل الإرسال للمطبخ.');
+      return;
+    }
+
+    let dailyOrderNum = parseInt(customOrderNumber) || 0;
+    if (!dailyOrderNum && selectedRestaurant) {
+      dailyOrderNum = await getNextDailyOrderNumber(selectedRestaurant.id);
+    }
+    if (!dailyOrderNum) dailyOrderNum = activeOrders.length + 1;
+
+    // 1. طباعة البون الموحد للمطبخ تلقائياً وفوراً
+    printKitchenTicket({
+      restaurantName: selectedRestaurant?.name || 'مطعم وكافيه كريتا',
+      orderNumber: dailyOrderNum,
+      orderType,
+      tableNumber: selectedTable?.table_number,
+      customerName: customerName.trim() || undefined,
+      customerPhone: customerPhone.trim() || undefined,
+      deliveryAddress: customerAddress.trim() || undefined,
+      cashierName: shift.cashierName || 'الرئيسي',
+      items: cart.map(it => ({
+        name: it.name,
+        quantity: it.quantity,
+        notes: it.notes,
+        options: it.options
+      })),
+      orderNotes: orderNotes.trim() || undefined
+    });
+
+    // 2. إنشاء / تحديث طلب المطبخ النشط كطلب وحيد مباشر
+    const targetOrderId = (loadedOrderIds.length > 0 ? loadedOrderIds[0] : null) || `pos-kot-${Date.now()}`;
+
+    const title = orderType === 'dine_in' 
+      ? `صالة - طاولة #${selectedTable?.table_number || 'بدون'}`
+      : orderType === 'takeaway'
+      ? `سفري - ${customerName || 'عميل كاشير'}`
+      : `دليفري - ${customerName || 'طلب خارجي'}`;
+
     if (selectedRestaurant) {
       const liveOrderData: any = {
-        id: newOrderId,
+        id: targetOrderId,
         daily_order_number: dailyOrderNum,
         restaurant_id: selectedRestaurant.id,
-        source: 'pos',
+        source: 'cashier_pos',
         order_type: orderType,
         table_id: selectedTable?.id || null,
         table_number: selectedTable?.table_number || null,
@@ -1485,63 +1544,55 @@ export const CashierPOS: React.FC = () => {
         created_at: new Date().toISOString()
       };
 
+      // تسجيل في خادم الطلبات المباشرة
       registerLiveOrder(liveOrderData).catch(() => {});
 
-      // Add to activeOrders
-      setActiveOrders(prev => [liveOrderData, ...prev]);
+      // خصم مكونات الوصفات من المخزون بمجرد الإرسال للمطبخ للتحضير
+      deductOrderRecipeStock(
+        selectedRestaurant.id,
+        cart.map(it => ({
+          id: it.menuItemId,
+          name: it.name,
+          quantity: it.quantity,
+          options: it.options,
+          notes: (it as any).notes,
+          sugar_level: (it as any).sugar_level || (it as any).sugar,
+          selectedOptions: (it as any).selectedOptions
+        })),
+        String(dailyOrderNum),
+        shift.cashierName || 'كاشير'
+      ).catch(() => {});
 
-      // If table order, mark table as occupied in DB & local
+      // تحديث قائمة الطلبات النشطة محلياً وتجنب التكرار
+      const existingIds = new Set(loadedOrderIds.map(String));
+      setActiveOrders(prev => [
+        liveOrderData,
+        ...prev.filter(o => String(o.id) !== String(targetOrderId) && !existingIds.has(String(o.id)))
+      ]);
+
+      // إشغال الطاولة في حال كان طلب صالة
       if (selectedTable?.id) {
         setTables(prev => prev.map(t => t.id === selectedTable.id ? { ...t, is_occupied: true } : t));
         supabase.from('tables').update({ is_occupied: true }).eq('id', selectedTable.id).then(() => {}, () => {});
       }
+
+      // إذا كان هذا الطلب تم استرجاعه من المعلقات، يتم حذفه من المعلقات حتى لا يتكرر
+      if (loadedOrderIds.length > 0) {
+        setHeldBills(prev => prev.filter(b => !existingIds.has(String(b.id))));
+      }
     }
 
     setCart([]);
+    setLoadedOrderIds([]);
     setDiscountValue(0);
     setTipsAmount(0);
     setOrderNotes('');
     setCustomerName('');
     setCustomerPhone('');
     setSelectedTable(null);
+    setCustomOrderNumber('');
 
-    addAuditLog('void_item', `تم تعليق الفاتورة وإرسالها للطاولة (${title}) بإجمالي ${finalTotal.toFixed(2)} ج.م`);
-  };
-
-  // إرسال الطلب للمطبخ مع طباعة بون المطبخ الموحد تلقائياً وبشكل فوري
-  const handleSendOrderToKitchenAndPrint = async () => {
-    if (cart.length === 0) {
-      alert('السلة فارغة! يرجى إضافة أصناف أولاً قبل الإرسال للمطبخ.');
-      return;
-    }
-
-    let dailyOrderNum = parseInt(customOrderNumber) || 0;
-    if (!dailyOrderNum && selectedRestaurant) {
-      dailyOrderNum = await getNextDailyOrderNumber(selectedRestaurant.id);
-    }
-    if (!dailyOrderNum) dailyOrderNum = activeOrders.length + 1;
-
-    // طباعة البون الموحد للمطبخ تلقائياً وفوراً
-    printKitchenTicket({
-      restaurantName: selectedRestaurant?.name || 'مطعم وكافيه كريتا',
-      orderNumber: dailyOrderNum,
-      orderType,
-      tableNumber: selectedTable?.table_number,
-      customerName: customerName.trim() || undefined,
-      customerPhone: customerPhone.trim() || undefined,
-      deliveryAddress: customerAddress.trim() || undefined,
-      cashierName: shift.cashierName || 'الرئيسي',
-      items: cart.map(it => ({
-        name: it.name,
-        quantity: it.quantity,
-        notes: it.notes,
-        options: it.options
-      })),
-      orderNotes: orderNotes.trim() || undefined
-    });
-
-    // حفظ الطلب في المعلقات والطلبات الحية لجميع شاشات المطبخ والبار
-    await handleHoldBill();
+    addAuditLog('create_order', `تم إرسال الطلب للمطبخ (${title}) برقم #${dailyOrderNum} وإجمالي ${finalTotal.toFixed(2)} ج.م`);
   };
 
   // Settle Table Account (تحصيل وسداد حساب الطاولة وإخلاءها)
@@ -1633,9 +1684,11 @@ export const CashierPOS: React.FC = () => {
         const cardAdd = chosenPaymentMethod === 'card' ? amountToCollect : 0;
         const walletAdd = chosenPaymentMethod === 'wallet' ? amountToCollect : 0;
 
+        const settledCount = matchedOrders.length > 0 ? matchedOrders.length : Math.max(1, matchedHeld.length);
+
         setShift(prev => ({
           ...prev,
-          ordersCount: prev.ordersCount + Math.max(1, matchedOrders.length + matchedHeld.length),
+          ordersCount: prev.ordersCount + settledCount,
           totalSales: prev.totalSales + amountToCollect,
           cashSales: prev.cashSales + cashAdd,
           cardSales: prev.cardSales + cardAdd,
@@ -1644,7 +1697,7 @@ export const CashierPOS: React.FC = () => {
 
         logShiftAuditRecord(selectedRestaurant.id, {
           ...shift,
-          ordersCount: shift.ordersCount + Math.max(1, matchedOrders.length + matchedHeld.length),
+          ordersCount: shift.ordersCount + settledCount,
           totalSales: shift.totalSales + amountToCollect,
           cashSales: shift.cashSales + cashAdd,
           cardSales: shift.cardSales + cardAdd,
@@ -1790,22 +1843,18 @@ export const CashierPOS: React.FC = () => {
     }
   };
 
-  // Load Table Items into POS Cart for editing
+  // Load Table Items into POS Cart for editing or payment
   const handleLoadTableToCart = (tableData: any) => {
-    const matchedHeld = tableData.heldBills || [];
     const matchedOrders = tableData.activeOrders || [];
+    const matchedOrderIds = new Set(matchedOrders.map((o: any) => String(o.id)));
+    const matchedHeld = (tableData.heldBills || []).filter((h: any) => !matchedOrderIds.has(String(h.id)));
 
     const newCartItems: POSCartItem[] = [];
-
-    // From held bills
-    matchedHeld.forEach((h: any) => {
-      if (Array.isArray(h.cart)) {
-        newCartItems.push(...h.cart);
-      }
-    });
+    const loadedIds: string[] = [];
 
     // From active orders
     matchedOrders.forEach((ord: any) => {
+      loadedIds.push(String(ord.id));
       const items = ord.order_items || ord.items || [];
       if (Array.isArray(items)) {
         items.forEach((it: any) => {
@@ -1822,9 +1871,18 @@ export const CashierPOS: React.FC = () => {
       }
     });
 
+    // From held bills (if any and not already in active orders)
+    matchedHeld.forEach((h: any) => {
+      loadedIds.push(String(h.id));
+      if (Array.isArray(h.cart)) {
+        newCartItems.push(...h.cart);
+      }
+    });
+
     if (newCartItems.length > 0) {
       setCart(newCartItems);
     }
+    setLoadedOrderIds(loadedIds);
     setSelectedTable(tableData);
     setOrderType('dine_in');
     setSettleModalTable(null);
@@ -1833,7 +1891,8 @@ export const CashierPOS: React.FC = () => {
 
   // Recall Held Bill
   const handleRecallBill = (bill: HeldBill) => {
-    setCart(bill.cart);
+    setCart([...bill.cart]);
+    setLoadedOrderIds([bill.id]);
     setOrderType(bill.orderType);
     if (bill.tableId && tables.length > 0) {
       const tb = tables.find(t => t.id === bill.tableId);
@@ -2092,21 +2151,23 @@ export const CashierPOS: React.FC = () => {
           created_at: new Date().toISOString()
         }).catch(() => {});
 
-        // Update inventory store & Auto-deduct recipes raw materials
-        deductOrderRecipeStock(
-          selectedRestaurant.id,
-          cart.map(it => ({
-            id: it.menuItemId,
-            name: it.name,
-            quantity: it.quantity,
-            options: it.options,
-            notes: (it as any).notes,
-            sugar_level: (it as any).sugar_level || (it as any).sugar,
-            selectedOptions: (it as any).selectedOptions
-          })),
-          String(dailyOrderNum),
-          shift.cashierName || 'كاشير'
-        ).catch(() => {});
+        // Update inventory store & Auto-deduct recipes raw materials (only if not already deducted when sent to kitchen)
+        if (loadedOrderIds.length === 0) {
+          deductOrderRecipeStock(
+            selectedRestaurant.id,
+            cart.map(it => ({
+              id: it.menuItemId,
+              name: it.name,
+              quantity: it.quantity,
+              options: it.options,
+              notes: (it as any).notes,
+              sugar_level: (it as any).sugar_level || (it as any).sugar,
+              selectedOptions: (it as any).selectedOptions
+            })),
+            String(dailyOrderNum),
+            shift.cashierName || 'كاشير'
+          ).catch(() => {});
+        }
 
         cart.forEach(it => {
           updateProductStock(selectedRestaurant.id, {
@@ -2130,7 +2191,8 @@ export const CashierPOS: React.FC = () => {
         }).catch(() => {});
       }
 
-      // Update local activeOrders list immediately
+      // Update local activeOrders list immediately (filter out any old loaded order IDs so it never duplicates)
+      const loadedIdsSet = new Set(loadedOrderIds.map(String));
       const newSavedOrder: any = {
         ...(createdOrder || orderPayload),
         id: createdOrder?.id || `pos-${Date.now()}`,
@@ -2139,7 +2201,18 @@ export const CashierPOS: React.FC = () => {
         payment_method: currentPayMethod,
         table_number: selectedTable?.table_number,
       };
-      setActiveOrders(prev => [newSavedOrder, ...prev]);
+      setActiveOrders(prev => [
+        newSavedOrder,
+        ...prev.filter(o => String(o.id) !== String(newSavedOrder.id) && !loadedIdsSet.has(String(o.id)))
+      ]);
+
+      // If this payment settled one or more loaded orders (from kitchen or table), mark them completed & paid
+      if (loadedOrderIds.length > 0 && selectedRestaurant) {
+        for (const oldId of loadedOrderIds) {
+          updateLiveOrderStatus(oldId, selectedRestaurant.id, 'completed', 'paid', shift.cashierName).catch(() => {});
+        }
+        setHeldBills(prev => prev.filter(b => !loadedIdsSet.has(String(b.id))));
+      }
 
       // Deduct Inventory Stock
       setStockMap(prev => {
@@ -2236,6 +2309,7 @@ export const CashierPOS: React.FC = () => {
 
       // Reset Cart State
       setCart([]);
+      setLoadedOrderIds([]);
       setDiscountValue(0);
       setTipsAmount(0);
       setCashTendered('');
@@ -3166,6 +3240,11 @@ export const CashierPOS: React.FC = () => {
                                 ط #{ord.table_number}
                               </span>
                             )}
+                            {ord.payment_status === 'unpaid' && (
+                              <span className="text-[10px] bg-amber-100 text-amber-800 border border-amber-300 px-1.5 py-0.5 rounded font-bold">
+                                غير مسدد
+                              </span>
+                            )}
                           </div>
                           <span className="font-mono font-bold text-emerald-600 text-sm">
                             {total.toFixed(2)} ج.م
@@ -3187,6 +3266,41 @@ export const CashierPOS: React.FC = () => {
                           </span>
 
                           <div className="flex items-center gap-1.5">
+                            {ord.payment_status === 'unpaid' && (
+                              <button
+                                onClick={() => {
+                                  const newCart: POSCartItem[] = Array.isArray(ord.items) ? ord.items.map((it: any) => ({
+                                    id: `ci-${Date.now()}-${Math.random()}`,
+                                    menuItemId: it.id || `prod-${Math.random()}`,
+                                    name: it.name,
+                                    price: Number(it.price || 0),
+                                    quantity: Number(it.quantity || 1),
+                                    notes: it.notes,
+                                    options: it.options
+                                  })) : [];
+                                  setCart(newCart);
+                                  setLoadedOrderIds([String(ord.id)]);
+                                  setOrderType(ord.order_type || 'takeaway');
+                                  setCustomerName(ord.customer_name || '');
+                                  setCustomerPhone(ord.customer_phone || '');
+                                  setCustomerAddress(ord.delivery_address || '');
+                                  setOrderNotes(ord.notes || '');
+                                  setCustomOrderNumber(String(getDisplayOrderNumber(ord)));
+                                  if (ord.table_number) {
+                                    const found = tables.find(t => String(t.table_number) === String(ord.table_number));
+                                    if (found) setSelectedTable(found);
+                                  }
+                                  setActiveTab('pos');
+                                  setSidebarView('cart');
+                                }}
+                                className="px-2.5 py-1 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-[11px] font-bold flex items-center gap-1 transition-all cursor-pointer shadow-xs"
+                                title="تحصيل الفاتورة الآن"
+                              >
+                                <DollarSign size={12} />
+                                <span>تحصيل</span>
+                              </button>
+                            )}
+
                             <button
                               onClick={() => {
                                 const receiptData: TaxReceiptData = {
@@ -4320,12 +4434,14 @@ export const CashierPOS: React.FC = () => {
 
               {restaurantServices.kitchen_enabled ? (
                 <button
-                  onClick={() => setIsKOTModalOpen(true)}
-                  className="py-1.5 bg-amber-50 hover:bg-amber-100 text-amber-800 font-bold text-[11px] rounded-xl border border-amber-200 flex items-center justify-center gap-1 transition-all cursor-pointer shadow-sm"
-                  title="إرسال البون للمطبخ والأقسام"
+                  type="button"
+                  onClick={handleSendOrderToKitchenAndPrint}
+                  disabled={cart.length === 0}
+                  className="py-1.5 bg-amber-50 hover:bg-amber-100 text-amber-800 font-bold text-[11px] rounded-xl border border-amber-200 flex items-center justify-center gap-1 transition-all cursor-pointer shadow-sm disabled:opacity-40"
+                  title="إرسال الطلب للمطبخ وطباعة بون التشغيل تلقائياً"
                 >
                   <ChefHat size={13} className="text-amber-600" />
-                  <span>إرسال KOT</span>
+                  <span>إرسال بون للمطبخ</span>
                 </button>
               ) : (
                 <div
@@ -4731,7 +4847,7 @@ export const CashierPOS: React.FC = () => {
         cart={cart}
         orderNotes={orderNotes}
         onConfirmSend={() => {
-          handleHoldBill();
+          handleSendOrderToKitchenAndPrint();
         }}
       />
 
@@ -4819,12 +4935,14 @@ export const CashierPOS: React.FC = () => {
           if (!tableData) return;
           const totalAmt = Number(tableData.totalDue || 0);
           const allItems: any[] = [];
-          (tableData.activeOrders || []).forEach((ord: any) => {
+          const matchedOrders = tableData.activeOrders || [];
+          const matchedOrderIds = new Set(matchedOrders.map((o: any) => String(o.id)));
+          matchedOrders.forEach((ord: any) => {
             const items = ord.order_items || ord.items || [];
             if (Array.isArray(items)) allItems.push(...items);
           });
           (tableData.heldBills || []).forEach((h: any) => {
-            if (Array.isArray(h.cart)) allItems.push(...h.cart);
+            if (!matchedOrderIds.has(String(h.id)) && Array.isArray(h.cart)) allItems.push(...h.cart);
           });
 
           const receiptData: TaxReceiptData = {
@@ -4949,78 +5067,6 @@ export const CashierPOS: React.FC = () => {
                 </button>
               </div>
             </form>
-          </div>
-        </div>
-      )}
-
-      {/* 10. Quick Branch Switcher Modal */}
-      {isBranchModalOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm animate-in fade-in duration-200" dir="rtl">
-          <div className="bg-white rounded-3xl shadow-2xl border border-slate-200 w-full max-w-md p-6 overflow-hidden">
-            <div className="flex items-center justify-between pb-4 border-b border-slate-100 mb-4">
-              <div className="flex items-center gap-2.5">
-                <div className="w-10 h-10 rounded-2xl bg-amber-100 text-amber-600 flex items-center justify-center font-bold">
-                  <Building2 size={20} />
-                </div>
-                <div>
-                  <h3 className="font-black text-slate-900 text-base">تبديل فرع الكاشير</h3>
-                  <p className="text-xs text-slate-500">اختر المطعم أو الفرع للعمل عليه في هذه الجلسة</p>
-                </div>
-              </div>
-              <button
-                type="button"
-                onClick={() => setIsBranchModalOpen(false)}
-                className="w-8 h-8 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-600 flex items-center justify-center cursor-pointer transition-colors"
-              >
-                <X size={18} />
-              </button>
-            </div>
-
-            <div className="space-y-2 max-h-80 overflow-y-auto pr-1">
-              {restaurants.map((res) => {
-                const isCurrent = res.id === selectedRestaurant?.id;
-                const presetDef = getRestaurantPresetDef(res.service_preset || 'full_dine_in');
-                return (
-                  <button
-                    key={res.id}
-                    type="button"
-                    onClick={() => {
-                      setIsBranchModalOpen(false);
-                      handleSwitchRestaurant(res);
-                    }}
-                    className={`w-full flex items-center justify-between p-3.5 rounded-2xl border text-right transition-all cursor-pointer ${
-                      isCurrent 
-                        ? 'bg-amber-500 text-white border-amber-600 shadow-md shadow-amber-500/20' 
-                        : 'bg-slate-50 hover:bg-slate-100 border-slate-200 text-slate-800'
-                    }`}
-                  >
-                    <div className="flex items-center gap-3">
-                      <div className={`w-10 h-10 rounded-xl flex items-center justify-center font-bold text-sm ${
-                        isCurrent ? 'bg-white/20 text-white' : 'bg-white text-slate-700 shadow-sm'
-                      }`}>
-                        {res.name?.slice(0, 2) || 'مط'}
-                      </div>
-                      <div>
-                        <div className="font-black text-sm">{res.name}</div>
-                        <div className={`text-[11px] flex items-center gap-1.5 ${isCurrent ? 'text-amber-100' : 'text-slate-500'}`}>
-                          <span>{res.slug ? `/r/${res.slug}` : res.id.slice(0, 8)}</span>
-                          <span className={`text-[9px] px-1.5 py-0.5 rounded-md font-bold ${
-                            isCurrent ? 'bg-black/20 text-white' : 'bg-slate-200 text-slate-700'
-                          }`}>
-                            {presetDef.titleAr}
-                          </span>
-                        </div>
-                      </div>
-                    </div>
-                    {isCurrent && (
-                      <span className="bg-white/30 text-white text-[10px] font-black px-2 py-0.5 rounded-lg">
-                        الفرع الحالي
-                      </span>
-                    )}
-                  </button>
-                );
-              })}
-            </div>
           </div>
         </div>
       )}

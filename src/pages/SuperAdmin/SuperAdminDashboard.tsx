@@ -695,6 +695,28 @@ export default function SuperAdminDashboard() {
     img.src = "data:image/svg+xml;base64," + btoa(svgData);
   };
 
+  if (currentUserProfile && currentUserProfile.role !== 'super_admin') {
+    return (
+      <div className="min-h-screen bg-gray-50 flex items-center justify-center p-6 text-right" dir="rtl">
+        <div className="bg-white border border-gray-200 p-8 rounded-3xl max-w-md w-full text-center shadow-xl space-y-4">
+          <div className="w-16 h-16 rounded-2xl bg-amber-50 text-amber-600 flex items-center justify-center mx-auto text-2xl font-bold">
+            🛡️
+          </div>
+          <h2 className="text-2xl font-black text-gray-900">صلاحية محددة لفرعك</h2>
+          <p className="text-sm font-medium text-gray-600 leading-relaxed">
+            حسابك مسجل كمدير فرع ولا يمكن الوصول إلى إدارة شبكة الفروع الأخرى أو التبديل بينها.
+          </p>
+          <button
+            onClick={() => window.location.href = '/admin'}
+            className="w-full py-3 bg-gray-900 hover:bg-gray-800 text-white font-bold rounded-2xl transition-all cursor-pointer"
+          >
+            الذهاب إلى لوحة إدارة فرعي
+          </button>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="min-h-screen bg-white flex flex-col md:flex-row" dir="rtl">
       {/* Mobile Top Bar */}
