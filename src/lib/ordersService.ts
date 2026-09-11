@@ -37,7 +37,7 @@ export interface LiveOrder {
   is_offline?: boolean;
 }
 
-// 1. Get next unified sequential daily order number from server & database
+// 1. Get next unified sequential daily order number from central server
 export async function getNextDailyOrderNumber(restaurantId: string): Promise<number> {
   const today = new Date().toISOString().slice(0, 10);
   const localKey = `qrieta_pos_seq_${restaurantId}_${today}`;
@@ -50,7 +50,32 @@ export async function getNextDailyOrderNumber(restaurantId: string): Promise<num
     localNext = 1;
   }
 
-  // Also query Supabase directly for today's orders to guarantee accurate continuous sequence
+  // 1. Prioritize central server API as authoritative sequential counter
+  try {
+    const res = await fetch('/api/orders/daily-sequence', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        restaurant_id: restaurantId,
+        action: 'next',
+      }),
+    });
+
+    if (res.ok) {
+      const data = await res.json();
+      if (data?.daily_order_number) {
+        const serverNum = Number(data.daily_order_number);
+        try {
+          localStorage.setItem(localKey, String(serverNum));
+        } catch (e) {}
+        return serverNum;
+      }
+    }
+  } catch (err) {
+    console.warn('Daily sequence server request failed, falling back to database/local:', err);
+  }
+
+  // 2. Offline Fallback: query Supabase directly for today's orders
   let dbHighestSeq = 0;
   try {
     const startOfDay = new Date();
@@ -77,35 +102,6 @@ export async function getNextDailyOrderNumber(restaurantId: string): Promise<num
     }
   } catch (dbErr) {
     console.warn('DB sequence check:', dbErr);
-  }
-
-  try {
-    const res = await fetch('/api/orders/daily-sequence', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        restaurant_id: restaurantId,
-        action: 'next',
-      }),
-    });
-
-    if (res.ok) {
-      const data = await res.json();
-      if (data?.daily_order_number) {
-        let serverNum = Number(data.daily_order_number);
-        // Ensure serverNum is at least higher than what exists in Supabase
-        if (dbHighestSeq >= serverNum) {
-          serverNum = dbHighestSeq + 1;
-          syncDailyOrderSequence(restaurantId, serverNum).catch(() => {});
-        }
-        try {
-          localStorage.setItem(localKey, String(serverNum));
-        } catch (e) {}
-        return serverNum;
-      }
-    }
-  } catch (err) {
-    console.warn('Daily sequence server request failed, using database/local sequence counter:', err);
   }
 
   // Fallback to highest known sequence + 1

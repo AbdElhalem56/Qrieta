@@ -833,14 +833,39 @@ export const CashierPOS: React.FC = () => {
   }, [customerLiveOrders, customerFilter]);
 
   // Customer Order Handlers
-  const handleAcceptCustomerOrder = async (order: LiveOrder) => {
+  const handleSendCustomerOrderToKitchen = async (order: LiveOrder) => {
     if (!selectedRestaurant) return;
+    
+    // 1. Direct KOT print/ticket
+    try {
+      printKitchenTicket({
+        restaurantName: selectedRestaurant?.name || 'مطعم وكافيه كريتا',
+        orderNumber: order.daily_order_number || getDisplayOrderNumber(order),
+        orderType: order.order_type || 'dine_in',
+        tableNumber: order.table_number,
+        customerName: order.customer_name,
+        customerPhone: order.customer_phone,
+        deliveryAddress: order.delivery_address,
+        cashierName: shift.cashierName || 'الرئيسي',
+        items: (order.items || []).map(it => ({
+          name: it.name,
+          quantity: it.quantity,
+          notes: it.notes,
+          options: it.options
+        })),
+        orderNotes: order.notes
+      });
+    } catch (printErr) {
+      console.warn('Direct KOT ticket warning:', printErr);
+    }
+
+    // 2. Update status to 'preparing'
     await updateLiveOrderStatus(order.id, selectedRestaurant.id, 'preparing');
     setCustomerLiveOrders(prev => prev.map(o => o.id === order.id ? { ...o, status: 'preparing' } : o));
-    
-    // Auto prompt to print KOT
-    handlePrintCustomerKOT(order);
+    setActiveOrders(prev => prev.map(o => o.id === order.id ? { ...o, status: 'preparing' } : o));
   };
+
+  const handleAcceptCustomerOrder = handleSendCustomerOrderToKitchen;
 
   const handleSetOrderReady = async (order: LiveOrder) => {
     if (!selectedRestaurant) return;
@@ -3795,76 +3820,60 @@ export const CashierPOS: React.FC = () => {
                           </div>
 
                           {/* Action Buttons */}
-                          <div className="grid grid-cols-2 gap-2 pt-2 border-t border-slate-100">
-                            <button
-                              onClick={() => handlePrintCustomerKOT(ord)}
-                              className="px-2.5 py-1.5 bg-slate-800 hover:bg-slate-900 text-white rounded-xl text-xs font-bold flex items-center justify-center gap-1 transition-all cursor-pointer shadow-sm"
-                            >
-                              <Printer size={13} />
-                              <span>طباعة بون (KOT)</span>
-                            </button>
-
+                          <div className="flex flex-col gap-2 pt-2 border-t border-slate-100">
                             {isNew ? (
                               <button
-                                onClick={() => handleAcceptCustomerOrder(ord)}
-                                className="px-2.5 py-1.5 bg-red-600 hover:bg-red-700 text-white rounded-xl text-xs font-bold flex items-center justify-center gap-1 transition-all cursor-pointer shadow-md shadow-red-500/20"
+                                onClick={() => handleSendCustomerOrderToKitchen(ord)}
+                                className="w-full py-2.5 bg-amber-500 hover:bg-amber-600 active:scale-95 text-slate-950 rounded-xl text-xs font-black flex items-center justify-center gap-1.5 shadow-md shadow-amber-500/20 cursor-pointer transition-all"
                               >
-                                <CheckCircle2 size={13} />
-                                <span>قبول وتحضير</span>
+                                <ChefHat size={15} />
+                                <span>🍳 إرسال للمطبخ (KOT)</span>
                               </button>
-                            ) : ord.status === 'preparing' ? (
-                              <div className="flex items-center gap-1">
-                                <button
-                                  onClick={() => handleSetOrderReady(ord)}
-                                  className="px-2 py-1.5 bg-amber-500 hover:bg-amber-600 text-white rounded-xl text-xs font-bold flex items-center justify-center gap-1 transition-all cursor-pointer shadow-sm"
-                                  title="تحديث حالة الطلب إلى جاهز للتسليم"
-                                >
-                                  <Bell size={13} />
-                                  <span>جاهز للتسليم</span>
-                                </button>
-                                <button
-                                  onClick={() => handleCompleteCustomerOrder(ord)}
-                                  className="px-2 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold flex items-center justify-center gap-1 transition-all cursor-pointer shadow-sm"
-                                >
-                                  <Check size={13} />
-                                  <span>تسليم</span>
-                                </button>
-                              </div>
-                            ) : ord.status === 'ready' ? (
+                            ) : (ord.status === 'preparing' || ord.status === 'ready') ? (
                               <button
                                 onClick={() => handleCompleteCustomerOrder(ord)}
-                                className="px-2.5 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold flex items-center justify-center gap-1 transition-all cursor-pointer shadow-sm"
+                                className="w-full py-2.5 bg-emerald-600 hover:bg-emerald-700 active:scale-95 text-white rounded-xl text-xs font-black flex items-center justify-center gap-1.5 shadow-md shadow-emerald-600/20 cursor-pointer transition-all"
                               >
-                                <Check size={13} />
-                                <span>إنهاء وتسليم الطلب</span>
+                                <Check size={15} />
+                                <span>✅ إنهاء وتسليم</span>
                               </button>
-                            ) : (
+                            ) : (ord.status === 'completed' || ord.status === 'delivered') ? (
+                              <div className="w-full py-2 bg-emerald-50 text-emerald-800 border border-emerald-200 rounded-xl text-xs font-bold text-center">
+                                🟢 تم إنهاء وتسليم الطلب
+                              </div>
+                            ) : null}
+
+                            {/* Secondary Actions */}
+                            <div className="grid grid-cols-3 gap-1.5">
+                              <button
+                                onClick={() => handlePrintCustomerKOT(ord)}
+                                className="py-1.5 px-2 bg-slate-800 hover:bg-slate-900 text-white rounded-xl text-[11px] font-bold flex items-center justify-center gap-1 cursor-pointer transition-all shadow-xs"
+                                title="إعادة طباعة بون المطبخ"
+                              >
+                                <Printer size={12} />
+                                <span>طباعة بون</span>
+                              </button>
+
                               <button
                                 onClick={() => handleLoadCustomerOrderToCart(ord)}
-                                className="px-2.5 py-1.5 bg-amber-500 hover:bg-amber-600 text-white rounded-xl text-xs font-bold flex items-center justify-center gap-1 transition-all cursor-pointer shadow-sm"
+                                className="py-1.5 px-2 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl text-[11px] font-bold flex items-center justify-center gap-1 cursor-pointer transition-all"
+                                title="تحميل أصناف الطلب إلى سلة الكاشير"
                               >
-                                <ShoppingCart size={13} />
-                                <span>تحميل للكاشير</span>
+                                <ShoppingCart size={12} />
+                                <span>تحميل للسلة</span>
                               </button>
-                            )}
 
-                            <button
-                              onClick={() => handleLoadCustomerOrderToCart(ord)}
-                              className="px-2.5 py-1.5 bg-amber-50 hover:bg-amber-100 text-amber-800 border border-amber-200 rounded-xl text-xs font-bold flex items-center justify-center gap-1 transition-all cursor-pointer"
-                            >
-                              <ShoppingCart size={13} />
-                              <span>تحميل للسلة</span>
-                            </button>
-
-                            {ord.status !== 'cancelled' && (
-                              <button
-                                onClick={() => handleCancelCustomerOrder(ord)}
-                                className="px-2.5 py-1.5 bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 rounded-xl text-xs font-bold flex items-center justify-center gap-1 transition-all cursor-pointer"
-                              >
-                                <X size={13} />
-                                <span>إلغاء الطلب</span>
-                              </button>
-                            )}
+                              {ord.status !== 'cancelled' && (
+                                <button
+                                  onClick={() => handleCancelCustomerOrder(ord)}
+                                  className="py-1.5 px-2 bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 rounded-xl text-[11px] font-bold flex items-center justify-center gap-1 cursor-pointer transition-all"
+                                  title="إلغاء الطلب"
+                                >
+                                  <X size={12} />
+                                  <span>إلغاء الطلب</span>
+                                </button>
+                              )}
+                            </div>
                           </div>
                         </div>
                       );
@@ -4177,68 +4186,59 @@ export const CashierPOS: React.FC = () => {
                         </div>
 
                         {/* Quick Actions */}
-                        <div className="grid grid-cols-2 gap-1.5 pt-1 border-t border-slate-100">
+                        <div className="flex flex-col gap-2 pt-1 border-t border-slate-100">
                           {isNew ? (
                             <button
-                              onClick={() => handleAcceptCustomerOrder(ord)}
-                              className="col-span-2 py-2 bg-red-600 hover:bg-red-700 text-white rounded-xl text-xs font-black flex items-center justify-center gap-1 shadow-md shadow-red-500/20 cursor-pointer transition-all"
+                              onClick={() => handleSendCustomerOrderToKitchen(ord)}
+                              className="w-full py-2.5 bg-amber-500 hover:bg-amber-600 active:scale-95 text-slate-950 rounded-xl text-xs font-black flex items-center justify-center gap-1.5 shadow-md shadow-amber-500/20 cursor-pointer transition-all"
                             >
-                              <CheckCircle2 size={14} />
-                              <span>⚡ قبول وتحضير الطلب</span>
+                              <ChefHat size={15} />
+                              <span>🍳 إرسال للمطبخ (KOT)</span>
                             </button>
-                          ) : ord.status === 'preparing' ? (
-                            <div className="col-span-2 grid grid-cols-2 gap-1.5">
-                              <button
-                                onClick={() => handleSetOrderReady(ord)}
-                                className="py-2 bg-amber-500 hover:bg-amber-600 text-white rounded-xl text-xs font-black flex items-center justify-center gap-1 shadow-sm cursor-pointer transition-all"
-                                title="إشعار بأن الطلب جاهز للتسليم للزبون"
-                              >
-                                <Bell size={13} />
-                                <span>🛎️ جاهز للتسليم</span>
-                              </button>
-                              <button
-                                onClick={() => handleCompleteCustomerOrder(ord)}
-                                className="py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-black flex items-center justify-center gap-1 shadow cursor-pointer transition-all"
-                              >
-                                <Check size={13} />
-                                <span>✅ إنهاء وتسليم</span>
-                              </button>
-                            </div>
-                          ) : ord.status === 'ready' ? (
+                          ) : (ord.status === 'preparing' || ord.status === 'ready') ? (
                             <button
                               onClick={() => handleCompleteCustomerOrder(ord)}
-                              className="col-span-2 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-black flex items-center justify-center gap-1 shadow cursor-pointer transition-all"
+                              className="w-full py-2.5 bg-emerald-600 hover:bg-emerald-700 active:scale-95 text-white rounded-xl text-xs font-black flex items-center justify-center gap-1.5 shadow-md shadow-emerald-600/20 cursor-pointer transition-all"
                             >
-                              <Check size={14} />
-                              <span>✅ إنهاء وتسليم الطلب</span>
+                              <Check size={15} />
+                              <span>✅ إنهاء وتسليم</span>
                             </button>
+                          ) : (ord.status === 'completed' || ord.status === 'delivered') ? (
+                            <div className="w-full py-2 bg-emerald-50 text-emerald-800 border border-emerald-200 rounded-xl text-xs font-bold text-center">
+                              🟢 تم إنهاء وتسليم الطلب
+                            </div>
                           ) : null}
 
-                          <button
-                            onClick={() => handleLoadCustomerOrderToCart(ord)}
-                            className="py-1.5 bg-amber-500 hover:bg-amber-600 text-white rounded-xl text-xs font-bold flex items-center justify-center gap-1 cursor-pointer transition-all shadow-xs"
-                          >
-                            <ShoppingCart size={13} />
-                            <span>تحميل للكاشير</span>
-                          </button>
-
-                          <button
-                            onClick={() => handlePrintCustomerKOT(ord)}
-                            className="py-1.5 bg-slate-800 hover:bg-slate-900 text-white rounded-xl text-xs font-bold flex items-center justify-center gap-1 cursor-pointer transition-all shadow-xs"
-                          >
-                            <Printer size={13} />
-                            <span>طباعة بون</span>
-                          </button>
-
-                          {ord.status !== 'cancelled' && (
+                          <div className="grid grid-cols-3 gap-1.5">
                             <button
-                              onClick={() => handleCancelCustomerOrder(ord)}
-                              className="col-span-2 py-1 bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 rounded-xl text-[11px] font-bold flex items-center justify-center gap-1 cursor-pointer transition-all"
+                              onClick={() => handlePrintCustomerKOT(ord)}
+                              className="py-1.5 px-2 bg-slate-800 hover:bg-slate-900 text-white rounded-xl text-[11px] font-bold flex items-center justify-center gap-1 cursor-pointer transition-all shadow-xs"
+                              title="إعادة طباعة بون المطبخ"
                             >
-                              <X size={12} />
-                              <span>إلغاء الطلب</span>
+                              <Printer size={12} />
+                              <span>طباعة بون</span>
                             </button>
-                          )}
+
+                            <button
+                              onClick={() => handleLoadCustomerOrderToCart(ord)}
+                              className="py-1.5 px-2 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl text-[11px] font-bold flex items-center justify-center gap-1 cursor-pointer transition-all"
+                              title="تحميل أصناف الطلب إلى سلة الكاشير"
+                            >
+                              <ShoppingCart size={12} />
+                              <span>تحميل للسلة</span>
+                            </button>
+
+                            {ord.status !== 'cancelled' && (
+                              <button
+                                onClick={() => handleCancelCustomerOrder(ord)}
+                                className="py-1.5 px-2 bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 rounded-xl text-[11px] font-bold flex items-center justify-center gap-1 cursor-pointer transition-all"
+                                title="إلغاء الطلب"
+                              >
+                                <X size={12} />
+                                <span>إلغاء الطلب</span>
+                              </button>
+                            )}
+                          </div>
                         </div>
                       </div>
                     );

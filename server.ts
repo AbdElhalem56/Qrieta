@@ -625,14 +625,29 @@ async function startServer() {
     saveToSupabaseStorage("system/daily-sequences.json", dailySequenceStore).catch(() => {});
   };
 
+  // Helper to get local date key (Africa/Cairo or local)
+  const getTodayDateKey = () => {
+    try {
+      const formatter = new Intl.DateTimeFormat('en-CA', {
+        timeZone: 'Africa/Cairo',
+        year: 'numeric',
+        month: '2-digit',
+        day: '2-digit',
+      });
+      return formatter.format(new Date()); // YYYY-MM-DD in Egypt
+    } catch (e) {
+      const d = new Date();
+      return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+    }
+  };
+
   // API to get/assign daily sequence order number per restaurant
   app.get("/api/orders/daily-sequence", (req, res) => {
     const restaurantId = req.query.restaurant_id as string;
     if (!restaurantId) {
       return res.status(400).json({ error: "معرف المطعم مطلوب." });
     }
-    const now = new Date();
-    const dateKey = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+    const dateKey = getTodayDateKey();
     const storeKey = `${restaurantId}_${dateKey}`;
     const currentSaved = dailySequenceStore[storeKey] || 0;
     res.status(200).json({ success: true, restaurant_id: restaurantId, date: dateKey, current_sequence: currentSaved });
@@ -645,16 +660,18 @@ async function startServer() {
     }
 
     try {
-      const now = new Date();
-      // Date in YYYY-MM-DD
-      const dateKey = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+      const dateKey = getTodayDateKey();
       const storeKey = `${restaurant_id}_${dateKey}`;
 
-      // Check highest number in today's live orders
+      // Check highest number in today's live orders (created today or within last 20 hours)
+      const nowMs = Date.now();
+      const recentWindowMs = 20 * 60 * 60 * 1000;
       let highestLiveNum = 0;
       const liveForRest = liveOrdersStore[restaurant_id] || [];
       liveForRest.forEach((o: any) => {
-        if (o.created_at && o.created_at.slice(0, 10) === dateKey && o.daily_order_number) {
+        const oCreated = o.created_at ? new Date(o.created_at).getTime() : 0;
+        const isRecent = (nowMs - oCreated <= recentWindowMs) || (o.created_at && o.created_at.startsWith(dateKey));
+        if (isRecent && o.daily_order_number) {
           const numVal = parseInt(String(o.daily_order_number), 10);
           if (!isNaN(numVal) && numVal > highestLiveNum) {
             highestLiveNum = numVal;
@@ -673,16 +690,19 @@ async function startServer() {
           ? createClient(supabaseUrl, serviceRoleKey)
           : createClient(supabaseUrl, anonKey || "");
 
+        const now = new Date();
         const startOfDay = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0, 0, 0, 0);
+        const twentyHoursAgo = new Date(nowMs - recentWindowMs);
+        const checkSince = startOfDay.getTime() < twentyHoursAgo.getTime() ? startOfDay : twentyHoursAgo;
+
         try {
           const { data: dbOrders, error } = await client
             .from("orders")
             .select("id, created_at, order_items(notes)")
             .eq("restaurant_id", restaurant_id)
-            .gte("created_at", startOfDay.toISOString());
+            .gte("created_at", checkSince.toISOString());
 
           if (!error && Array.isArray(dbOrders)) {
-            dbCount = dbOrders.length;
             dbOrders.forEach((ord: any) => {
               const note = ord.order_items?.[0]?.notes || '';
               const match = note.match(/#(\d+)/);
@@ -693,6 +713,9 @@ async function startServer() {
                 }
               }
             });
+            if (dbOrders.length > dbCount) {
+              dbCount = dbOrders.length;
+            }
           }
         } catch (dbErr) {
           console.warn("Daily count error from DB:", dbErr);
@@ -700,7 +723,7 @@ async function startServer() {
       }
 
       const currentSaved = dailySequenceStore[storeKey] || 0;
-      const baseMax = Math.max(currentSaved, highestLiveNum, dbCount);
+      const baseMax = Math.max(currentSaved, highestLiveNum, dbCount, 0);
       let sequence = baseMax;
 
       if (action === 'next') {
@@ -902,15 +925,12 @@ async function startServer() {
               created_at: dbo.created_at
             };
 
-            const existing = mergedMap.get(String(dbo.id)) || 
-                             Array.from(mergedMap.values()).find(
-                               (o: any) => o.daily_order_number && Number(o.daily_order_number) === Number(dailyNum)
-                             );
+            const existing = mergedMap.get(String(dbo.id));
 
             if (!existing) {
               mergedMap.set(String(dbo.id), mappedOrder);
             } else {
-              // Merge status: never downgrade from ready or preparing back to new!
+              // Merge status: respect explicitly updated higher status (e.g. delivered, completed, preparing)
               const existingRank = STATUS_RANK[existing.status] || 1;
               const dbNormStatus = dbo.status === 'delivered' ? 'completed' : (dbo.status || 'new');
               const dbRank = STATUS_RANK[dbNormStatus] || 1;
@@ -926,24 +946,21 @@ async function startServer() {
               };
 
               mergedMap.set(String(dbo.id), mergedObj);
-              if (existing.id && String(existing.id) !== String(dbo.id)) {
-                mergedMap.set(String(existing.id), mergedObj);
-              }
             }
           });
 
-          // Deduplicate by daily_order_number or id
+          // Deduplicate by unique order ID (never merge distinct orders by sequence number)
           const uniqueOrdersMap = new Map<string, any>();
           Array.from(mergedMap.values()).forEach((ord: any) => {
-            const key = ord.daily_order_number ? `seq-${ord.daily_order_number}` : `id-${ord.id}`;
+            const key = String(ord.id);
             if (!uniqueOrdersMap.has(key)) {
               uniqueOrdersMap.set(key, ord);
             } else {
               const existingOrd = uniqueOrdersMap.get(key);
               const exRank = STATUS_RANK[existingOrd.status] || 1;
               const ordRank = STATUS_RANK[ord.status] || 1;
-              if (ordRank > exRank) {
-                uniqueOrdersMap.set(key, ord);
+              if (ordRank >= exRank) {
+                uniqueOrdersMap.set(key, { ...existingOrd, ...ord });
               }
             }
           });
@@ -1086,8 +1103,7 @@ async function startServer() {
       }
       const orders = liveOrdersStore[restaurant_id];
       const order = orders.find((o: any) => 
-        String(o.id) === String(orderId) || 
-        (o.daily_order_number && String(o.daily_order_number) === String(orderId))
+        String(o.id) === String(orderId)
       );
 
       if (order) {
