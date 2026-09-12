@@ -60,7 +60,7 @@ export const HeldBillsDrawer: React.FC<HeldBillsDrawerProps> = ({
                   <div className="flex items-center gap-2">
                     <span className="font-bold text-slate-800 text-sm">{bill.title}</span>
                     <span className="text-[10px] font-bold bg-amber-50 text-amber-800 border border-amber-200 px-2 py-0.5 rounded-md">
-                      {bill.orderType === 'dine_in' ? 'صالة' : bill.orderType === 'takeaway' ? 'سفري' : 'دليفري'}
+                      {bill.orderType === 'dine_in' ? 'صالة' : bill.orderType === 'takeaway' ? 'تيك اوي' : 'دليفري'}
                     </span>
                   </div>
                   <span className="font-mono font-bold text-emerald-600 text-sm">

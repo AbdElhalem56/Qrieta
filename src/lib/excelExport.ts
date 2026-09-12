@@ -153,7 +153,7 @@ export function generateOrdersExcelSheet(
 
     let typeArabic = 'صالة';
     if (info.orderType === 'delivery') typeArabic = 'دليفري (توصيل)';
-    else if (info.orderType === 'takeaway') typeArabic = 'سفري (تيك أواي)';
+    else if (info.orderType === 'takeaway') typeArabic = 'تيك اوي';
 
     let sourceArabic = info.source === 'customer_app' ? 'تطبيق الزبائن' : 'كاشير الفرع';
 

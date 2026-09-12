@@ -60,6 +60,7 @@ import {
 } from '../lib/customerProfileService';
 import { updateProductStock } from '../lib/inventoryService';
 import { deductOrderRecipeStock } from '../lib/recipeService';
+import { getInitialOfflineFallbackData } from '../lib/posOfflineStore';
 
 type CartItem = {
   product: Product;
@@ -300,6 +301,17 @@ export default function CustomerApp() {
       }
     }
 
+    if (!res) {
+      // Offline fallback: Use default restaurant seed data so customer preview works seamlessly
+      const fallback = getInitialOfflineFallbackData(effectiveSlug || 'qrieta-pos');
+      res = {
+        ...fallback.restaurant,
+        id: effectiveSlug || fallback.restaurant.id,
+        slug: effectiveSlug || fallback.restaurant.slug,
+        is_active: true
+      };
+    }
+
     if (res) {
       // Initialize Meta Pixel if configured for this restaurant
       const cachedPixel = typeof window !== 'undefined' ? localStorage.getItem(`qrieta_fb_pixel_${res.id}`) : null;
@@ -379,7 +391,8 @@ export default function CustomerApp() {
       }
 
       const results = await Promise.all(queries);
-      const rawCategories = results[0].data || [];
+      const fallbackData = getInitialOfflineFallbackData(res.id);
+      const rawCategories = (results[0].data && results[0].data.length > 0) ? results[0].data : fallbackData.categories;
       const formattedCategories = rawCategories.map((cat: any) => ({
         ...cat,
         options: cat.options && cat.options.length > 0 
@@ -388,7 +401,7 @@ export default function CustomerApp() {
       }));
 
       setCategories(formattedCategories);
-      const rawProducts = results[1].data || [];
+      const rawProducts = (results[1].data && results[1].data.length > 0) ? results[1].data : fallbackData.products;
       const formattedProducts = rawProducts.map((p: any) => {
         let pOptions = p.options;
         if (typeof pOptions === 'string') {
@@ -403,7 +416,16 @@ export default function CustomerApp() {
         };
       });
       setProducts(formattedProducts);
-      if (results[2]?.data) setTable(results[2].data);
+      if (results[2]?.data) {
+        setTable(results[2].data);
+      } else if (tableId) {
+        const foundTbl = fallbackData.tables.find(t => t.table_number === tableId || t.id === tableId) || {
+          id: `tbl-${tableId}`,
+          restaurant_id: res.id,
+          table_number: String(tableId)
+        };
+        setTable(foundTbl);
+      }
     }
     setLoading(false);
   };

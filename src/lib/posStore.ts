@@ -38,6 +38,7 @@ export interface HeldBill {
   discountValue: number;
   notes?: string;
   total: number;
+  daily_order_number?: number;
 }
 
 export interface CashTransaction {

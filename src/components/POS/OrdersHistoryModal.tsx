@@ -176,7 +176,7 @@ export const OrdersHistoryModal: React.FC<OrdersHistoryModalProps> = ({
                 filterType === 'takeaway' ? 'bg-amber-500 text-white shadow-sm' : 'text-slate-600 hover:text-slate-900'
               }`}
             >
-              سفري
+              تيك اوي
             </button>
             <button
               onClick={() => setFilterType('delivery')}
@@ -224,7 +224,7 @@ export const OrdersHistoryModal: React.FC<OrdersHistoryModalProps> = ({
                           <div>
                             <div className="flex items-center gap-1.5">
                               <span className="font-bold text-slate-800 text-xs">
-                                {orderType === 'dine_in' ? 'صالة' : orderType === 'takeaway' ? 'سفري' : 'دليفري'}
+                                {orderType === 'dine_in' ? 'صالة' : orderType === 'takeaway' ? 'تيك اوي' : 'دليفري'}
                               </span>
                               {ord.table_number && (
                                 <span className="text-[10px] bg-slate-100 text-slate-600 px-1.5 py-0.5 rounded-md font-bold">

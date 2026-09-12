@@ -2695,7 +2695,7 @@ export default function SuperAdminDashboard() {
                                 </span>
                               </div>
                               <p className="text-[10px] text-slate-400 leading-tight">
-                                إدارة الطاولات وباركود الطاولة. (عطله للمطاعم السحابية والسفري)
+                                إدارة الطاولات وباركود الطاولة. (عطله للمطاعم السحابية والتيك اوي)
                               </p>
                             </div>
                             <label className="relative inline-flex items-center cursor-pointer shrink-0 mt-0.5">

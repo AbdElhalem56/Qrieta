@@ -357,7 +357,7 @@ export const ShiftReportModal: React.FC<ShiftReportModalProps> = ({
                                 </div>
                               </td>
                               <td className="py-2 px-2.5 text-slate-600 font-medium">
-                                {ord.order_type === 'dine_in' ? `🍽️ طاولة ${ord.table_number || ord.tables?.table_number || 'صالة'}` : ord.order_type === 'delivery' ? '🛵 دليفري' : '🛍️ سفري'}
+                                {ord.order_type === 'dine_in' ? `🍽️ طاولة ${ord.table_number || ord.tables?.table_number || 'صالة'}` : ord.order_type === 'delivery' ? '🛵 دليفري' : '🛍️ تيك اوي'}
                               </td>
                               <td className="py-2 px-2.5 text-slate-700 font-bold text-[11px]">
                                 {cashier}

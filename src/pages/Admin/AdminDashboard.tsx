@@ -2037,7 +2037,7 @@ export default function AdminDashboard() {
                     <p className="text-xl font-black text-orange-900 font-mono">
                       {toEnglishDigits(displayedSheetOrders.filter(o => o.order_type === 'takeaway').length)}
                     </p>
-                    <span className="text-[10px] text-orange-600/80 font-medium">سفري / استلام</span>
+                    <span className="text-[10px] text-orange-600/80 font-medium">تيك اوي / استلام</span>
                   </div>
                 </div>
 
@@ -2136,7 +2136,7 @@ export default function AdminDashboard() {
                           { id: 'all', label: 'الكل' },
                           { id: 'dine_in', label: '🍽️ صالة' },
                           { id: 'delivery', label: '🛵 دليفري' },
-                          { id: 'takeaway', label: '🛍️ تيك أواي (سفري)' },
+                          { id: 'takeaway', label: '🛍️ تيك اوي' },
                         ].map(typeTab => (
                           <button
                             key={typeTab.id}
@@ -2282,7 +2282,7 @@ export default function AdminDashboard() {
                                       </span>
                                     ) : (
                                       <span className="inline-flex items-center gap-1 bg-gray-100 text-gray-700 border border-gray-200/60 px-2 py-0.5 rounded-lg text-[10px] font-black">
-                                        <span>🛍️ سفري (تيك أواي)</span>
+                                        <span>🛍️ تيك اوي</span>
                                       </span>
                                     )}
                                   </div>
@@ -2474,7 +2474,7 @@ export default function AdminDashboard() {
                             ? `🍽️ صالة - طاولة ${selectedOrderForDetails.tables?.table_number || selectedOrderForDetails.table_number || 'عامة'}`
                             : selectedOrderForDetails.order_type === 'delivery'
                             ? '🛵 دليفري (توصيل منزلي)'
-                            : '🛍️ سفري (تيك أواي)'}
+                            : '🛍️ تيك اوي'}
                         </span>
                       </div>
                       {selectedOrderForDetails.customer_name && (

@@ -114,7 +114,9 @@ import {
   Boxes,
   Zap,
   MonitorCheck,
-  Building2
+  Building2,
+  Edit2,
+  XCircle
 } from 'lucide-react';
 import { 
   getNextDailyOrderNumber, 
@@ -201,6 +203,7 @@ export const CashierPOS: React.FC = () => {
   const [customerPhone, setCustomerPhone] = useState<string>('');
   const [customerAddress, setCustomerAddress] = useState<string>('');
   const [customOrderNumber, setCustomOrderNumber] = useState<string>('');
+  const [currentCartOrderNumber, setCurrentCartOrderNumber] = useState<number | null>(null);
   const [orderNotes, setOrderNotes] = useState<string>('');
 
   // Cart State
@@ -1522,6 +1525,8 @@ export const CashierPOS: React.FC = () => {
         setDiscountValue(0);
         setTipsAmount(0);
         setOrderNotes('');
+        setCustomOrderNumber('');
+        setCurrentCartOrderNumber(null);
       }
     } else {
       setCart([]);
@@ -1529,6 +1534,8 @@ export const CashierPOS: React.FC = () => {
       setDiscountValue(0);
       setTipsAmount(0);
       setOrderNotes('');
+      setCustomOrderNumber('');
+      setCurrentCartOrderNumber(null);
     }
   };
 
@@ -1542,7 +1549,7 @@ export const CashierPOS: React.FC = () => {
     const title = orderType === 'dine_in' 
       ? `صالة - طاولة #${selectedTable?.table_number || 'بدون'}`
       : orderType === 'takeaway'
-      ? `سفري - ${customerName || 'عميل كاشير'}`
+      ? `تيك اوي - ${customerName || 'عميل كاشير'}`
       : `دليفري - ${customerName || 'طلب خارجي'}`;
 
     const newOrderId = `pos-hold-${Date.now()}`;
@@ -1562,6 +1569,7 @@ export const CashierPOS: React.FC = () => {
       discountValue,
       notes: orderNotes,
       total: finalTotal,
+      daily_order_number: currentCartOrderNumber || (customOrderNumber ? parseInt(customOrderNumber, 10) : undefined)
     };
 
     setHeldBills(prev => [newHeldBill, ...prev]);
@@ -1580,6 +1588,8 @@ export const CashierPOS: React.FC = () => {
     setCustomerName('');
     setCustomerPhone('');
     setSelectedTable(null);
+    setCustomOrderNumber('');
+    setCurrentCartOrderNumber(null);
 
     addAuditLog('void_item', `تم تعليق الفاتورة (${title}) بإجمالي ${finalTotal.toFixed(2)} ج.م`);
   };
@@ -1592,6 +1602,9 @@ export const CashierPOS: React.FC = () => {
     }
 
     let dailyOrderNum = parseInt(customOrderNumber) || 0;
+    if (!dailyOrderNum && currentCartOrderNumber) {
+      dailyOrderNum = currentCartOrderNumber;
+    }
     if (!dailyOrderNum && loadedOrderIds.length > 0) {
       const alreadyNumberedOrder = activeOrders.find(o => loadedOrderIds.includes(String(o.id)) && o.daily_order_number);
       if (alreadyNumberedOrder && alreadyNumberedOrder.daily_order_number) {
@@ -1602,6 +1615,7 @@ export const CashierPOS: React.FC = () => {
       dailyOrderNum = await getNextDailyOrderNumber(selectedRestaurant.id);
     }
     if (!dailyOrderNum) dailyOrderNum = activeOrders.length + 1;
+    setCurrentCartOrderNumber(dailyOrderNum);
 
     // 1. طباعة البون الموحد للمطبخ تلقائياً وفوراً
     printKitchenTicket({
@@ -2009,6 +2023,9 @@ export const CashierPOS: React.FC = () => {
     setCart([...bill.cart]);
     setLoadedOrderIds([bill.id]);
     setOrderType(bill.orderType);
+    if (bill.daily_order_number) {
+      setCurrentCartOrderNumber(bill.daily_order_number);
+    }
     if (bill.tableId && tables.length > 0) {
       const tb = tables.find(t => t.id === bill.tableId);
       if (tb) setSelectedTable(tb);
@@ -2122,6 +2139,9 @@ export const CashierPOS: React.FC = () => {
 
     try {
       let dailyOrderNum = parseInt(customOrderNumber) || 0;
+      if (!dailyOrderNum && currentCartOrderNumber) {
+        dailyOrderNum = currentCartOrderNumber;
+      }
       if (!dailyOrderNum && loadedOrderIds.length > 0) {
         const alreadyNumberedOrder = activeOrders.find(o => loadedOrderIds.includes(String(o.id)) && o.daily_order_number);
         if (alreadyNumberedOrder && alreadyNumberedOrder.daily_order_number) {
@@ -2136,6 +2156,7 @@ export const CashierPOS: React.FC = () => {
       if (!dailyOrderNum) {
         dailyOrderNum = activeOrders.length + 1;
       }
+      setCurrentCartOrderNumber(dailyOrderNum);
 
       const invNumber = generateInvoiceNumber(
         restaurantGeofence?.invoice_prefix || 'INV',
@@ -2435,6 +2456,7 @@ export const CashierPOS: React.FC = () => {
       setTipsAmount(0);
       setCashTendered('');
       setCustomOrderNumber('');
+      setCurrentCartOrderNumber(null);
       setOrderNotes('');
       if (orderType !== 'dine_in') {
         setCustomerName('');
@@ -2862,6 +2884,11 @@ export const CashierPOS: React.FC = () => {
       });
       setCart(loadedItems);
       setOrderType(ord.order_type || 'takeaway');
+      setLoadedOrderIds([String(ord.id)]);
+      const existingNum = ord.daily_order_number || getDisplayOrderNumber(ord);
+      if (existingNum) {
+        setCurrentCartOrderNumber(Number(existingNum));
+      }
       if (ord.table_number) {
         const tb = tables.find(t => String(t.table_number) === String(ord.table_number));
         if (tb) setSelectedTable(tb);
@@ -2869,6 +2896,7 @@ export const CashierPOS: React.FC = () => {
       if (ord.customer_name) setCustomerName(ord.customer_name);
       if (ord.customer_phone) setCustomerPhone(ord.customer_phone);
       if (ord.delivery_address) setCustomerAddress(ord.delivery_address);
+      if (ord.notes) setOrderNotes(ord.notes);
       setSidebarView('cart');
     }
   };
@@ -4159,7 +4187,7 @@ export const CashierPOS: React.FC = () => {
                     { id: 'cashier', label: '💻 كاشير', count: allSystemOrders.filter(o => o.source !== 'customer_app' && !(typeof o.notes === 'string' && o.notes.includes('[طلب زبون'))).length },
                     { id: 'customer_app', label: '📱 تطبيق', count: allSystemOrders.filter(o => o.source === 'customer_app' || (typeof o.notes === 'string' && o.notes.includes('[طلب زبون'))).length },
                     { id: 'dine_in', label: '🍽️ صالة', count: allSystemOrders.filter(o => o.order_type === 'dine_in').length },
-                    { id: 'takeaway', label: '🛍️ سفري', count: allSystemOrders.filter(o => o.order_type === 'takeaway').length },
+                    { id: 'takeaway', label: '🛍️ تيك اوي', count: allSystemOrders.filter(o => o.order_type === 'takeaway').length },
                     { id: 'delivery', label: '🛵 دليفري', count: allSystemOrders.filter(o => o.order_type === 'delivery').length },
                   ].map(f => (
                     <button
@@ -4184,7 +4212,7 @@ export const CashierPOS: React.FC = () => {
               </div>
 
               {/* Order Cards Stream */}
-              <div className="flex-1 overflow-y-auto p-2 space-y-2">
+              <div className="flex-1 overflow-y-auto p-2.5 space-y-3">
                 {filteredAllSystemOrders.length === 0 ? (
                   <div className="h-64 flex flex-col items-center justify-center text-slate-400 space-y-2">
                     <Layers size={32} className="text-slate-300" />
@@ -4202,133 +4230,207 @@ export const CashierPOS: React.FC = () => {
                     return (
                       <div
                         key={ord.id}
-                        className="p-3 bg-white rounded-2xl border border-slate-200 hover:border-slate-300 transition-all shadow-xs space-y-2"
+                        className="p-3.5 bg-white rounded-2xl border border-slate-200 hover:border-slate-300 transition-all shadow-xs space-y-3"
                       >
-                        {/* Header: Order Number & Badges */}
-                        <div className="flex items-center justify-between gap-1">
-                          <div className="flex items-center gap-1.5">
-                            <span className="w-8 h-8 rounded-xl bg-amber-50 border border-amber-300 text-amber-900 flex items-center justify-center font-bold font-mono text-xs shadow-2xs">
+                        {/* 1. Header: Order Number, Source, Type, Paid Status, and Main Status */}
+                        <div className="flex items-start justify-between gap-2">
+                          <div className="flex items-center gap-2.5">
+                            <span className="min-w-[44px] h-10 px-2 rounded-xl bg-amber-500 text-slate-950 flex items-center justify-center font-black font-mono text-sm shadow-xs border border-amber-400">
                               #{dispNum}
                             </span>
-                            <div className="flex items-center gap-1 flex-wrap">
-                              <span className={`px-1.5 py-0.5 rounded-md text-[10px] font-black ${
-                                isCustomer 
-                                  ? 'bg-blue-50 text-blue-700 border border-blue-200' 
-                                  : 'bg-emerald-50 text-emerald-700 border border-emerald-200'
-                              }`}>
-                                {isCustomer ? '📱 تطبيق' : '💻 كاشير'}
-                              </span>
-                              <span className="px-1.5 py-0.5 rounded-md text-[10px] font-bold bg-slate-100 text-slate-700 border border-slate-200">
-                                {oType === 'dine_in' ? `🍽️ صالة ${ord.table_number ? `#${ord.table_number}` : ''}` :
-                                 oType === 'takeaway' ? '🛍️ سفري' : '🛵 دليفري'}
-                              </span>
+                            <div className="space-y-1">
+                              <div className="flex items-center gap-1.5 flex-wrap">
+                                <span className={`px-2 py-0.5 rounded-md text-[10px] font-black ${
+                                  isCustomer 
+                                    ? 'bg-blue-50 text-blue-700 border border-blue-200' 
+                                    : 'bg-emerald-50 text-emerald-700 border border-emerald-200'
+                                }`}>
+                                  {isCustomer ? '📱 تطبيق العميل' : '💻 كاشير المطعم'}
+                                </span>
+                                <span className="px-2 py-0.5 rounded-md text-[10px] font-bold bg-slate-100 text-slate-700 border border-slate-200">
+                                  {oType === 'dine_in' ? `🍽️ صالة ${ord.table_number ? `(طاولة #${ord.table_number})` : ''}` :
+                                   oType === 'takeaway' ? '🛍️ تيك اوي' : '🛵 دليفري'}
+                                </span>
+                                <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded-md ${
+                                  isPaid ? 'bg-emerald-50 text-emerald-700 border border-emerald-200' : 'bg-amber-50 text-amber-800 border border-amber-200'
+                                }`}>
+                                  {isPaid ? 'مدفوع' : 'غير مدفوع'}
+                                </span>
+                              </div>
+                              <div className="flex items-center gap-2 text-[11px] text-slate-400 font-mono">
+                                <Clock size={11} className="text-slate-400 shrink-0" />
+                                <span>{new Date(ord.created_at || Date.now()).toLocaleTimeString('ar-EG', { hour: '2-digit', minute: '2-digit' })}</span>
+                                <span>•</span>
+                                <span>{new Date(ord.created_at || Date.now()).toLocaleDateString('ar-EG', { day: 'numeric', month: 'short' })}</span>
+                              </div>
                             </div>
                           </div>
 
-                          {/* Status */}
-                          <span className={`px-2 py-0.5 rounded-lg text-[10px] font-black ${
-                            ord.status === 'new' ? 'bg-red-500 text-white animate-pulse' :
-                            ord.status === 'preparing' ? 'bg-amber-500 text-white' :
-                            ord.status === 'ready' ? 'bg-cyan-500 text-white' :
-                            ord.status === 'completed' ? 'bg-emerald-600 text-white' :
+                          {/* Order Status Badge */}
+                          <span className={`px-2.5 py-1 rounded-xl text-[11px] font-black shrink-0 ${
+                            ord.status === 'new' ? 'bg-red-500 text-white shadow-xs animate-pulse' :
+                            ord.status === 'preparing' ? 'bg-amber-500 text-white shadow-xs' :
+                            ord.status === 'ready' ? 'bg-cyan-600 text-white shadow-xs' :
+                            ord.status === 'completed' ? 'bg-emerald-600 text-white shadow-xs' :
+                            ord.status === 'cancelled' ? 'bg-rose-100 text-rose-700 border border-rose-200' :
                             'bg-slate-200 text-slate-700'
                           }`}>
-                            {ord.status === 'new' ? 'جديد' :
-                             ord.status === 'preparing' ? 'تحضير' :
-                             ord.status === 'ready' ? 'جاهز' :
-                             ord.status === 'completed' ? 'مكتمل' : ord.status || 'معلق'}
+                            {ord.status === 'new' ? 'طلب جديد' :
+                             ord.status === 'preparing' ? 'جاري التحضير' :
+                             ord.status === 'ready' ? 'جاهز للتسليم' :
+                             ord.status === 'completed' ? 'مكتمل ومسلم' :
+                             ord.status === 'cancelled' ? 'ملغي' : ord.status || 'معلق'}
                           </span>
                         </div>
 
-                        {/* Customer Info & Timestamp */}
-                        <div className="text-[11px] text-slate-500 flex items-center justify-between border-t border-slate-100 pt-1.5">
-                          <span className="flex items-center gap-1 font-mono">
-                            <Clock size={11} className="text-slate-400" />
-                            <span>{new Date(ord.created_at || Date.now()).toLocaleTimeString('ar-EG', { hour: '2-digit', minute: '2-digit' })}</span>
-                          </span>
-                          {(ord.customer_name || ord.customer_phone) && (
-                            <span className="text-slate-700 font-medium truncate max-w-[180px]">
-                              👤 {ord.customer_name || ''} {ord.customer_phone ? `(${ord.customer_phone})` : ''}
-                            </span>
-                          )}
-                        </div>
-
-                        {/* Delivery address if delivery */}
-                        {oType === 'delivery' && ord.delivery_address && (
-                          <div className="text-[10px] bg-slate-50 text-slate-600 p-1.5 rounded-lg border border-slate-100 flex items-start gap-1">
-                            <MapPin size={11} className="shrink-0 text-amber-600 mt-0.5" />
-                            <span className="line-clamp-1">{ord.delivery_address}</span>
-                          </div>
-                        )}
-
-                        {/* Order Items */}
-                        {Array.isArray(ord.items) && ord.items.length > 0 && (
-                          <div className="text-[11px] bg-slate-50/70 p-1.5 rounded-xl text-slate-700 border border-slate-100 space-y-0.5">
-                            <div className="flex flex-wrap gap-1">
-                              {ord.items.map((item: any, idx: number) => (
-                                <span key={idx} className="bg-white border border-slate-200 px-1.5 py-0.5 rounded-md text-[10px] font-medium text-slate-800">
-                                  {item.quantity || 1}x {item.name || item.product?.name_ar || item.product?.name_en || 'صنف'}
+                        {/* 2. Customer Info & Delivery Address (if present) */}
+                        {(ord.customer_name || ord.customer_phone || (oType === 'delivery' && ord.delivery_address)) && (
+                          <div className="bg-slate-50 rounded-xl p-2 text-xs text-slate-700 border border-slate-100 space-y-1">
+                            {(ord.customer_name || ord.customer_phone) && (
+                              <div className="flex items-center justify-between gap-1">
+                                <span className="font-bold flex items-center gap-1">
+                                  <User size={12} className="text-slate-400 shrink-0" />
+                                  <span>{ord.customer_name || 'عميل'}</span>
                                 </span>
-                              ))}
-                            </div>
+                                {ord.customer_phone && (
+                                  <a href={`tel:${ord.customer_phone}`} className="font-mono text-slate-600 flex items-center gap-1 hover:text-amber-600 dir-ltr text-[11px]">
+                                    <Phone size={11} className="text-slate-400 shrink-0" />
+                                    <span>{ord.customer_phone}</span>
+                                  </a>
+                                )}
+                              </div>
+                            )}
+                            {oType === 'delivery' && ord.delivery_address && (
+                              <div className="flex items-start gap-1 text-[11px] text-slate-600 pt-1 border-t border-slate-200/60">
+                                <MapPin size={12} className="shrink-0 text-amber-600 mt-0.5" />
+                                <span className="leading-snug">{ord.delivery_address}</span>
+                              </div>
+                            )}
                           </div>
                         )}
 
-                        {/* Total & Action Buttons */}
-                        <div className="flex items-center justify-between pt-1 border-t border-slate-100">
-                          <div className="flex items-center gap-1.5">
-                            <span className="font-mono font-black text-slate-900 text-xs">
+                        {/* 3. Detailed Ordered Items List */}
+                        <div className="bg-slate-50/70 rounded-xl p-2.5 border border-slate-100 space-y-2">
+                          <div className="text-[11px] font-bold text-slate-500 flex items-center justify-between pb-1.5 border-b border-slate-200/70">
+                            <span>الأصناف المطلوبة</span>
+                            <span className="font-mono text-[10px] text-slate-400">
+                              {Array.isArray(ord.items) ? ord.items.reduce((s: number, i: any) => s + (Number(i.quantity) || 1), 0) : 0} صنف
+                            </span>
+                          </div>
+
+                          {Array.isArray(ord.items) && ord.items.length > 0 ? (
+                            <div className="space-y-1.5">
+                              {ord.items.map((item: any, idx: number) => {
+                                const itemName = item.name || item.product?.name_ar || item.product?.name_en || 'صنف';
+                                const qty = Number(item.quantity) || 1;
+                                const price = Number(item.price || item.unitPrice || item.price_at_order || 0);
+                                const itemTotal = price > 0 ? price * qty : 0;
+                                const itemOptions = Array.isArray(item.options) ? item.options : (typeof item.options === 'string' ? [item.options] : []);
+
+                                return (
+                                  <div key={idx} className="flex items-start justify-between gap-2 text-xs py-0.5">
+                                    <div className="flex items-start gap-2 min-w-0">
+                                      <span className="font-mono font-black text-amber-900 bg-amber-100 px-1.5 py-0.5 rounded-md text-[11px] shrink-0">
+                                        {qty} ×
+                                      </span>
+                                      <div className="min-w-0">
+                                        <div className="font-bold text-slate-800 leading-snug break-words">
+                                          {itemName}
+                                        </div>
+                                        {itemOptions.length > 0 && (
+                                          <div className="flex flex-wrap gap-1 mt-0.5">
+                                            {itemOptions.map((opt: string, optIdx: number) => (
+                                              <span key={optIdx} className="text-[9px] bg-white border border-slate-200 text-slate-600 px-1.5 py-0.2 rounded font-medium">
+                                                {opt}
+                                              </span>
+                                            ))}
+                                          </div>
+                                        )}
+                                        {item.notes && (
+                                          <div className="text-[10px] text-amber-700 italic mt-0.5">
+                                            ملاحظة: {item.notes}
+                                          </div>
+                                        )}
+                                      </div>
+                                    </div>
+                                    {price > 0 && (
+                                      <div className="text-left shrink-0 font-mono">
+                                        <span className="font-bold text-slate-800 text-xs">
+                                          {itemTotal.toFixed(2)} ج.م
+                                        </span>
+                                        {qty > 1 && (
+                                          <span className="block text-[9px] text-slate-400 font-normal">
+                                            ({price.toFixed(2)} ج.م/قطعة)
+                                          </span>
+                                        )}
+                                      </div>
+                                    )}
+                                  </div>
+                                );
+                              })}
+                            </div>
+                          ) : (
+                            <div className="text-xs text-slate-400 py-1 italic text-center">
+                              لا توجد أصناف تفصيلية مسجلة
+                            </div>
+                          )}
+
+                          {/* Total Row */}
+                          <div className="flex items-center justify-between pt-2 border-t border-slate-200 mt-1">
+                            <span className="text-xs font-bold text-slate-600">الإجمالي الكلي:</span>
+                            <span className="font-mono font-black text-sm text-slate-900 bg-white border border-slate-200 px-2.5 py-0.5 rounded-lg shadow-2xs">
                               {Number(totalVal).toFixed(2)} ج.م
                             </span>
-                            <span className={`text-[9px] font-bold px-1.5 py-0.2 rounded ${
-                              isPaid ? 'bg-emerald-100 text-emerald-800' : 'bg-amber-100 text-amber-800'
-                            }`}>
-                              {isPaid ? 'مدفوع' : 'غير مدفوع'}
-                            </span>
                           </div>
+                        </div>
 
-                          <div className="flex items-center gap-1">
-                            {/* Receipt */}
+                        {/* 4. Text-Based Action Buttons */}
+                        <div className="flex items-center justify-between gap-1.5 pt-1 border-t border-slate-100 flex-wrap">
+                          <div className="flex items-center gap-1.5 flex-wrap">
+                            {/* View Invoice */}
                             <button
                               type="button"
                               onClick={() => openTaxReceiptForOrder(ord)}
-                              className="p-1.5 text-slate-600 hover:text-slate-900 hover:bg-slate-100 rounded-lg transition-colors cursor-pointer"
-                              title="عرض وطباعة إيصال الفاتورة"
+                              className="px-2.5 py-1.5 rounded-xl border border-slate-200 bg-slate-50 hover:bg-white text-slate-700 hover:text-slate-900 text-xs font-bold flex items-center gap-1.5 transition-all shadow-2xs cursor-pointer"
+                              title="عرض الفاتورة الضريبية"
                             >
-                              <Printer size={13} />
+                              <Printer size={12} className="text-slate-500" />
+                              <span>عرض الفاتورة</span>
                             </button>
 
-                            {/* Kitchen Ticket */}
+                            {/* Print Kitchen Ticket */}
                             {Array.isArray(ord.items) && ord.items.length > 0 && (
                               <button
                                 type="button"
                                 onClick={() => printKOTForOrder(ord)}
-                                className="p-1.5 text-amber-600 hover:text-amber-800 hover:bg-amber-50 rounded-lg transition-colors cursor-pointer"
+                                className="px-2.5 py-1.5 rounded-xl border border-amber-200 bg-amber-50 hover:bg-amber-100 text-amber-900 text-xs font-bold flex items-center gap-1.5 transition-all shadow-2xs cursor-pointer"
                                 title="طباعة بون المطبخ"
                               >
-                                <ChefHat size={13} />
+                                <ChefHat size={12} className="text-amber-700" />
+                                <span>طباعة المطبخ</span>
                               </button>
                             )}
 
-                            {/* Load into cart */}
-                            {Array.isArray(ord.items) && ord.items.length > 0 && (
+                            {/* Edit in Cart */}
+                            {Array.isArray(ord.items) && ord.items.length > 0 && ord.status !== 'completed' && ord.status !== 'cancelled' && (
                               <button
                                 type="button"
                                 onClick={() => loadOrderToCart(ord)}
-                                className="p-1.5 text-blue-600 hover:text-blue-800 hover:bg-blue-50 rounded-lg transition-colors cursor-pointer"
-                                title="تحميل أصناف الطلب إلى سلة الكاشير"
+                                className="px-2.5 py-1.5 rounded-xl border border-blue-200 bg-blue-50 hover:bg-blue-100 text-blue-900 text-xs font-bold flex items-center gap-1.5 transition-all shadow-2xs cursor-pointer"
+                                title="تعديل أصناف الطلب في سلة الكاشير"
                               >
-                                <ShoppingCart size={13} />
+                                <Edit2 size={12} className="text-blue-700" />
+                                <span>تعديل بالسلة</span>
                               </button>
                             )}
 
-                            {/* Status advance button */}
+                            {/* Cancel Order */}
                             {ord.status !== 'completed' && ord.status !== 'cancelled' && (
                               <button
                                 type="button"
                                 onClick={async () => {
-                                  const nextStatus = ord.status === 'new' ? 'preparing' : ord.status === 'preparing' ? 'ready' : 'completed';
-                                  await updateLiveOrderStatus(ord.id, selectedRestaurant?.id || '', nextStatus as any);
+                                  if (!confirm(`هل أنت متأكد من إلغاء الطلب #${dispNum}؟`)) return;
+                                  await updateLiveOrderStatus(ord.id, selectedRestaurant?.id || '', 'cancelled');
                                   if (selectedRestaurant?.id) {
                                     const list = await fetchLiveOrders(selectedRestaurant.id);
                                     setAllLiveOrders(list);
@@ -4338,14 +4440,46 @@ export const CashierPOS: React.FC = () => {
                                     ));
                                   }
                                 }}
-                                className="px-2 py-0.5 bg-slate-900 hover:bg-slate-800 text-white rounded-lg text-[10px] font-bold flex items-center gap-1 transition-all cursor-pointer shadow-xs"
-                                title="تحديث حالة الطلب"
+                                className="px-2.5 py-1.5 rounded-xl border border-rose-200 bg-rose-50 hover:bg-rose-100 text-rose-700 text-xs font-bold flex items-center gap-1.5 transition-all shadow-2xs cursor-pointer"
+                                title="إلغاء الطلب"
                               >
-                                <Check size={11} />
-                                <span>{ord.status === 'new' ? 'تحضير' : ord.status === 'preparing' ? 'جاهز' : 'إتمام'}</span>
+                                <XCircle size={12} className="text-rose-600" />
+                                <span>إلغاء</span>
                               </button>
                             )}
                           </div>
+
+                          {/* Complete / Advance Status Action */}
+                          {ord.status !== 'completed' && ord.status !== 'cancelled' && (
+                            <button
+                              type="button"
+                              onClick={async () => {
+                                const nextStatus = ord.status === 'new' ? 'preparing' : ord.status === 'preparing' ? 'ready' : 'completed';
+                                await updateLiveOrderStatus(ord.id, selectedRestaurant?.id || '', nextStatus as any);
+                                if (selectedRestaurant?.id) {
+                                  const list = await fetchLiveOrders(selectedRestaurant.id);
+                                  setAllLiveOrders(list);
+                                  setCustomerLiveOrders(list.filter(o => 
+                                    o.source === 'customer_app' || 
+                                    (typeof o.notes === 'string' && o.notes.includes('[طلب زبون'))
+                                  ));
+                                }
+                              }}
+                              className={`px-3 py-1.5 text-white rounded-xl text-xs font-bold flex items-center gap-1.5 transition-all shadow-xs cursor-pointer ${
+                                ord.status === 'new' ? 'bg-amber-600 hover:bg-amber-700' :
+                                ord.status === 'preparing' ? 'bg-cyan-600 hover:bg-cyan-700' :
+                                'bg-emerald-600 hover:bg-emerald-700'
+                              }`}
+                              title="تحديث حالة الطلب"
+                            >
+                              <Check size={12} />
+                              <span>
+                                {ord.status === 'new' ? 'بدء التحضير' :
+                                 ord.status === 'preparing' ? 'جاهز للتسليم' :
+                                 'إتمام'}
+                              </span>
+                            </button>
+                          )}
                         </div>
                       </div>
                     );

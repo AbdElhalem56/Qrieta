@@ -56,7 +56,7 @@ export const TaxReceiptModal: React.FC<TaxReceiptModalProps> = ({
 
   const orderTypeArabic = {
     dine_in: `صالة ${receiptData.tableNumber ? `(طاولة ${receiptData.tableNumber})` : ''}`,
-    takeaway: 'تيك أواي / سفري',
+    takeaway: 'تيك اوي',
     delivery: 'توصيل / دليفري',
   }[receiptData.orderType] || 'طلب مطعم';
 

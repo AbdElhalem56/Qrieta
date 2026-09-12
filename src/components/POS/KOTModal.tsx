@@ -62,7 +62,7 @@ export const KOTModal: React.FC<KOTModalProps> = ({
 
   const getOrderTypeLabel = () => {
     if (orderType === 'dine_in') return `🍽️ صالة - طاولة #${tableNumber || '؟'}`;
-    if (orderType === 'takeaway') return '🥡 سفري (تيك أواي)';
+    if (orderType === 'takeaway') return '🥡 تيك اوي';
     return '🛵 توصيل (دليفري)';
   };
 

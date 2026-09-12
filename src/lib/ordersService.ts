@@ -50,7 +50,7 @@ export async function getNextDailyOrderNumber(restaurantId: string): Promise<num
     localNext = 1;
   }
 
-  // 1. Prioritize central server API as authoritative sequential counter
+  // 1. Authoritative central server API with concurrency serialization
   try {
     const res = await fetch('/api/orders/daily-sequence', {
       method: 'POST',
@@ -65,14 +65,13 @@ export async function getNextDailyOrderNumber(restaurantId: string): Promise<num
       const data = await res.json();
       if (data?.daily_order_number) {
         const serverNum = Number(data.daily_order_number);
-        const finalNum = Math.max(serverNum, localNext);
         try {
-          localStorage.setItem(localKey, String(finalNum));
+          localStorage.setItem(localKey, String(serverNum));
+          if (data.restaurant_id && data.restaurant_id !== restaurantId) {
+            localStorage.setItem(`qrieta_pos_seq_${data.restaurant_id}_${today}`, String(serverNum));
+          }
         } catch (e) {}
-        if (finalNum > serverNum) {
-          syncDailyOrderSequence(restaurantId, finalNum).catch(() => {});
-        }
-        return finalNum;
+        return serverNum;
       }
     }
   } catch (err) {
@@ -215,7 +214,7 @@ export async function fetchLiveOrders(restaurantId: string): Promise<LiveOrder[]
 
           let orderType: 'dine_in' | 'delivery' | 'takeaway' = 'dine_in';
           if (firstNote.includes('دليفري')) orderType = 'delivery';
-          else if (firstNote.includes('سفري')) orderType = 'takeaway';
+          else if (firstNote.includes('سفري') || firstNote.includes('تيك اوي') || firstNote.includes('تيك أواي') || firstNote.includes('takeaway')) orderType = 'takeaway';
 
           const tableNumMatch = firstNote.match(/طاولة\s*([^|\]]+)/);
           const tableNum = dbo.tables?.table_number || (tableNumMatch ? tableNumMatch[1].trim() : null);

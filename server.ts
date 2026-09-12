@@ -628,6 +628,36 @@ async function startServer() {
   const restaurantSlugToId: Record<string, string> = {};
   const restaurantIdToSlug: Record<string, string> = {};
 
+  // Pre-populate restaurant maps on boot
+  const initRestaurantMaps = async () => {
+    try {
+      const supabaseUrl = process.env.VITE_SUPABASE_URL || process.env.SUPABASE_URL;
+      const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+      const anonKey = process.env.VITE_SUPABASE_ANON_KEY || process.env.SUPABASE_ANON_KEY;
+      if (supabaseUrl) {
+        const client = serviceRoleKey ? createClient(supabaseUrl, serviceRoleKey) : createClient(supabaseUrl, anonKey || "");
+        const { data } = await client.from("restaurants").select("id, slug, name");
+        if (Array.isArray(data)) {
+          data.forEach((r: any) => {
+            if (r.id) {
+              if (r.slug) {
+                const s = String(r.slug).toLowerCase();
+                restaurantSlugToId[s] = r.id;
+                restaurantIdToSlug[r.id] = s;
+              }
+              if (r.name) {
+                restaurantSlugToId[String(r.name).toLowerCase()] = r.id;
+              }
+            }
+          });
+        }
+      }
+    } catch (e) {
+      console.warn("Could not pre-populate restaurant maps:", e);
+    }
+  };
+  initRestaurantMaps().catch(() => {});
+
   const resolveRestaurantAliases = async (input: string): Promise<{ canonicalId: string; canonicalSlug: string; aliases: string[] }> => {
     if (!input || typeof input !== 'string') {
       return { canonicalId: '', canonicalSlug: '', aliases: [] };
@@ -681,6 +711,29 @@ async function startServer() {
     };
   };
 
+  // Mutex lock to serialize sequence increments per restaurant and avoid race conditions
+  const restaurantSequenceLocks = new Map<string, Promise<any>>();
+  const withRestaurantSequenceLock = async <T>(lockKey: string, task: () => Promise<T>): Promise<T> => {
+    const prev = restaurantSequenceLocks.get(lockKey) || Promise.resolve();
+    let releaseLock: () => void = () => {};
+    const next = new Promise<void>(resolve => { releaseLock = resolve; });
+    const runTask = prev.then(async () => {
+      try {
+        return await task();
+      } finally {
+        releaseLock();
+      }
+    }, async () => {
+      try {
+        return await task();
+      } finally {
+        releaseLock();
+      }
+    });
+    restaurantSequenceLocks.set(lockKey, runTask);
+    return runTask;
+  };
+
   // Persistent daily order sequence store (starts from 1 each day at 12:00 AM)
   const dailySequenceFilePath = path.join(process.cwd(), "daily-order-sequences.json");
   let dailySequenceStore: Record<string, number> = {};
@@ -719,6 +772,21 @@ async function startServer() {
     }
   };
 
+  const getCairoDateForIso = (isoStr?: string) => {
+    if (!isoStr) return '';
+    try {
+      const formatter = new Intl.DateTimeFormat('en-CA', {
+        timeZone: 'Africa/Cairo',
+        year: 'numeric',
+        month: '2-digit',
+        day: '2-digit',
+      });
+      return formatter.format(new Date(isoStr));
+    } catch (e) {
+      return isoStr.slice(0, 10);
+    }
+  };
+
   // API to get/assign daily sequence order number per restaurant
   app.get("/api/orders/daily-sequence", async (req, res) => {
     const restaurantId = req.query.restaurant_id as string;
@@ -753,137 +821,137 @@ async function startServer() {
 
     try {
       const { canonicalId, canonicalSlug, aliases } = await resolveRestaurantAliases(restaurant_id);
-      const dateKey = getTodayDateKey();
+      const lockKey = canonicalId || restaurant_id;
 
-      // 1. Check existing saved sequence across ALL aliases for today
-      let currentSaved = 0;
-      aliases.forEach(a => {
-        const k = `${a}_${dateKey}`;
-        if (dailySequenceStore[k] && dailySequenceStore[k] > currentSaved) {
-          currentSaved = dailySequenceStore[k];
-        }
-      });
+      const result = await withRestaurantSequenceLock(lockKey, async () => {
+        const dateKey = getTodayDateKey();
 
-      // 2. Check highest number in today's live orders across all aliases
-      const nowMs = Date.now();
-      const recentWindowMs = 24 * 60 * 60 * 1000;
-      let highestLiveNum = 0;
-
-      const checkedLiveOrderIds = new Set<string>();
-      aliases.forEach(aliasKey => {
-        const liveForAlias = liveOrdersStore[aliasKey] || [];
-        liveForAlias.forEach((o: any) => {
-          const ordId = String(o.id || '');
-          if (ordId && checkedLiveOrderIds.has(ordId)) return;
-          if (ordId) checkedLiveOrderIds.add(ordId);
-
-          const oCreated = o.created_at ? new Date(o.created_at).getTime() : 0;
-          const isRecent = (nowMs - oCreated <= recentWindowMs) || (o.created_at && o.created_at.startsWith(dateKey));
-          if (isRecent) {
-            let numVal = 0;
-            if (o.daily_order_number) {
-              numVal = parseInt(String(o.daily_order_number), 10);
-            }
-            if (!numVal || isNaN(numVal)) {
-              const noteText = o.notes || o.delivery_notes || o.items?.[0]?.notes || '';
-              const match = String(noteText).match(/#(\d+)/);
-              if (match && match[1]) {
-                numVal = parseInt(match[1], 10);
-              }
-            }
-            if (!isNaN(numVal) && numVal > highestLiveNum) {
-              highestLiveNum = numVal;
-            }
-          }
-        });
-      });
-
-      // 3. Also count today's orders in Supabase across all aliases
-      let dbCount = 0;
-      const supabaseUrl = process.env.VITE_SUPABASE_URL || process.env.SUPABASE_URL;
-      const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
-      const anonKey = process.env.VITE_SUPABASE_ANON_KEY || process.env.SUPABASE_ANON_KEY;
-
-      if (supabaseUrl) {
-        const client = serviceRoleKey
-          ? createClient(supabaseUrl, serviceRoleKey)
-          : createClient(supabaseUrl, anonKey || "");
-
-        const now = new Date();
-        const startOfDay = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0, 0, 0, 0);
-        const twentyFourHoursAgo = new Date(nowMs - recentWindowMs);
-        const checkSince = startOfDay.getTime() < twentyFourHoursAgo.getTime() ? startOfDay : twentyFourHoursAgo;
-
-        try {
-          const { data: dbOrders, error } = await client
-            .from("orders")
-            .select("id, created_at, order_items(notes)")
-            .in("restaurant_id", aliases)
-            .gte("created_at", checkSince.toISOString());
-
-          if (!error && Array.isArray(dbOrders)) {
-            dbOrders.forEach((ord: any) => {
-              if (Array.isArray(ord.order_items)) {
-                ord.order_items.forEach((it: any) => {
-                  const note = it?.notes || '';
-                  const match = String(note).match(/#(\d+)/);
-                  if (match && match[1]) {
-                    const parsed = parseInt(match[1], 10);
-                    if (!isNaN(parsed) && parsed > dbCount) {
-                      dbCount = parsed;
-                    }
-                  }
-                });
-              }
-            });
-            if (dbOrders.length > dbCount) {
-              dbCount = dbOrders.length;
-            }
-          }
-        } catch (dbErr) {
-          console.warn("Daily count error from DB:", dbErr);
-        }
-      }
-
-      const baseMax = Math.max(currentSaved, highestLiveNum, dbCount, 0);
-      let sequence = baseMax;
-
-      if (action === 'next') {
-        sequence = baseMax + 1;
-        if (sequence <= 0) sequence = 1;
+        // 1. Check existing saved sequence across ALL aliases for today
+        let currentSaved = 0;
         aliases.forEach(a => {
-          dailySequenceStore[`${a}_${dateKey}`] = sequence;
+          const k = `${a}_${dateKey}`;
+          if (dailySequenceStore[k] && dailySequenceStore[k] > currentSaved) {
+            currentSaved = dailySequenceStore[k];
+          }
         });
-        persistDailySequences();
-      } else if (action === 'sync' && req.body.current_number) {
-        const num = parseInt(req.body.current_number, 10) || 0;
-        if (num > sequence) {
-          sequence = num;
-          aliases.forEach(a => {
-            dailySequenceStore[`${a}_${dateKey}`] = sequence;
-          });
-          persistDailySequences();
-        }
-      } else {
-        if (sequence <= 0) {
-          sequence = 1;
-          aliases.forEach(a => {
-            dailySequenceStore[`${a}_${dateKey}`] = sequence;
-          });
-          persistDailySequences();
-        }
-      }
 
-      res.status(200).json({
-        success: true,
-        restaurant_id: canonicalId,
-        slug: canonicalSlug,
-        date: dateKey,
-        daily_order_number: sequence
+        // 2. Check highest number in today's live orders across all aliases
+        let highestLiveNum = 0;
+        const checkedLiveOrderIds = new Set<string>();
+        aliases.forEach(aliasKey => {
+          const liveForAlias = liveOrdersStore[aliasKey] || [];
+          liveForAlias.forEach((o: any) => {
+            const ordId = String(o.id || '');
+            if (ordId && checkedLiveOrderIds.has(ordId)) return;
+            if (ordId) checkedLiveOrderIds.add(ordId);
+
+            const cairoDate = getCairoDateForIso(o.created_at);
+            const isToday = cairoDate === dateKey;
+            if (isToday) {
+              let numVal = 0;
+              if (o.daily_order_number) {
+                numVal = parseInt(String(o.daily_order_number), 10);
+              }
+              if (!numVal || isNaN(numVal)) {
+                const noteText = o.notes || o.delivery_notes || o.items?.[0]?.notes || '';
+                const match = String(noteText).match(/#(\d+)/);
+                if (match && match[1]) {
+                  numVal = parseInt(match[1], 10);
+                }
+              }
+              if (!isNaN(numVal) && numVal > highestLiveNum) {
+                highestLiveNum = numVal;
+              }
+            }
+          });
+        });
+
+        // 3. Check today's orders in Supabase across all aliases
+        let dbCount = 0;
+        const supabaseUrl = process.env.VITE_SUPABASE_URL || process.env.SUPABASE_URL;
+        const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+        const anonKey = process.env.VITE_SUPABASE_ANON_KEY || process.env.SUPABASE_ANON_KEY;
+
+        if (supabaseUrl) {
+          const client = serviceRoleKey
+            ? createClient(supabaseUrl, serviceRoleKey)
+            : createClient(supabaseUrl, anonKey || "");
+
+          const checkSince = new Date(Date.now() - 36 * 60 * 60 * 1000);
+
+          try {
+            const { data: dbOrders, error } = await client
+              .from("orders")
+              .select("id, created_at, order_items(notes)")
+              .in("restaurant_id", aliases)
+              .gte("created_at", checkSince.toISOString());
+
+            if (!error && Array.isArray(dbOrders)) {
+              dbOrders.forEach((ord: any) => {
+                const cairoDate = getCairoDateForIso(ord.created_at);
+                if (cairoDate === dateKey) {
+                  if (Array.isArray(ord.order_items)) {
+                    ord.order_items.forEach((it: any) => {
+                      const note = it?.notes || '';
+                      const match = String(note).match(/#(\d+)/);
+                      if (match && match[1]) {
+                        const parsed = parseInt(match[1], 10);
+                        if (!isNaN(parsed) && parsed > dbCount) {
+                          dbCount = parsed;
+                        }
+                      }
+                    });
+                  }
+                }
+              });
+            }
+          } catch (dbErr) {
+            console.warn("Daily count error from DB:", dbErr);
+          }
+        }
+
+        const baseMax = Math.max(currentSaved, highestLiveNum, dbCount, 0);
+        let sequence = baseMax;
+
+        if (action === 'next') {
+          sequence = baseMax + 1;
+          if (sequence <= 0) sequence = 1;
+          aliases.forEach(a => {
+            dailySequenceStore[`${a}_${dateKey}`] = sequence;
+          });
+          persistDailySequences();
+        } else if (action === 'sync' && req.body.current_number) {
+          const num = parseInt(req.body.current_number, 10) || 0;
+          if (num > sequence) {
+            sequence = num;
+            aliases.forEach(a => {
+              dailySequenceStore[`${a}_${dateKey}`] = sequence;
+            });
+            persistDailySequences();
+          }
+        } else {
+          if (sequence <= 0) {
+            sequence = 1;
+            aliases.forEach(a => {
+              dailySequenceStore[`${a}_${dateKey}`] = sequence;
+            });
+            persistDailySequences();
+          }
+        }
+
+        return {
+          success: true,
+          restaurant_id: canonicalId,
+          slug: canonicalSlug,
+          date: dateKey,
+          daily_order_number: sequence
+        };
       });
+
+      res.status(200).json(result);
     } catch (err: any) {
-      console.error("Daily sequence API error:", err);
-      res.status(500).json({ error: err.message || "فشل في جلب رقم الطلب اليومي" });
+      console.error("Daily sequence calculation error:", err);
+      res.status(500).json({ error: "تعذر احتساب رقم الطلب اليومي الموحد." });
     }
   });
 

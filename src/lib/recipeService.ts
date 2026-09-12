@@ -318,7 +318,7 @@ export const DEFAULT_RAW_MATERIALS = (restaurantId: string): RawMaterial[] => [
   {
     id: 'mat_burger_boxes',
     restaurant_id: restaurantId,
-    name_ar: 'علب كرتون فاخرة لتقديم وسفري البرجر',
+    name_ar: 'علب كرتون فاخرة لتقديم وتيك اوي البرجر',
     name_en: 'Premium Burger Takeaway Boxes',
     category: 'packaging',
     unit: 'pcs',
