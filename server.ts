@@ -603,6 +603,84 @@ async function startServer() {
     res.status(200).json({ geofences: restaurantGeofencesStore });
   });
 
+  // Persistent Live Orders Store (supports Customer App & POS synchronization)
+  const liveOrdersFilePath = path.join(process.cwd(), "live-orders.json");
+  let liveOrdersStore: Record<string, any[]> = {}; // restaurant_id/slug -> orders[]
+
+  try {
+    if (fs.existsSync(liveOrdersFilePath)) {
+      const oData = fs.readFileSync(liveOrdersFilePath, "utf-8");
+      liveOrdersStore = JSON.parse(oData || "{}");
+    }
+  } catch (e) {
+    console.warn("Could not read live-orders.json:", e);
+  }
+
+  const persistLiveOrders = () => {
+    try {
+      fs.writeFileSync(liveOrdersFilePath, JSON.stringify(liveOrdersStore, null, 2), "utf-8");
+    } catch (e) {
+      console.warn("Could not write live-orders.json:", e);
+    }
+  };
+
+  // Restaurant Canonical Resolution Map (bidirectional: slug <-> UUID id)
+  const restaurantSlugToId: Record<string, string> = {};
+  const restaurantIdToSlug: Record<string, string> = {};
+
+  const resolveRestaurantAliases = async (input: string): Promise<{ canonicalId: string; canonicalSlug: string; aliases: string[] }> => {
+    if (!input || typeof input !== 'string') {
+      return { canonicalId: '', canonicalSlug: '', aliases: [] };
+    }
+    const clean = input.trim();
+    const cleanLower = clean.toLowerCase();
+
+    // Check in-memory maps first
+    let canonicalId = restaurantSlugToId[cleanLower] || (restaurantIdToSlug[clean] ? clean : '');
+    let canonicalSlug = restaurantIdToSlug[clean] || (restaurantSlugToId[cleanLower] ? cleanLower : '');
+
+    // If not cached, query Supabase to populate
+    if (!canonicalId || !canonicalSlug) {
+      try {
+        const supabaseUrl = process.env.VITE_SUPABASE_URL || process.env.SUPABASE_URL;
+        const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+        const anonKey = process.env.VITE_SUPABASE_ANON_KEY || process.env.SUPABASE_ANON_KEY;
+        if (supabaseUrl) {
+          const client = serviceRoleKey ? createClient(supabaseUrl, serviceRoleKey) : createClient(supabaseUrl, anonKey || "");
+          const { data } = await client.from("restaurants").select("id, slug, name");
+          if (Array.isArray(data)) {
+            data.forEach((r: any) => {
+              if (r.id) {
+                if (r.slug) {
+                  const s = String(r.slug).toLowerCase();
+                  restaurantSlugToId[s] = r.id;
+                  restaurantIdToSlug[r.id] = s;
+                }
+                if (r.name) {
+                  restaurantSlugToId[String(r.name).toLowerCase()] = r.id;
+                }
+              }
+            });
+          }
+          canonicalId = restaurantSlugToId[cleanLower] || (restaurantIdToSlug[clean] ? clean : clean);
+          canonicalSlug = restaurantIdToSlug[canonicalId] || cleanLower;
+        }
+      } catch (e) {
+        console.warn("Could not refresh restaurants map:", e);
+      }
+    }
+
+    if (!canonicalId) canonicalId = clean;
+    if (!canonicalSlug) canonicalSlug = cleanLower;
+
+    const aliasesSet = new Set<string>([clean, cleanLower, canonicalId, canonicalSlug].filter(Boolean));
+    return {
+      canonicalId,
+      canonicalSlug,
+      aliases: Array.from(aliasesSet)
+    };
+  };
+
   // Persistent daily order sequence store (starts from 1 each day at 12:00 AM)
   const dailySequenceFilePath = path.join(process.cwd(), "daily-order-sequences.json");
   let dailySequenceStore: Record<string, number> = {};
@@ -642,15 +720,29 @@ async function startServer() {
   };
 
   // API to get/assign daily sequence order number per restaurant
-  app.get("/api/orders/daily-sequence", (req, res) => {
+  app.get("/api/orders/daily-sequence", async (req, res) => {
     const restaurantId = req.query.restaurant_id as string;
     if (!restaurantId) {
       return res.status(400).json({ error: "معرف المطعم مطلوب." });
     }
+    const { canonicalId, canonicalSlug, aliases } = await resolveRestaurantAliases(restaurantId);
     const dateKey = getTodayDateKey();
-    const storeKey = `${restaurantId}_${dateKey}`;
-    const currentSaved = dailySequenceStore[storeKey] || 0;
-    res.status(200).json({ success: true, restaurant_id: restaurantId, date: dateKey, current_sequence: currentSaved });
+    
+    let currentSaved = 0;
+    aliases.forEach(a => {
+      const k = `${a}_${dateKey}`;
+      if (dailySequenceStore[k] && dailySequenceStore[k] > currentSaved) {
+        currentSaved = dailySequenceStore[k];
+      }
+    });
+
+    res.status(200).json({
+      success: true,
+      restaurant_id: canonicalId,
+      slug: canonicalSlug,
+      date: dateKey,
+      current_sequence: currentSaved
+    });
   });
 
   app.post("/api/orders/daily-sequence", async (req, res) => {
@@ -660,26 +752,53 @@ async function startServer() {
     }
 
     try {
+      const { canonicalId, canonicalSlug, aliases } = await resolveRestaurantAliases(restaurant_id);
       const dateKey = getTodayDateKey();
-      const storeKey = `${restaurant_id}_${dateKey}`;
 
-      // Check highest number in today's live orders (created today or within last 20 hours)
-      const nowMs = Date.now();
-      const recentWindowMs = 20 * 60 * 60 * 1000;
-      let highestLiveNum = 0;
-      const liveForRest = liveOrdersStore[restaurant_id] || [];
-      liveForRest.forEach((o: any) => {
-        const oCreated = o.created_at ? new Date(o.created_at).getTime() : 0;
-        const isRecent = (nowMs - oCreated <= recentWindowMs) || (o.created_at && o.created_at.startsWith(dateKey));
-        if (isRecent && o.daily_order_number) {
-          const numVal = parseInt(String(o.daily_order_number), 10);
-          if (!isNaN(numVal) && numVal > highestLiveNum) {
-            highestLiveNum = numVal;
-          }
+      // 1. Check existing saved sequence across ALL aliases for today
+      let currentSaved = 0;
+      aliases.forEach(a => {
+        const k = `${a}_${dateKey}`;
+        if (dailySequenceStore[k] && dailySequenceStore[k] > currentSaved) {
+          currentSaved = dailySequenceStore[k];
         }
       });
 
-      // Also count today's orders in database and inspect highest daily order number
+      // 2. Check highest number in today's live orders across all aliases
+      const nowMs = Date.now();
+      const recentWindowMs = 24 * 60 * 60 * 1000;
+      let highestLiveNum = 0;
+
+      const checkedLiveOrderIds = new Set<string>();
+      aliases.forEach(aliasKey => {
+        const liveForAlias = liveOrdersStore[aliasKey] || [];
+        liveForAlias.forEach((o: any) => {
+          const ordId = String(o.id || '');
+          if (ordId && checkedLiveOrderIds.has(ordId)) return;
+          if (ordId) checkedLiveOrderIds.add(ordId);
+
+          const oCreated = o.created_at ? new Date(o.created_at).getTime() : 0;
+          const isRecent = (nowMs - oCreated <= recentWindowMs) || (o.created_at && o.created_at.startsWith(dateKey));
+          if (isRecent) {
+            let numVal = 0;
+            if (o.daily_order_number) {
+              numVal = parseInt(String(o.daily_order_number), 10);
+            }
+            if (!numVal || isNaN(numVal)) {
+              const noteText = o.notes || o.delivery_notes || o.items?.[0]?.notes || '';
+              const match = String(noteText).match(/#(\d+)/);
+              if (match && match[1]) {
+                numVal = parseInt(match[1], 10);
+              }
+            }
+            if (!isNaN(numVal) && numVal > highestLiveNum) {
+              highestLiveNum = numVal;
+            }
+          }
+        });
+      });
+
+      // 3. Also count today's orders in Supabase across all aliases
       let dbCount = 0;
       const supabaseUrl = process.env.VITE_SUPABASE_URL || process.env.SUPABASE_URL;
       const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
@@ -692,25 +811,29 @@ async function startServer() {
 
         const now = new Date();
         const startOfDay = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0, 0, 0, 0);
-        const twentyHoursAgo = new Date(nowMs - recentWindowMs);
-        const checkSince = startOfDay.getTime() < twentyHoursAgo.getTime() ? startOfDay : twentyHoursAgo;
+        const twentyFourHoursAgo = new Date(nowMs - recentWindowMs);
+        const checkSince = startOfDay.getTime() < twentyFourHoursAgo.getTime() ? startOfDay : twentyFourHoursAgo;
 
         try {
           const { data: dbOrders, error } = await client
             .from("orders")
             .select("id, created_at, order_items(notes)")
-            .eq("restaurant_id", restaurant_id)
+            .in("restaurant_id", aliases)
             .gte("created_at", checkSince.toISOString());
 
           if (!error && Array.isArray(dbOrders)) {
             dbOrders.forEach((ord: any) => {
-              const note = ord.order_items?.[0]?.notes || '';
-              const match = note.match(/#(\d+)/);
-              if (match && match[1]) {
-                const parsed = parseInt(match[1], 10);
-                if (!isNaN(parsed) && parsed > dbCount) {
-                  dbCount = parsed;
-                }
+              if (Array.isArray(ord.order_items)) {
+                ord.order_items.forEach((it: any) => {
+                  const note = it?.notes || '';
+                  const match = String(note).match(/#(\d+)/);
+                  if (match && match[1]) {
+                    const parsed = parseInt(match[1], 10);
+                    if (!isNaN(parsed) && parsed > dbCount) {
+                      dbCount = parsed;
+                    }
+                  }
+                });
               }
             });
             if (dbOrders.length > dbCount) {
@@ -722,33 +845,39 @@ async function startServer() {
         }
       }
 
-      const currentSaved = dailySequenceStore[storeKey] || 0;
       const baseMax = Math.max(currentSaved, highestLiveNum, dbCount, 0);
       let sequence = baseMax;
 
       if (action === 'next') {
         sequence = baseMax + 1;
         if (sequence <= 0) sequence = 1;
-        dailySequenceStore[storeKey] = sequence;
+        aliases.forEach(a => {
+          dailySequenceStore[`${a}_${dateKey}`] = sequence;
+        });
         persistDailySequences();
       } else if (action === 'sync' && req.body.current_number) {
         const num = parseInt(req.body.current_number, 10) || 0;
         if (num > sequence) {
           sequence = num;
-          dailySequenceStore[storeKey] = sequence;
+          aliases.forEach(a => {
+            dailySequenceStore[`${a}_${dateKey}`] = sequence;
+          });
           persistDailySequences();
         }
       } else {
         if (sequence <= 0) {
           sequence = 1;
-          dailySequenceStore[storeKey] = sequence;
+          aliases.forEach(a => {
+            dailySequenceStore[`${a}_${dateKey}`] = sequence;
+          });
           persistDailySequences();
         }
       }
 
       res.status(200).json({
         success: true,
-        restaurant_id,
+        restaurant_id: canonicalId,
+        slug: canonicalSlug,
         date: dateKey,
         daily_order_number: sequence
       });
@@ -758,29 +887,8 @@ async function startServer() {
     }
   });
 
-  // Persistent Live Orders Store (supports Customer App & POS synchronization)
-  const liveOrdersFilePath = path.join(process.cwd(), "live-orders.json");
-  let liveOrdersStore: Record<string, any[]> = {}; // restaurant_id -> orders[]
-
-  try {
-    if (fs.existsSync(liveOrdersFilePath)) {
-      const oData = fs.readFileSync(liveOrdersFilePath, "utf-8");
-      liveOrdersStore = JSON.parse(oData || "{}");
-    }
-  } catch (e) {
-    console.warn("Could not read live-orders.json:", e);
-  }
-
-  const persistLiveOrders = () => {
-    try {
-      fs.writeFileSync(liveOrdersFilePath, JSON.stringify(liveOrdersStore, null, 2), "utf-8");
-    } catch (e) {
-      console.warn("Could not write live-orders.json:", e);
-    }
-  };
-
   // POST /api/orders/live - Add or update live order
-  app.post("/api/orders/live", (req, res) => {
+  app.post("/api/orders/live", async (req, res) => {
     const orderData = req.body;
     const restaurantId = orderData.restaurant_id;
     if (!restaurantId) {
@@ -788,32 +896,59 @@ async function startServer() {
     }
 
     try {
-      if (!liveOrdersStore[restaurantId]) {
-        liveOrdersStore[restaurantId] = [];
-      }
-
-      const existingIndex = liveOrdersStore[restaurantId].findIndex(
-        (o: any) => String(o.id) === String(orderData.id)
-      );
+      const { canonicalId, canonicalSlug, aliases } = await resolveRestaurantAliases(restaurantId);
 
       const orderRecord = {
         ...orderData,
+        restaurant_id: canonicalId,
         updated_at: new Date().toISOString(),
       };
 
-      if (existingIndex >= 0) {
-        liveOrdersStore[restaurantId][existingIndex] = {
-          ...liveOrdersStore[restaurantId][existingIndex],
-          ...orderRecord,
-        };
-      } else {
-        liveOrdersStore[restaurantId].unshift(orderRecord);
+      // Extract daily order number to sync sequence store automatically
+      let dailyNum = 0;
+      if (orderRecord.daily_order_number) {
+        dailyNum = parseInt(String(orderRecord.daily_order_number), 10);
+      }
+      if (!dailyNum || isNaN(dailyNum)) {
+        const noteText = orderRecord.notes || orderRecord.delivery_notes || orderRecord.items?.[0]?.notes || '';
+        const match = String(noteText).match(/#(\d+)/);
+        if (match && match[1]) {
+          dailyNum = parseInt(match[1], 10);
+        }
       }
 
-      // Keep recent 200 orders per restaurant
-      if (liveOrdersStore[restaurantId].length > 200) {
-        liveOrdersStore[restaurantId] = liveOrdersStore[restaurantId].slice(0, 200);
+      if (dailyNum > 0) {
+        const dateKey = getTodayDateKey();
+        aliases.forEach(a => {
+          const k = `${a}_${dateKey}`;
+          const cur = dailySequenceStore[k] || 0;
+          if (dailyNum > cur) {
+            dailySequenceStore[k] = dailyNum;
+          }
+        });
+        persistDailySequences();
       }
+
+      // Store in all alias keys for this restaurant
+      aliases.forEach(a => {
+        if (!liveOrdersStore[a]) {
+          liveOrdersStore[a] = [];
+        }
+        const existingIndex = liveOrdersStore[a].findIndex(
+          (o: any) => String(o.id) === String(orderData.id)
+        );
+        if (existingIndex >= 0) {
+          liveOrdersStore[a][existingIndex] = {
+            ...liveOrdersStore[a][existingIndex],
+            ...orderRecord,
+          };
+        } else {
+          liveOrdersStore[a].unshift(orderRecord);
+        }
+        if (liveOrdersStore[a].length > 200) {
+          liveOrdersStore[a] = liveOrdersStore[a].slice(0, 200);
+        }
+      });
 
       persistLiveOrders();
       res.status(200).json({ success: true, order: orderRecord });
@@ -823,14 +958,25 @@ async function startServer() {
     }
   });
 
-  // GET /api/orders/live - Get live orders for a restaurant (merges in-memory and Supabase)
+  // GET /api/orders/live - Get live orders for a restaurant (merges in-memory and Supabase across aliases)
   app.get("/api/orders/live", async (req, res) => {
     const restaurantId = req.query.restaurant_id as string;
     if (!restaurantId) {
       return res.status(400).json({ error: "معرف المطعم مطلوب." });
     }
 
-    let orders = liveOrdersStore[restaurantId] || [];
+    const { canonicalId, canonicalSlug, aliases } = await resolveRestaurantAliases(restaurantId);
+
+    const mergedMap = new Map<string, any>();
+    // First, add all in-memory live orders from any alias
+    aliases.forEach(a => {
+      const list = liveOrdersStore[a] || [];
+      list.forEach((o: any) => {
+        if (o && o.id) {
+          mergedMap.set(String(o.id), o);
+        }
+      });
+    });
 
     // Also enrich from Supabase if available so orders persist across server restarts or different tabs
     const supabaseUrl = process.env.VITE_SUPABASE_URL || process.env.SUPABASE_URL;
@@ -846,16 +992,11 @@ async function startServer() {
         const { data: dbOrders, error } = await client
           .from("orders")
           .select("*, order_items(*, products(*)), tables(table_number)")
-          .eq("restaurant_id", restaurantId)
+          .in("restaurant_id", aliases)
           .order("created_at", { ascending: false })
           .limit(60);
 
         if (!error && Array.isArray(dbOrders)) {
-          const mergedMap = new Map<string, any>();
-          
-          // First add existing in-memory live orders
-          orders.forEach((o: any) => mergedMap.set(String(o.id), o));
-
           const STATUS_RANK: Record<string, number> = {
             new: 1,
             preparing: 2,
@@ -965,18 +1106,24 @@ async function startServer() {
             }
           });
 
-          orders = Array.from(uniqueOrdersMap.values()).sort(
-            (a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
+          const sortedOrders = Array.from(uniqueOrdersMap.values()).sort(
+            (a, b) => new Date(b.created_at || 0).getTime() - new Date(a.created_at || 0).getTime()
           );
-          liveOrdersStore[restaurantId] = orders;
+          aliases.forEach(a => {
+            liveOrdersStore[a] = sortedOrders;
+          });
           persistLiveOrders();
+          return res.status(200).json({ success: true, orders: sortedOrders });
         }
       } catch (dbErr) {
         console.warn("Live orders DB sync error:", dbErr);
       }
     }
 
-    res.status(200).json({ success: true, orders });
+    const fallbackOrders = Array.from(mergedMap.values()).sort(
+      (a, b) => new Date(b.created_at || 0).getTime() - new Date(a.created_at || 0).getTime()
+    );
+    res.status(200).json({ success: true, orders: fallbackOrders });
   });
 
   // GET /api/customer/orders - Lookup previous customer orders by email or phone

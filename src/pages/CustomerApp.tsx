@@ -279,11 +279,26 @@ export default function CustomerApp() {
       console.warn('Product options sync error:', e);
     }
 
-    const { data: res } = await supabase
-      .from('restaurants')
-      .select('*')
-      .eq('slug', effectiveSlug)
-      .single();
+    const isUUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(effectiveSlug);
+    let resQuery = supabase.from('restaurants').select('*');
+    if (isUUID) {
+      resQuery = resQuery.eq('id', effectiveSlug);
+    } else {
+      resQuery = resQuery.eq('slug', effectiveSlug);
+    }
+    let { data: res } = await resQuery.single();
+
+    if (!res) {
+      // Fallback: try searching by slug if previously tested UUID or vice versa
+      const { data: altRes } = await supabase
+        .from('restaurants')
+        .select('*')
+        .or(`slug.eq.${effectiveSlug},id.eq.${effectiveSlug}`)
+        .limit(1);
+      if (altRes && altRes.length > 0) {
+        res = altRes[0];
+      }
+    }
 
     if (res) {
       // Initialize Meta Pixel if configured for this restaurant

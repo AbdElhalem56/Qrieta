@@ -1508,6 +1508,12 @@ export const CashierPOS: React.FC = () => {
     }
 
     let dailyOrderNum = parseInt(customOrderNumber) || 0;
+    if (!dailyOrderNum && loadedOrderIds.length > 0) {
+      const alreadyNumberedOrder = activeOrders.find(o => loadedOrderIds.includes(String(o.id)) && o.daily_order_number);
+      if (alreadyNumberedOrder && alreadyNumberedOrder.daily_order_number) {
+        dailyOrderNum = Number(alreadyNumberedOrder.daily_order_number);
+      }
+    }
     if (!dailyOrderNum && selectedRestaurant) {
       dailyOrderNum = await getNextDailyOrderNumber(selectedRestaurant.id);
     }
@@ -2032,6 +2038,12 @@ export const CashierPOS: React.FC = () => {
 
     try {
       let dailyOrderNum = parseInt(customOrderNumber) || 0;
+      if (!dailyOrderNum && loadedOrderIds.length > 0) {
+        const alreadyNumberedOrder = activeOrders.find(o => loadedOrderIds.includes(String(o.id)) && o.daily_order_number);
+        if (alreadyNumberedOrder && alreadyNumberedOrder.daily_order_number) {
+          dailyOrderNum = Number(alreadyNumberedOrder.daily_order_number);
+        }
+      }
       if (!dailyOrderNum && selectedRestaurant) {
         dailyOrderNum = await getNextDailyOrderNumber(selectedRestaurant.id);
       } else if (dailyOrderNum && selectedRestaurant) {

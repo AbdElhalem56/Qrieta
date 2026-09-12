@@ -65,19 +65,31 @@ export async function getNextDailyOrderNumber(restaurantId: string): Promise<num
       const data = await res.json();
       if (data?.daily_order_number) {
         const serverNum = Number(data.daily_order_number);
+        const finalNum = Math.max(serverNum, localNext);
         try {
-          localStorage.setItem(localKey, String(serverNum));
+          localStorage.setItem(localKey, String(finalNum));
         } catch (e) {}
-        return serverNum;
+        if (finalNum > serverNum) {
+          syncDailyOrderSequence(restaurantId, finalNum).catch(() => {});
+        }
+        return finalNum;
       }
     }
   } catch (err) {
     console.warn('Daily sequence server request failed, falling back to database/local:', err);
   }
 
-  // 2. Offline Fallback: query Supabase directly for today's orders
+  // 2. Offline Fallback: check live orders and Supabase
   let dbHighestSeq = 0;
   try {
+    const cachedLive = await fetchLiveOrders(restaurantId).catch(() => []);
+    if (Array.isArray(cachedLive)) {
+      cachedLive.forEach(o => {
+        const num = Number(o.daily_order_number || 0);
+        if (num > dbHighestSeq) dbHighestSeq = num;
+      });
+    }
+
     const startOfDay = new Date();
     startOfDay.setHours(0, 0, 0, 0);
 
@@ -88,15 +100,21 @@ export async function getNextDailyOrderNumber(restaurantId: string): Promise<num
       .gte('created_at', startOfDay.toISOString());
 
     if (Array.isArray(todayOrders)) {
-      dbHighestSeq = todayOrders.length;
+      if (todayOrders.length > dbHighestSeq) {
+        dbHighestSeq = todayOrders.length;
+      }
       todayOrders.forEach(ord => {
-        const note = ord.order_items?.[0]?.notes || '';
-        const match = note.match(/#(\d+)/);
-        if (match && match[1]) {
-          const parsed = parseInt(match[1], 10);
-          if (!isNaN(parsed) && parsed > dbHighestSeq) {
-            dbHighestSeq = parsed;
-          }
+        if (Array.isArray(ord.order_items)) {
+          ord.order_items.forEach((it: any) => {
+            const note = it?.notes || '';
+            const match = String(note).match(/#(\d+)/);
+            if (match && match[1]) {
+              const parsed = parseInt(match[1], 10);
+              if (!isNaN(parsed) && parsed > dbHighestSeq) {
+                dbHighestSeq = parsed;
+              }
+            }
+          });
         }
       });
     }
@@ -109,6 +127,7 @@ export async function getNextDailyOrderNumber(restaurantId: string): Promise<num
   try {
     localStorage.setItem(localKey, String(finalSeq));
   } catch (e) {}
+  syncDailyOrderSequence(restaurantId, finalSeq).catch(() => {});
   return finalSeq;
 }
 
