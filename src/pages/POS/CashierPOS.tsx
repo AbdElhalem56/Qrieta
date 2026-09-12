@@ -160,7 +160,7 @@ export const CashierPOS: React.FC = () => {
   const [customerLiveOrders, setCustomerLiveOrders] = useState<LiveOrder[]>([]);
   const [allLiveOrders, setAllLiveOrders] = useState<LiveOrder[]>([]);
   const [customerFilter, setCustomerFilter] = useState<'all' | 'new' | 'dine_in' | 'delivery' | 'completed'>('all');
-  const [sidebarView, setSidebarView] = useState<'all_orders' | 'customer_orders' | 'cart'>('all_orders');
+  const [sidebarView, setSidebarView] = useState<'all_orders' | 'customer_orders' | 'cart'>('cart');
   const [allOrdersFilter, setAllOrdersFilter] = useState<'all' | 'active' | 'cashier' | 'customer_app' | 'dine_in' | 'takeaway' | 'delivery'>('all');
   const [allOrdersSearch, setAllOrdersSearch] = useState<string>('');
   const [groupByCategory, setGroupByCategory] = useState<boolean>(true);
@@ -1474,6 +1474,8 @@ export const CashierPOS: React.FC = () => {
     const catObj = categories.find(c => c.id === item.category_id);
     const station = getStationForCategory(catObj?.name_ar || catObj?.name_en || (catObj as any)?.name);
 
+    setSidebarView('cart');
+
     setCart(prev => {
       const existingIndex = prev.findIndex(ci => ci.id === cartItemId);
       if (existingIndex > -1) {
@@ -2016,6 +2018,7 @@ export const CashierPOS: React.FC = () => {
     setOrderType('dine_in');
     setSettleModalTable(null);
     setActiveTab('pos');
+    setSidebarView('cart');
   };
 
   // Recall Held Bill
@@ -2038,6 +2041,7 @@ export const CashierPOS: React.FC = () => {
     setOrderNotes(bill.notes || '');
 
     setHeldBills(prev => prev.filter(b => b.id !== bill.id));
+    setSidebarView('cart');
   };
 
   const handleDeleteHeldBill = (billId: string) => {
@@ -4054,25 +4058,25 @@ export const CashierPOS: React.FC = () => {
         {/* 🧾 LEFT 1/3 SIDEBAR: Dedicated Live Customer Orders Stream or Direct Cashier Cart */}
         <div className="w-80 md:w-96 lg:w-[420px] xl:w-[460px] bg-white border-r border-slate-200 flex flex-col justify-between shrink-0 shadow-lg h-full overflow-hidden">
           
-          {/* Top Sidebar Switcher: All System Orders vs Customer Orders vs Direct Cashier Cart */}
+          {/* Top Sidebar Switcher: Direct Cashier Cart vs Customer Orders vs All System Orders */}
           <div className="p-1.5 bg-slate-900 text-white flex items-center justify-between gap-1 shrink-0 border-b border-slate-800">
             <div className="grid grid-cols-3 gap-1 w-full">
               <button
                 type="button"
-                onClick={() => setSidebarView('all_orders')}
+                onClick={() => setSidebarView('cart')}
                 className={`py-1.5 px-1 rounded-xl font-black text-[11px] flex items-center justify-center gap-1 transition-all cursor-pointer ${
-                  sidebarView === 'all_orders'
+                  sidebarView === 'cart'
                     ? 'bg-amber-500 text-slate-950 shadow-md'
                     : 'bg-slate-800 text-slate-300 hover:bg-slate-700'
                 }`}
               >
-                <Layers size={13} />
-                <span>كل الطلبات</span>
-                <span className={`px-1 py-0.2 rounded-md font-mono text-[9px] font-bold ${
-                  sidebarView === 'all_orders' ? 'bg-slate-950 text-amber-300' : 'bg-slate-950 text-slate-300'
-                }`}>
-                  {allSystemOrders.length}
-                </span>
+                <ShoppingCart size={13} />
+                <span>الكاشير</span>
+                {cart.length > 0 && (
+                  <span className="px-1 py-0.2 rounded-md bg-emerald-500 text-white font-mono text-[9px] font-bold">
+                    {cart.length}
+                  </span>
+                )}
               </button>
 
               <button
@@ -4103,20 +4107,20 @@ export const CashierPOS: React.FC = () => {
 
               <button
                 type="button"
-                onClick={() => setSidebarView('cart')}
+                onClick={() => setSidebarView('all_orders')}
                 className={`py-1.5 px-1 rounded-xl font-black text-[11px] flex items-center justify-center gap-1 transition-all cursor-pointer ${
-                  sidebarView === 'cart'
+                  sidebarView === 'all_orders'
                     ? 'bg-amber-500 text-slate-950 shadow-md'
                     : 'bg-slate-800 text-slate-300 hover:bg-slate-700'
                 }`}
               >
-                <ShoppingCart size={13} />
-                <span>الكاشير</span>
-                {cart.length > 0 && (
-                  <span className="px-1 py-0.2 rounded-md bg-emerald-500 text-white font-mono text-[9px] font-bold">
-                    {cart.length}
-                  </span>
-                )}
+                <Layers size={13} />
+                <span>كل الطلبات</span>
+                <span className={`px-1 py-0.2 rounded-md font-mono text-[9px] font-bold ${
+                  sidebarView === 'all_orders' ? 'bg-slate-950 text-amber-300' : 'bg-slate-950 text-slate-300'
+                }`}>
+                  {allSystemOrders.length}
+                </span>
               </button>
             </div>
           </div>
@@ -4824,7 +4828,7 @@ export const CashierPOS: React.FC = () => {
                     }`}
                   >
                     <ShoppingBag size={13} />
-                    <span>سفري</span>
+                    <span>تيك اوي</span>
                   </button>
                   <button
                     type="button"
@@ -4867,7 +4871,7 @@ export const CashierPOS: React.FC = () => {
                 <div className="flex items-center justify-between text-amber-900 font-bold">
                   <span className="flex items-center gap-1">
                     <ShoppingBag size={13} className="text-amber-600" />
-                    <span>طلب استلام سفري (تيك أواي)</span>
+                    <span>طلب استلام تيك اوي</span>
                   </span>
                   <span className="text-[10px] bg-amber-100 text-amber-800 px-2 py-0.5 rounded-full font-bold">بدون خدمة صالة</span>
                 </div>
