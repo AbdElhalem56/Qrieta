@@ -3098,423 +3098,214 @@ export const CashierPOS: React.FC = () => {
   };
 
   return (
-    <div className="h-screen w-full bg-slate-100 text-slate-800 flex overflow-hidden font-sans select-none" dir="ltr">
+    <div className="h-screen w-full bg-slate-100 text-slate-800 flex flex-col overflow-hidden font-sans select-none" dir="rtl">
       
-      {/* 🧭 A. LEFT SIDEBAR: Dark Navy Restaurant Navigation */}
-      <aside className="hidden md:flex w-56 lg:w-60 xl:w-64 bg-[#0a1128] text-slate-300 flex-col justify-between shrink-0 h-full border-r border-slate-900/80 z-30 select-none shadow-2xl" dir="rtl">
-        {/* Top Logo & Branding */}
-        <div className="p-4 sm:p-5 flex items-center gap-3 border-b border-white/10 shrink-0">
-          <div className="w-9 h-9 rounded-2xl bg-gradient-to-tr from-amber-600 via-amber-500 to-orange-500 flex items-center justify-center text-white font-black text-xl shadow-md shadow-amber-500/25 shrink-0">
-            Q
+      {/* 🌟 TOP HEADER (الشريط العلوي الموحد للكاشير) */}
+      <header className="h-16 bg-white border-b border-slate-200/90 px-3 sm:px-4 flex items-center justify-between shrink-0 shadow-2xs z-20">
+        {/* Right side (RTL): Brand / Back / Restaurant & Cashier / Navigation Tabs */}
+        <div className="flex items-center gap-2 sm:gap-3">
+          <Link
+            to="/admin"
+            className="p-2 text-slate-500 hover:text-slate-800 hover:bg-slate-100 rounded-xl transition-all"
+            title="الرجوع للوحة التحكم الرئيسية"
+          >
+            <ArrowRight size={20} />
+          </Link>
+
+          <div className="flex items-center gap-2">
+            <div className="w-8 h-8 rounded-xl bg-gradient-to-tr from-amber-600 via-amber-500 to-orange-500 flex items-center justify-center text-white font-black text-sm shadow-md shadow-amber-500/20 shrink-0">
+              Q
+            </div>
+            <div className="hidden sm:block">
+              <span className="font-black text-sm text-slate-900 block leading-tight truncate max-w-[140px]">
+                {selectedRestaurant?.name || 'كاشير كريتا'}
+              </span>
+              <span className="text-[10px] text-slate-400 font-bold block">
+                {shift.cashierName || 'الكاشير'} | وردية مفتوحة
+              </span>
+            </div>
           </div>
-          <div>
-            <h1 className="font-black text-lg text-white tracking-wide leading-none">Qrieta</h1>
-            <span className="text-[10px] text-amber-400 font-bold block mt-1 tracking-wider uppercase">
-              Restaurant POS
-            </span>
+
+          {/* Main Workspace Navigation Tabs */}
+          <div className="flex items-center gap-1 bg-slate-100 p-1 rounded-xl border border-slate-200/80 mr-1 sm:mr-3">
+            {/* 1. الكاشير */}
+            <button
+              type="button"
+              onClick={() => {
+                setActiveTab('pos');
+                setSidebarView('cart');
+              }}
+              className={`px-3 py-1.5 rounded-lg text-xs font-bold flex items-center gap-1.5 transition-all cursor-pointer ${
+                activeTab === 'pos' && sidebarView === 'cart'
+                  ? 'bg-amber-500 text-white shadow-xs font-black'
+                  : 'text-slate-600 hover:text-slate-900 hover:bg-slate-200/60'
+              }`}
+            >
+              <ShoppingCart size={14} />
+              <span>الكاشير</span>
+            </button>
+
+            {/* 2. سجل الطلبات */}
+            <button
+              type="button"
+              onClick={() => setActiveTab('orders')}
+              className={`px-3 py-1.5 rounded-lg text-xs font-bold flex items-center gap-1.5 transition-all cursor-pointer ${
+                activeTab === 'orders'
+                  ? 'bg-amber-500 text-white shadow-xs font-black'
+                  : 'text-slate-600 hover:text-slate-900 hover:bg-slate-200/60'
+              }`}
+            >
+              <Receipt size={14} />
+              <span className="hidden md:inline">سجل الطلبات</span>
+              <span className="md:hidden">الطلبات</span>
+              <span className={`text-[10px] px-1.5 py-0.2 rounded-md ${
+                activeTab === 'orders' ? 'bg-amber-600 text-white' : 'bg-slate-200 text-slate-600'
+              }`}>
+                {allSystemOrders.length}
+              </span>
+            </button>
+
+            {/* 3. الصالة والطاولات */}
+            <button
+              type="button"
+              onClick={() => setActiveTab('tables')}
+              className={`px-3 py-1.5 rounded-lg text-xs font-bold flex items-center gap-1.5 transition-all cursor-pointer ${
+                activeTab === 'tables'
+                  ? 'bg-amber-500 text-white shadow-xs font-black'
+                  : 'text-slate-600 hover:text-slate-900 hover:bg-slate-200/60'
+              }`}
+            >
+              <UtensilsCrossed size={14} />
+              <span className="hidden md:inline">الصالة</span>
+              <span className={`text-[10px] px-1.5 py-0.2 rounded-md ${
+                activeTab === 'tables' ? 'bg-amber-600 text-white' : 'bg-slate-200 text-slate-600'
+              }`}>
+                {occupiedTablesCount}
+              </span>
+            </button>
+
+            {/* 4. طلبات الزبائن Live */}
+            <button
+              type="button"
+              onClick={() => {
+                setActiveTab('customer_orders');
+                setHasUnviewedCustomerAlert(false);
+              }}
+              className={`px-3 py-1.5 rounded-lg text-xs font-bold flex items-center gap-1.5 transition-all relative cursor-pointer ${
+                activeTab === 'customer_orders'
+                  ? 'bg-amber-500 text-white shadow-xs font-black'
+                  : 'text-slate-600 hover:text-slate-900 hover:bg-slate-200/60'
+              }`}
+            >
+              <Smartphone size={14} />
+              <span className="hidden lg:inline">طلبات الزبائن</span>
+              {customerLiveOrders.length > 0 && (
+                <span className={`text-[10px] px-1.5 py-0.2 rounded-md font-mono font-bold ${
+                  customerLiveOrders.some(o => o.status === 'new')
+                    ? 'bg-red-600 text-white animate-pulse'
+                    : activeTab === 'customer_orders' ? 'bg-amber-600 text-white' : 'bg-slate-200 text-slate-600'
+                }`}>
+                  {customerLiveOrders.length}
+                </span>
+              )}
+            </button>
+
+            {/* 5. الوردية */}
+            <button
+              type="button"
+              onClick={() => setActiveTab('shift')}
+              className={`px-3 py-1.5 rounded-lg text-xs font-bold flex items-center gap-1.5 transition-all cursor-pointer ${
+                activeTab === 'shift'
+                  ? 'bg-amber-500 text-white shadow-xs font-black'
+                  : 'text-slate-600 hover:text-slate-900 hover:bg-slate-200/60'
+              }`}
+            >
+              <DollarSign size={14} />
+              <span className="hidden xl:inline">الوردية</span>
+            </button>
           </div>
         </div>
 
-        {/* Main Navigation - 11 Items */}
-        <nav className="flex-1 overflow-y-auto p-3 space-y-1 text-xs font-bold scrollbar-thin scrollbar-thumb-slate-800">
-          {/* 1. الرئيسية */}
-          <Link
-            to="/admin"
-            className="flex items-center gap-3 px-3 py-2.5 rounded-xl text-slate-400 hover:text-white hover:bg-white/5 transition-all"
-          >
-            <Home size={17} />
-            <span>الرئيسية</span>
-          </Link>
+        {/* Center: Search Field */}
+        <div className="relative flex-1 max-w-xs sm:max-w-sm md:max-w-md mx-2 sm:mx-4">
+          <Search className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400" size={16} />
+          <input
+            ref={searchInputRef}
+            type="text"
+            placeholder="ابحث عن صنف أو باركود..."
+            value={searchQuery}
+            onChange={e => setSearchQuery(e.target.value)}
+            onKeyDown={handleBarcodeSearch}
+            className="w-full bg-slate-50 border border-slate-300 focus:border-amber-500 focus:bg-white rounded-xl pr-9 pl-8 py-2 text-xs text-slate-800 placeholder-slate-400 outline-none font-medium shadow-inner transition-colors"
+          />
+          {searchQuery ? (
+            <button 
+              onClick={() => setSearchQuery('')}
+              className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 cursor-pointer"
+            >
+              <X size={15} />
+            </button>
+          ) : null}
+        </div>
 
-          {/* 2. الكاشير */}
-          <button
-            type="button"
-            onClick={() => {
-              setActiveTab('pos');
-              setSidebarView('cart');
-            }}
-            className={`w-full flex items-center justify-between px-3 py-2.5 rounded-xl transition-all cursor-pointer ${
-              sidebarView === 'cart' && activeTab === 'pos'
-                ? 'bg-amber-500 text-slate-950 font-black shadow-md shadow-amber-500/20'
-                : 'text-slate-300 hover:text-white hover:bg-white/5'
-            }`}
-          >
-            <div className="flex items-center gap-3">
-              <ShoppingCart size={17} />
-              <span>الكاشير</span>
-            </div>
-            {cart.length > 0 && (
-              <span className={`font-mono text-[10px] font-bold px-1.5 py-0.5 rounded-md ${
-                sidebarView === 'cart' && activeTab === 'pos' ? 'bg-slate-950 text-white' : 'bg-white/10 text-white'
-              }`}>
-                {cart.length}
-              </span>
+        {/* Left side (RTL): Live Date/time, Status, Quick Action Icons */}
+        <div className="flex items-center gap-2">
+          {/* Live Date & Time */}
+          <div className="hidden xl:flex items-center gap-2 bg-slate-50 border border-slate-200/80 px-2.5 py-1.5 rounded-xl text-xs font-bold text-slate-700 shadow-2xs">
+            <Clock size={14} className="text-amber-500 shrink-0" />
+            <span className="font-sans font-bold">{formattedDateTime}</span>
+          </div>
+
+          {/* Network & Offline Status */}
+          <div className={`flex items-center gap-1.5 px-2.5 py-1 rounded-xl text-xs font-bold border shadow-2xs ${
+            isOnline ? 'bg-emerald-50 text-emerald-700 border-emerald-200' : 'bg-amber-50 text-amber-800 border-amber-300'
+          }`}>
+            <span className={`w-2 h-2 rounded-full ${isOnline ? 'bg-emerald-500 animate-pulse' : 'bg-amber-500'}`} />
+            <span className="hidden sm:inline">{isOnline ? 'متصل' : 'أوفلاين'}</span>
+            {offlineQueue.length > 0 && (
+              <button
+                type="button"
+                onClick={() => selectedRestaurant && syncPendingOrders(selectedRestaurant.id)}
+                disabled={!isOnline || isSyncing}
+                className="ml-1 px-1.5 py-0.5 bg-amber-500 hover:bg-amber-600 disabled:opacity-50 text-white text-[10px] rounded-md transition-colors cursor-pointer"
+              >
+                {isSyncing ? '...' : `(${offlineQueue.length})`}
+              </button>
             )}
-          </button>
+          </div>
 
-          {/* 3. طلبات الزبائن */}
-          <button
-            type="button"
-            onClick={() => {
-              setSidebarView('customer_orders');
-              setHasUnviewedCustomerAlert(false);
-            }}
-            className={`w-full flex items-center justify-between px-3 py-2.5 rounded-xl transition-all cursor-pointer ${
-              sidebarView === 'customer_orders'
-                ? 'bg-amber-500 text-slate-950 font-black shadow-md shadow-amber-500/20'
-                : 'text-slate-300 hover:text-white hover:bg-white/5'
-            }`}
-          >
-            <div className="flex items-center gap-3">
-              <div className="relative">
-                <Smartphone size={17} />
-                {unhandledCustomerOrdersCount > 0 && (
-                  <span className="absolute -top-1 -right-1 w-2 h-2 rounded-full bg-red-500 animate-ping" />
-                )}
-              </div>
-              <span>طلبات الزبائن</span>
-            </div>
-            {unhandledCustomerOrdersCount > 0 ? (
-              <span className="bg-rose-500 text-white text-[10px] font-mono font-bold px-1.5 py-0.5 rounded-full animate-pulse">
-                {unhandledCustomerOrdersCount}!
-              </span>
-            ) : customerLiveOrders.length > 0 ? (
-              <span className="bg-slate-800 text-slate-300 font-mono text-[10px] px-1.5 py-0.5 rounded-md">
-                {customerLiveOrders.length}
-              </span>
-            ) : null}
-          </button>
-
-          {/* 4. طلب البيع المباشر */}
-          <button
-            type="button"
-            onClick={() => {
-              setOrderType('takeaway');
-              setSelectedTable(null);
-              setSidebarView('cart');
-              setActiveTab('pos');
-            }}
-            className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-slate-300 hover:text-white hover:bg-white/5 transition-all cursor-pointer"
-          >
-            <Zap size={17} className="text-amber-400" />
-            <span>طلب البيع المباشر</span>
-          </button>
-
-          {/* 5. كل الطلبات */}
-          <button
-            type="button"
-            onClick={() => {
-              setSidebarView('all_orders');
-            }}
-            className={`w-full flex items-center justify-between px-3 py-2.5 rounded-xl transition-all cursor-pointer ${
-              sidebarView === 'all_orders'
-                ? 'bg-amber-500 text-slate-950 font-black shadow-md shadow-amber-500/20'
-                : 'text-slate-300 hover:text-white hover:bg-white/5'
-            }`}
-          >
-            <div className="flex items-center gap-3">
-              <ListOrdered size={17} />
-              <span>كل الطلبات</span>
-            </div>
-            <span className="bg-rose-500 text-white font-mono text-[10px] font-bold px-1.5 py-0.5 rounded-full">
-              {allSystemOrders.length || activeOrders.length || 0}
-            </span>
-          </button>
-
-          {/* 6. الصالة */}
-          <button
-            type="button"
-            onClick={() => {
-              setOrderType('dine_in');
-              setSidebarView('cart');
-              setActiveTab('pos');
-            }}
-            className={`w-full flex items-center justify-between px-3 py-2.5 rounded-xl transition-all cursor-pointer ${
-              orderType === 'dine_in' && sidebarView === 'cart'
-                ? 'text-amber-400 bg-white/5'
-                : 'text-slate-300 hover:text-white hover:bg-white/5'
-            }`}
-          >
-            <div className="flex items-center gap-3">
-              <UtensilsCrossed size={17} />
-              <span>الصالة</span>
-            </div>
-            {occupiedTablesCount > 0 && (
-              <span className="bg-amber-500/20 text-amber-300 border border-amber-500/30 text-[10px] font-mono px-1.5 py-0.5 rounded-md">
-                {occupiedTablesCount}
-              </span>
-            )}
-          </button>
-
-          {/* 7. الدليفري */}
-          <button
-            type="button"
-            onClick={() => {
-              setOrderType('delivery');
-              setSelectedTable(null);
-              setSidebarView('cart');
-              setActiveTab('pos');
-            }}
-            className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl transition-all cursor-pointer ${
-              orderType === 'delivery' && sidebarView === 'cart'
-                ? 'text-amber-400 bg-white/5'
-                : 'text-slate-300 hover:text-white hover:bg-white/5'
-            }`}
-          >
-            <Bike size={17} />
-            <span>الدليفري</span>
-          </button>
-
-          {/* 8. تيك اوي */}
-          <button
-            type="button"
-            onClick={() => {
-              setOrderType('takeaway');
-              setSelectedTable(null);
-              setSidebarView('cart');
-              setActiveTab('pos');
-            }}
-            className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl transition-all cursor-pointer ${
-              orderType === 'takeaway' && sidebarView === 'cart'
-                ? 'text-amber-400 bg-white/5'
-                : 'text-slate-300 hover:text-white hover:bg-white/5'
-            }`}
-          >
-            <ShoppingBag size={17} />
-            <span>تيك اوي</span>
-          </button>
-
-          {/* 9. المخزون */}
-          <button
-            type="button"
-            onClick={() => setIsWasteModalOpen(true)}
-            className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-slate-300 hover:text-white hover:bg-white/5 transition-all cursor-pointer"
-          >
-            <Package size={17} />
-            <span>المخزون</span>
-          </button>
-
-          {/* 10. التقارير */}
+          {/* Quick Actions */}
           <button
             type="button"
             onClick={() => setIsOrdersHistoryModalOpen(true)}
-            className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-slate-300 hover:text-white hover:bg-white/5 transition-all cursor-pointer"
+            className="p-2 bg-slate-50 hover:bg-slate-100 text-slate-600 rounded-xl border border-slate-200 transition-all cursor-pointer shadow-2xs"
+            title="سجل الفواتير السريع"
           >
-            <BarChart3 size={17} />
-            <span>التقارير</span>
+            <Receipt size={15} className="text-amber-600" />
           </button>
-
-          {/* 11. الإعدادات */}
+          <button
+            type="button"
+            onClick={() => setIsCashDrawerModalOpen(true)}
+            className="p-2 bg-slate-50 hover:bg-slate-100 text-slate-600 rounded-xl border border-slate-200 transition-all cursor-pointer shadow-2xs"
+            title="حركة الدرج والخزينة"
+          >
+            <DollarSign size={15} className="text-emerald-600" />
+          </button>
           <button
             type="button"
             onClick={() => setIsScreenLocked(true)}
-            className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-slate-300 hover:text-white hover:bg-white/5 transition-all cursor-pointer"
-          >
-            <Settings size={17} />
-            <span>الإعدادات</span>
-          </button>
-        </nav>
-
-        {/* Bottom Branding & Screen Lock */}
-        <div className="p-3.5 border-t border-white/10 shrink-0 flex items-center justify-between text-xs text-slate-400">
-          <div className="flex items-center gap-2">
-            <div className="w-6 h-6 rounded-lg bg-amber-500/20 border border-amber-500/30 flex items-center justify-center text-amber-400 font-bold text-xs">
-              Q
-            </div>
-            <div>
-              <span className="font-bold text-white block text-[11px] leading-tight">Qrieta Intelligent</span>
-              <span className="text-[9px] text-slate-500 font-mono">v2.5.0 POS</span>
-            </div>
-          </div>
-          <button
-            type="button"
-            onClick={() => setIsScreenLocked(true)}
-            className="p-1.5 hover:text-white hover:bg-white/10 rounded-lg transition-colors cursor-pointer"
+            className="p-2 bg-slate-50 hover:bg-amber-50 text-slate-600 hover:text-amber-700 rounded-xl border border-slate-200 transition-all cursor-pointer shadow-2xs"
             title="قفل الشاشة مؤقتاً"
           >
             <Lock size={15} />
           </button>
         </div>
-      </aside>
+      </header>
 
-      {/* Mobile Drawer Overlay for Sidebar */}
-      {isMobileSidebarOpen && (
-        <div 
-          className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex md:hidden"
-          onClick={() => setIsMobileSidebarOpen(false)}
-        >
-          <div 
-            className="w-64 bg-[#0a1128] text-slate-300 h-full flex flex-col justify-between shadow-2xl"
-            dir="rtl"
-            onClick={e => e.stopPropagation()}
-          >
-            <div className="p-4 flex items-center justify-between border-b border-white/10">
-              <div className="flex items-center gap-2">
-                <div className="w-8 h-8 rounded-xl bg-amber-500 flex items-center justify-center text-white font-bold">Q</div>
-                <span className="font-bold text-white text-base">Qrieta POS</span>
-              </div>
-              <button onClick={() => setIsMobileSidebarOpen(false)} className="text-slate-400 hover:text-white p-1 cursor-pointer">
-                <X size={18} />
-              </button>
-            </div>
-            <nav className="flex-1 overflow-y-auto p-3 space-y-1 text-xs font-bold">
-              <Link to="/admin" className="flex items-center gap-3 px-3 py-2.5 rounded-xl text-slate-400 hover:text-white hover:bg-white/5">
-                <Home size={17} /><span>الرئيسية</span>
-              </Link>
-              <button onClick={() => { setActiveTab('pos'); setSidebarView('cart'); setIsMobileSidebarOpen(false); }} className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-slate-300 hover:text-white hover:bg-white/5 cursor-pointer">
-                <ShoppingCart size={17} /><span>الكاشير</span>
-              </button>
-              <button onClick={() => { setSidebarView('customer_orders'); setIsMobileSidebarOpen(false); }} className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-slate-300 hover:text-white hover:bg-white/5 cursor-pointer">
-                <Smartphone size={17} /><span>طلبات الزبائن ({customerLiveOrders.length})</span>
-              </button>
-              <button onClick={() => { setSidebarView('all_orders'); setIsMobileSidebarOpen(false); }} className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-slate-300 hover:text-white hover:bg-white/5 cursor-pointer">
-                <ListOrdered size={17} /><span>كل الطلبات</span>
-              </button>
-              <button onClick={() => { setOrderType('dine_in'); setSidebarView('cart'); setActiveTab('pos'); setIsMobileSidebarOpen(false); }} className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-slate-300 hover:text-white hover:bg-white/5 cursor-pointer">
-                <UtensilsCrossed size={17} /><span>الصالة ({occupiedTablesCount})</span>
-              </button>
-              <button onClick={() => { setOrderType('delivery'); setIsMobileSidebarOpen(false); }} className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-slate-300 hover:text-white hover:bg-white/5 cursor-pointer">
-                <Bike size={17} /><span>الدليفري</span>
-              </button>
-              <button onClick={() => { setOrderType('takeaway'); setIsMobileSidebarOpen(false); }} className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-slate-300 hover:text-white hover:bg-white/5 cursor-pointer">
-                <ShoppingBag size={17} /><span>تيك اوي</span>
-              </button>
-              <button onClick={() => { setIsWasteModalOpen(true); setIsMobileSidebarOpen(false); }} className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-slate-300 hover:text-white hover:bg-white/5 cursor-pointer">
-                <Package size={17} /><span>المخزون</span>
-              </button>
-              <button onClick={() => { setIsOrdersHistoryModalOpen(true); setIsMobileSidebarOpen(false); }} className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-slate-300 hover:text-white hover:bg-white/5 cursor-pointer">
-                <BarChart3 size={17} /><span>التقارير</span>
-              </button>
-              <button onClick={() => { setIsScreenLocked(true); setIsMobileSidebarOpen(false); }} className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-slate-300 hover:text-white hover:bg-white/5 cursor-pointer">
-                <Settings size={17} /><span>الإعدادات</span>
-              </button>
-            </nav>
-          </div>
-        </div>
-      )}
-
-      {/* 🖥️ B + C + D + E. CENTER WORKSPACE: Top Header, Categories, Product Grid, Bottom Toolbar */}
-      <div className="flex-1 flex flex-col h-full overflow-hidden bg-slate-100 min-w-0" dir="rtl">
-        
-        {/* 🌟 B. TOP HEADER */}
-        <header className="h-16 bg-white border-b border-slate-200/90 px-3 sm:px-5 flex items-center justify-between shrink-0 shadow-2xs z-20">
-          {/* Mobile menu toggle button */}
-          <button
-            type="button"
-            onClick={() => setIsMobileSidebarOpen(true)}
-            className="md:hidden p-2 text-slate-600 hover:text-slate-900 rounded-xl hover:bg-slate-100 transition-colors cursor-pointer"
-          >
-            <Menu size={20} />
-          </button>
-
-          {/* Right: Cashier User Profile & Restaurant Branch */}
-          <div className="flex items-center gap-3 sm:gap-4">
-            {/* Cashier Profile */}
-            <div className="flex items-center gap-2">
-              <div className="w-9 h-9 sm:w-10 sm:h-10 rounded-full bg-slate-900 text-white flex items-center justify-center font-bold shadow-xs shrink-0">
-                <User size={18} />
-              </div>
-              <div className="text-right">
-                <span className="font-black text-xs sm:text-sm text-slate-900 block leading-tight truncate max-w-[120px]">
-                  {shift.cashierName || 'أحمد محمد'}
-                </span>
-                <span className="text-[10px] text-slate-400 font-bold block leading-tight">
-                  كاشير
-                </span>
-              </div>
-            </div>
-
-            <div className="h-7 w-px bg-slate-200 hidden sm:block" />
-
-            {/* Restaurant Branch Selector */}
-            <div className="flex items-center gap-1.5 text-xs">
-              <div className="w-7 h-7 rounded-lg bg-amber-50 text-amber-600 flex items-center justify-center shrink-0">
-                <Building2 size={15} />
-              </div>
-              <div className="flex items-center gap-1">
-                <span className="text-slate-500 font-bold hidden lg:inline">المطعم الرئيسي :</span>
-                <span className="font-black text-slate-800 bg-slate-100 px-2 py-0.5 rounded-lg border border-slate-200/80 text-[11px] truncate max-w-[120px]">
-                  {selectedRestaurant?.name || 'الفرع الرئيسي'}
-                </span>
-              </div>
-            </div>
-          </div>
-
-          {/* Center: Search Field */}
-          <div className="relative flex-1 max-w-xs sm:max-w-sm md:max-w-md mx-2 sm:mx-4">
-            <Search className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400" size={16} />
-            <input
-              ref={searchInputRef}
-              type="text"
-              placeholder="ابحث عن منتج..."
-              value={searchQuery}
-              onChange={e => setSearchQuery(e.target.value)}
-              onKeyDown={handleBarcodeSearch}
-              className="w-full bg-slate-50 border border-slate-300 focus:border-amber-500 focus:bg-white rounded-xl pr-9 pl-8 py-2 text-xs text-slate-800 placeholder-slate-400 outline-none font-medium shadow-inner transition-colors"
-            />
-            {searchQuery ? (
-              <button 
-                onClick={() => setSearchQuery('')}
-                className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 cursor-pointer"
-              >
-                <X size={15} />
-              </button>
-            ) : null}
-          </div>
-
-          {/* Left: Date & Time, Network Status, Quick Actions */}
-          <div className="flex items-center gap-2 sm:gap-3">
-            {/* Live Date & Time matching reference image */}
-            <div className="hidden xl:flex items-center gap-2 bg-slate-50 border border-slate-200/80 px-2.5 py-1.5 rounded-xl text-xs font-bold text-slate-700 shadow-2xs">
-              <Clock size={14} className="text-amber-500 shrink-0" />
-              <span className="font-sans font-bold">{formattedDateTime}</span>
-            </div>
-
-            {/* Network & Offline Status */}
-            <div className={`flex items-center gap-1.5 px-2.5 py-1 rounded-xl text-xs font-bold border shadow-2xs ${
-              isOnline ? 'bg-emerald-50 text-emerald-700 border-emerald-200' : 'bg-amber-50 text-amber-800 border-amber-300'
-            }`}>
-              <span className={`w-2 h-2 rounded-full ${isOnline ? 'bg-emerald-500 animate-pulse' : 'bg-amber-500'}`} />
-              <span className="hidden sm:inline">{isOnline ? 'متصل' : 'أوفلاين'}</span>
-              {offlineQueue.length > 0 && (
-                <button
-                  type="button"
-                  onClick={() => selectedRestaurant && syncPendingOrders(selectedRestaurant.id)}
-                  disabled={!isOnline || isSyncing}
-                  className="ml-1 px-1.5 py-0.5 bg-amber-500 hover:bg-amber-600 disabled:opacity-50 text-white text-[10px] rounded-md transition-colors cursor-pointer"
-                >
-                  {isSyncing ? '...' : `(${offlineQueue.length})`}
-                </button>
-              )}
-            </div>
-
-            {/* Fast Actions: Orders history, Cash Drawer, Screen Lock */}
-            <button
-              type="button"
-              onClick={() => setIsOrdersHistoryModalOpen(true)}
-              className="p-2 bg-slate-50 hover:bg-slate-100 text-slate-600 rounded-xl border border-slate-200 transition-all cursor-pointer shadow-2xs"
-              title="سجل الفواتير"
-            >
-              <Receipt size={15} className="text-amber-600" />
-            </button>
-            <button
-              type="button"
-              onClick={() => setIsCashDrawerModalOpen(true)}
-              className="p-2 bg-slate-50 hover:bg-slate-100 text-slate-600 rounded-xl border border-slate-200 transition-all cursor-pointer shadow-2xs"
-              title="حركة الدرج"
-            >
-              <DollarSign size={15} className="text-emerald-600" />
-            </button>
-            <button
-              type="button"
-              onClick={() => setIsScreenLocked(true)}
-              className="p-2 bg-slate-50 hover:bg-amber-50 text-slate-600 hover:text-amber-700 rounded-xl border border-slate-200 transition-all cursor-pointer shadow-2xs"
-              title="قفل الشاشة"
-            >
-              <Lock size={15} />
-            </button>
-          </div>
-        </header>
+      {/* Main Workspace below Header */}
+      <div className="flex-1 flex overflow-hidden">
+        {/* Center Workspace */}
+        <div className="flex-1 flex flex-col h-full overflow-hidden bg-slate-100 min-w-0">
 
         {/* Notice if POS preset was marked disabled */}
         {restaurantServices && restaurantServices.pos_enabled === false && (
@@ -4472,81 +4263,6 @@ export const CashierPOS: React.FC = () => {
                     })}
                 </div>
               )}
-            </div>
-          )}
-
-          {/* 🌟 E. BOTTOM TOOLBAR (Fixed under Product Catalog) */}
-          {activeTab === 'pos' && (
-            <div className="h-16 bg-white border-t border-slate-200/90 px-4 sm:px-6 flex items-center justify-between shrink-0 shadow-2xs z-10">
-              {/* Quantity Stepper */}
-              <div className="flex items-center gap-2 bg-slate-100 p-1 rounded-xl border border-slate-200">
-                <button
-                  type="button"
-                  onClick={() => setQuickQty(q => Math.max(1, q - 1))}
-                  className="w-8 h-8 rounded-lg bg-white hover:bg-slate-200 text-slate-800 font-black text-sm flex items-center justify-center border border-slate-200 shadow-2xs cursor-pointer transition-colors"
-                >
-                  -
-                </button>
-                <span className="w-8 text-center font-mono font-black text-sm text-slate-900">
-                  {quickQty}
-                </span>
-                <button
-                  type="button"
-                  onClick={() => setQuickQty(q => q + 1)}
-                  className="w-8 h-8 rounded-lg bg-white hover:bg-slate-200 text-slate-800 font-black text-sm flex items-center justify-center border border-slate-200 shadow-2xs cursor-pointer transition-colors"
-                >
-                  +
-                </button>
-              </div>
-
-              {/* Actions: Cancel / Clear All / Add to Order */}
-              <div className="flex items-center gap-2 sm:gap-3">
-                {/* Cancel Button */}
-                <button
-                  type="button"
-                  onClick={() => {
-                    setSearchQuery('');
-                    setQuickQty(1);
-                  }}
-                  className="px-4 sm:px-5 py-2.5 bg-slate-800 hover:bg-slate-700 text-white rounded-xl text-xs sm:text-sm font-bold flex items-center gap-1.5 shadow-sm transition-all cursor-pointer"
-                  title="إلغاء البحث والكمية"
-                >
-                  <Trash2 size={15} />
-                  <span>إلغاء</span>
-                </button>
-
-                {/* Clear All Button */}
-                <button
-                  type="button"
-                  onClick={() => {
-                    if (cart.length > 0 && confirm('هل تريد بالتأكيد إفراغ سلة الطلب الحالية؟')) {
-                      setCart([]);
-                      setQuickQty(1);
-                    }
-                  }}
-                  disabled={cart.length === 0}
-                  className="px-4 sm:px-5 py-2.5 bg-rose-50 hover:bg-rose-100 disabled:opacity-40 text-rose-600 border border-rose-200 rounded-xl text-xs sm:text-sm font-bold flex items-center gap-1.5 transition-all cursor-pointer"
-                  title="مسح كافة الأصناف في الفاتورة الحالية"
-                >
-                  <X size={15} />
-                  <span>مسح الكل</span>
-                </button>
-
-                {/* Add to Order Button */}
-                <button
-                  type="button"
-                  onClick={() => {
-                    if (filteredProducts.length > 0) {
-                      handleProductClick(filteredProducts[0]);
-                    }
-                  }}
-                  disabled={filteredProducts.length === 0}
-                  className="px-5 sm:px-6 py-2.5 bg-amber-500 hover:bg-amber-600 disabled:opacity-40 text-white rounded-xl text-xs sm:text-sm font-black flex items-center gap-2 shadow-md shadow-amber-500/20 transition-all cursor-pointer"
-                >
-                  <ShoppingCart size={16} />
-                  <span>إضافة للطلب</span>
-                </button>
-              </div>
             </div>
           )}
         </div>
@@ -5770,34 +5486,38 @@ export const CashierPOS: React.FC = () => {
 
                 {/* 🌟 Final Action Buttons matching Reference Image: طباعة الطلب (Dark Navy) & إكمال الطلب (Bright Green) */}
                 <div className="flex items-center gap-2 pt-1">
-                  {/* طباعة الطلب (Print Order) */}
+                  {/* طباعة الفاتورة */}
                   <button
                     type="button"
                     onClick={handlePrintCurrentCart}
                     disabled={cart.length === 0}
-                    className="flex-1 py-3 px-3 bg-[#0a1128] hover:bg-slate-800 disabled:opacity-40 text-white font-bold text-xs rounded-xl flex items-center justify-center gap-2 shadow-md transition-all cursor-pointer"
+                    className="p-3 bg-slate-100 hover:bg-slate-200 disabled:opacity-40 text-slate-700 font-bold rounded-xl flex items-center justify-center border border-slate-200 transition-all cursor-pointer shadow-xs"
                     title="طباعة فاتورة الطلب الحالي فوراً"
                   >
-                    <Printer size={16} />
-                    <span className="whitespace-nowrap">طباعة الطلب</span>
+                    <Printer size={18} />
                   </button>
 
-                  {/* إكمال الطلب (Complete Order) */}
+                  {/* إكمال ودفع الفاتورة */}
                   <button
                     type="button"
                     onClick={() => handleProcessPayment()}
                     disabled={cart.length === 0}
-                    className="flex-1 py-3 px-3 bg-emerald-600 hover:bg-emerald-700 disabled:opacity-40 text-white font-black text-xs rounded-xl flex items-center justify-center gap-2 shadow-md shadow-emerald-600/20 active:scale-98 transition-all cursor-pointer"
+                    className="flex-1 py-3 px-4 bg-emerald-600 hover:bg-emerald-700 disabled:opacity-40 text-white font-black text-sm rounded-xl flex items-center justify-center gap-2 shadow-md shadow-emerald-600/20 active:scale-98 transition-all cursor-pointer"
                     title="تحصيل القيمة وتسجيل الفاتورة رسمياً"
                   >
-                    <CheckCircle2 size={16} />
-                    <span className="whitespace-nowrap">إكمال الطلب</span>
+                    <CheckCircle2 size={18} />
+                    <span>إكمال ودفع الفاتورة</span>
+                    <span className="font-mono text-xs bg-emerald-700/60 px-2 py-0.5 rounded-lg mr-1">
+                      {finalTotal.toFixed(2)} ج.م
+                    </span>
                   </button>
                 </div>
               </div>
             </div>
           )}
         </div>
+
+            </div>
 
       {/* 🛠️ MODALS INTEGRATION */}
 
