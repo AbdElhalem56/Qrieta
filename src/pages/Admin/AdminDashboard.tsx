@@ -22,6 +22,7 @@ import {
 } from '../../lib/deliveryHelper';
 import { getStoredCashierPin, setStoredCashierPin } from '../../lib/posOfflineStore';
 import { InventoryAuditTab } from '../../components/Admin/InventoryAuditTab';
+import { ProductImageManager } from '../../components/Admin/ProductImageManager';
 import { fetchLiveOrders, updateLiveOrderStatus, LiveOrder, getDisplayOrderNumber } from '../../lib/ordersService';
 import { 
   Plus, 
@@ -4057,6 +4058,16 @@ export default function AdminDashboard() {
                           categories.map(c => <option key={c.id} value={c.id}>{c.name_ar} ({c.name_en})</option>)
                         )}
                       </select>
+                    </div>
+
+                    {/* Product Image Management */}
+                    <div className="col-span-1 sm:col-span-2 bg-slate-50/50 p-3 rounded-2xl border border-slate-100">
+                      <ProductImageManager
+                        currentImageUrl={editingProduct?.image_url || ''}
+                        productId={editingProduct?.id}
+                        isRTL={isRTL}
+                        onImageChange={(newUrl) => setEditingProduct(prev => prev ? ({ ...prev, image_url: newUrl }) : null)}
+                      />
                     </div>
 
                     {/* Options & Size Pricing Configurator */}

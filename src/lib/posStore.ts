@@ -21,6 +21,7 @@ export interface POSCartItem {
   stockQty?: number;
   sugar_level?: string;
   selectedOptions?: Record<string, string>;
+  image_url?: string;
 }
 
 export interface HeldBill {

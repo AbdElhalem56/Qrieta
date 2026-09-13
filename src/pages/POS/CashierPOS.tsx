@@ -117,7 +117,17 @@ import {
   MonitorCheck,
   Building2,
   Edit2,
-  XCircle
+  XCircle,
+  Home,
+  LayoutGrid,
+  CupSoda,
+  Cake,
+  Cookie,
+  Utensils,
+  ListOrdered,
+  ChevronDown,
+  BarChart3,
+  Menu
 } from 'lucide-react';
 import { 
   getNextDailyOrderNumber, 
@@ -205,7 +215,78 @@ export const CashierPOS: React.FC = () => {
   const [customerAddress, setCustomerAddress] = useState<string>('');
   const [customOrderNumber, setCustomOrderNumber] = useState<string>('');
   const [currentCartOrderNumber, setCurrentCartOrderNumber] = useState<number | null>(null);
+  const [previewOrderNumber, setPreviewOrderNumber] = useState<number>(57);
   const [orderNotes, setOrderNotes] = useState<string>('');
+
+  // Quick Quantity Selector in Bottom Toolbar
+  const [quickQty, setQuickQty] = useState<number>(1);
+  const [isMobileSidebarOpen, setIsMobileSidebarOpen] = useState<boolean>(false);
+
+  const getCategoryIcon = (catName: string) => {
+    const name = (catName || '').toLowerCase();
+    if (name.includes('ساخن') || name.includes('قهو') || name.includes('شاي') || name.includes('hot') || name.includes('coffee')) {
+      return <Coffee size={14} />;
+    }
+    if (name.includes('بارد') || name.includes('عصير') || name.includes('مشروب') || name.includes('cold') || name.includes('drink') || name.includes('juice')) {
+      return <CupSoda size={14} />;
+    }
+    if (name.includes('حلو') || name.includes('كيك') || name.includes('dessert') || name.includes('sweet') || name.includes('سينابون')) {
+      return <Cake size={14} />;
+    }
+    if (name.includes('مخبوز') || name.includes('معجن') || name.includes('كرواسون') || name.includes('pastry') || name.includes('bakery')) {
+      return <Cookie size={14} />;
+    }
+    if (name.includes('وجب') || name.includes('ساندوتش') || name.includes('برجر') || name.includes('بيتزا') || name.includes('meal') || name.includes('food')) {
+      return <Utensils size={14} />;
+    }
+    return <Sparkles size={14} />;
+  };
+
+  // Live Date & Time Tracker
+  const [currentTime, setCurrentTime] = useState<Date>(new Date());
+  useEffect(() => {
+    const t = setInterval(() => setCurrentTime(new Date()), 1000);
+    return () => clearInterval(t);
+  }, []);
+
+  // Formatted Date Time in Arabic matching reference design
+  const formattedDateTime = useMemo(() => {
+    try {
+      const days = ['الأحد', 'الاثنين', 'الثلاثاء', 'الأربعاء', 'الخميس', 'الجمعة', 'السبت'];
+      const months = ['يناير', 'فبراير', 'مارس', 'أبريل', 'مايو', 'يونيو', 'يوليو', 'أغسطس', 'سبتمبر', 'أكتوبر', 'نوفمبر', 'ديسمبر'];
+      const dayName = days[currentTime.getDay()];
+      const day = currentTime.getDate();
+      const month = months[currentTime.getMonth()];
+      const year = currentTime.getFullYear();
+      let hours = currentTime.getHours();
+      const minutes = currentTime.getMinutes().toString().padStart(2, '0');
+      const ampm = hours >= 12 ? 'مساءً' : 'صباحاً';
+      hours = hours % 12;
+      hours = hours ? hours : 12;
+      const hoursStr = hours.toString().padStart(2, '0');
+      return `${dayName}، ${day} ${month} ${year} | ${hoursStr}:${minutes} ${ampm}`;
+    } catch (e) {
+      return currentTime.toLocaleDateString('ar-EG');
+    }
+  }, [currentTime]);
+
+  const refreshSequenceNumber = async (resId: string) => {
+    try {
+      const res = await fetch(`/api/orders/daily-sequence?restaurant_id=${resId}`);
+      if (res.ok) {
+        const data = await res.json();
+        if (typeof data.current_sequence === 'number') {
+          setPreviewOrderNumber(data.current_sequence + 1);
+        }
+      }
+    } catch (e) {}
+  };
+
+  useEffect(() => {
+    if (selectedRestaurant?.id) {
+      refreshSequenceNumber(selectedRestaurant.id);
+    }
+  }, [selectedRestaurant?.id]);
 
   // Cart State
   const [cart, setCart] = useState<POSCartItem[]>([]);
@@ -1293,7 +1374,7 @@ export const CashierPOS: React.FC = () => {
     return tablesFinancials.filter(t => t.isOccupied || t.totalDue > 0).length;
   }, [tablesFinancials]);
 
-  // Render Product Card
+  // Render Product Card matching reference image
   const renderProductCard = (item: Product) => {
     const currentStock = stockMap[item.id] ?? 20;
     const isOutOfStock = currentStock <= 0;
@@ -1307,35 +1388,53 @@ export const CashierPOS: React.FC = () => {
         key={item.id}
         onClick={() => handleProductClick(item)}
         disabled={isOutOfStock}
-        className={`relative bg-white border rounded-2xl p-2.5 text-right flex flex-col justify-between transition-all group overflow-hidden ${
+        className={`relative bg-white border rounded-2xl text-right flex flex-col justify-between transition-all group overflow-hidden ${
           isOutOfStock 
             ? 'opacity-40 border-slate-200 cursor-not-allowed bg-slate-50' 
             : 'border-slate-200 hover:border-amber-400 hover:shadow-md active:scale-98 cursor-pointer shadow-xs'
         }`}
       >
-        {/* Image or placeholder */}
-        <div className="relative w-full h-24 bg-slate-100 rounded-xl overflow-hidden mb-2">
+        {/* Product Image Edge-to-Edge with Fallback */}
+        <div className="relative w-full h-32 sm:h-36 bg-slate-100 overflow-hidden shrink-0">
           {item.image_url ? (
             <img
               src={item.image_url}
               alt={item.name_ar || item.name_en || ''}
               className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
               loading="lazy"
+              onError={(e) => {
+                // Fallback to food graphic if image url breaks
+                (e.target as HTMLElement).style.display = 'none';
+              }}
             />
-          ) : (
-            <div className="w-full h-full flex items-center justify-center text-slate-400">
-              <Coffee size={30} />
+          ) : null}
+
+          {/* Graceful Fallback if image missing or broken */}
+          <div className={`w-full h-full bg-gradient-to-br from-amber-50/80 via-orange-50/50 to-slate-100 flex flex-col items-center justify-center text-amber-600/70 p-2 select-none ${
+            item.image_url ? 'hidden' : 'flex'
+          }`}>
+            <div className="w-12 h-12 rounded-2xl bg-white/90 shadow-2xs border border-amber-200/50 flex items-center justify-center text-amber-500 mb-1">
+              {item.category_id && categories.find(c => c.id === item.category_id)?.name_ar?.includes('مشروب') ? (
+                <CupSoda size={24} />
+              ) : item.category_id && categories.find(c => c.id === item.category_id)?.name_ar?.includes('حلو') ? (
+                <Cake size={24} />
+              ) : (
+                <Coffee size={24} />
+              )}
             </div>
-          )}
+            <span className="text-[10px] font-bold text-slate-500 truncate max-w-[85%]">
+              {item.name_ar || item.name_en}
+            </span>
+          </div>
 
           {/* Stock Badge */}
-          <div className="absolute top-1.5 left-1.5">
+          <div className="absolute top-2 left-2 z-10">
             {isOutOfStock ? (
-              <span className="bg-rose-500 text-white text-[10px] font-bold px-1.5 py-0.5 rounded-md shadow">
+              <span className="bg-rose-500 text-white text-[10px] font-bold px-2 py-0.5 rounded-lg shadow">
                 نفذ
               </span>
             ) : isLowStock ? (
-              <span className="bg-amber-500 text-white text-[10px] font-bold px-1.5 py-0.5 rounded-md shadow">
+              <span className="bg-amber-500 text-white text-[10px] font-bold px-2 py-0.5 rounded-lg shadow">
                 باقي {currentStock}
               </span>
             ) : null}
@@ -1343,22 +1442,24 @@ export const CashierPOS: React.FC = () => {
 
           {/* Options / Sugar levels Indicator */}
           {hasOptions && (
-            <div className="absolute bottom-1.5 right-1.5 bg-slate-900/80 backdrop-blur-sm text-amber-300 text-[10px] font-bold px-1.5 py-0.5 rounded-md flex items-center gap-1 shadow">
-              <Sparkles size={10} />
+            <div className="absolute top-2 right-2 bg-slate-900/85 backdrop-blur-xs text-amber-300 text-[10px] font-bold px-2 py-0.5 rounded-lg flex items-center gap-1 shadow-sm z-10">
+              <Sparkles size={11} />
               <span>{hasSugarOption ? 'درجات سكر' : 'خيارات'}</span>
             </div>
           )}
         </div>
 
-        <div>
-          <h4 className="font-bold text-xs text-slate-800 leading-tight line-clamp-1 group-hover:text-amber-600 transition-colors">
+        {/* Product Details & Action Button */}
+        <div className="p-3 flex-1 flex flex-col justify-between w-full">
+          <h4 className="font-bold text-xs sm:text-sm text-slate-800 leading-tight text-center truncate group-hover:text-amber-600 transition-colors pt-0.5 pb-2">
             {item.name_ar || item.name_en || (item as any).name}
           </h4>
-          <div className="flex items-center justify-between mt-1.5">
-            <span className="font-mono font-bold text-emerald-600 text-xs">
-              {item.price.toFixed(2)} <span className="text-[10px] font-sans">ج.م</span>
+
+          <div className="flex items-center justify-between pt-2 border-t border-slate-100">
+            <span className="font-mono font-black text-slate-900 text-xs sm:text-sm">
+              {item.price.toFixed(2)} <span className="text-[10px] font-bold text-slate-500 font-sans">ج.م</span>
             </span>
-            <span className="w-5 h-5 rounded-lg bg-slate-100 group-hover:bg-amber-500 group-hover:text-white text-slate-600 flex items-center justify-center text-xs font-bold transition-colors">
+            <span className="w-7 h-7 rounded-full bg-amber-400/90 group-hover:bg-amber-500 text-white flex items-center justify-center font-black text-sm shadow-xs transition-colors shrink-0">
               +
             </span>
           </div>
@@ -1398,7 +1499,7 @@ export const CashierPOS: React.FC = () => {
       return;
     }
 
-    addToCart(item, [], '');
+    addToCart(item, [], '', undefined, undefined, quickQty);
   };
 
   const handleToggleChoice = (group: POSOptionGroup, choice: POSOptionChoice) => {
@@ -1465,7 +1566,8 @@ export const CashierPOS: React.FC = () => {
     options: CartItemOption[] = [], 
     notes: string = '',
     sugarLevel?: string,
-    selectedOptionsMap?: Record<string, string>
+    selectedOptionsMap?: Record<string, string>,
+    qtyToAdd: number = 1
   ) => {
     const optionsPrice = options.reduce((sum, opt) => sum + (opt.price || 0), 0);
     const unitPrice = item.price + optionsPrice;
@@ -1481,7 +1583,7 @@ export const CashierPOS: React.FC = () => {
       const existingIndex = prev.findIndex(ci => ci.id === cartItemId);
       if (existingIndex > -1) {
         const updated = [...prev];
-        updated[existingIndex].quantity += 1;
+        updated[existingIndex].quantity += Math.max(1, qtyToAdd);
         return updated;
       }
       return [
@@ -1491,13 +1593,14 @@ export const CashierPOS: React.FC = () => {
           menuItemId: item.id,
           name: itemName,
           price: unitPrice,
-          quantity: 1,
+          quantity: Math.max(1, qtyToAdd),
           notes: notes.trim() || undefined,
           options: options.length > 0 ? options : undefined,
           station: station,
           stockQty: stockMap[item.id] ?? 20,
           sugar_level: sugarLevel,
-          selectedOptions: selectedOptionsMap
+          selectedOptions: selectedOptionsMap,
+          image_url: item.image_url
         }
       ];
     });
@@ -1725,6 +1828,50 @@ export const CashierPOS: React.FC = () => {
     setCustomOrderNumber('');
 
     addAuditLog('create_order', `تم إرسال الطلب للمطبخ (${title}) برقم #${dailyOrderNum} وإجمالي ${finalTotal.toFixed(2)} ج.م`);
+  };
+
+  // Quick Print Current Cart Bill without Full Settlement
+  const handlePrintCurrentCart = () => {
+    if (cart.length === 0) {
+      alert('السلة فارغة! يرجى إضافة أصناف أولاً قبل الطباعة.');
+      return;
+    }
+    const receiptData: TaxReceiptData = {
+      restaurantName: selectedRestaurant?.name || 'مطعم وكافيه كريتا',
+      restaurantPhone: selectedRestaurant?.phone || '01000000000',
+      restaurantAddress: selectedRestaurant?.address || 'الفرع الرئيسي',
+      vatNumber: (selectedRestaurant as any)?.vat_number || '300-123-456',
+      commercialRegistration: (selectedRestaurant as any)?.cr_number || '123456',
+      orderNumber: currentCartOrderNumber || previewOrderNumber || 57,
+      orderType: orderType,
+      tableNumber: selectedTable?.table_number,
+      cashierName: shift.cashierName || 'كاشير',
+      date: new Date().toLocaleDateString('ar-EG'),
+      time: new Date().toLocaleTimeString('ar-EG', { hour: '2-digit', minute: '2-digit' }),
+      items: cart.map(it => ({
+        name: it.name,
+        quantity: it.quantity,
+        unitPrice: it.price,
+        totalPrice: it.price * it.quantity,
+        notes: it.notes,
+        options: it.options || []
+      })),
+      subtotal: subtotal,
+      taxRate: taxRate,
+      taxAmount: taxAmount,
+      serviceFeeRate: serviceFeeRate,
+      serviceFeeAmount: serviceFeeAmount,
+      deliveryFee: deliveryFee,
+      discountAmount: discountAmount,
+      finalTotal: finalTotal,
+      paymentMethod: paymentMethod,
+      amountPaid: finalTotal,
+      changeDue: 0,
+      customerName: customerName.trim() || undefined,
+      customerPhone: customerPhone.trim() || undefined
+    };
+    setTaxReceiptData(receiptData);
+    setIsReceiptModalOpen(true);
   };
 
   // Settle Table Account (تحصيل وسداد حساب الطاولة وإخلاءها)
@@ -2951,290 +3098,519 @@ export const CashierPOS: React.FC = () => {
   };
 
   return (
-    <div className="h-screen w-full bg-slate-100 text-slate-800 flex flex-col overflow-hidden font-sans select-none" dir="rtl">
+    <div className="h-screen w-full bg-slate-100 text-slate-800 flex overflow-hidden font-sans select-none" dir="ltr">
       
-      {/* 🟢 TOP BAR: Brand, Locked Restaurant Info, Shift Status & Fast Actions */}
-      <header className="h-14 bg-white border-b border-slate-200 px-4 flex items-center justify-between shrink-0 z-20 shadow-sm">
-        <div className="flex items-center gap-3">
-          <div className="flex items-center gap-2">
-            <div className="w-9 h-9 rounded-xl bg-amber-500 flex items-center justify-center text-white font-bold shadow-md shadow-amber-500/20">
-              <Sparkles size={18} />
-            </div>
-            <div className="hidden sm:block">
-              <span className="font-bold text-sm text-slate-800 tracking-tight">Qrieta POS</span>
-              <span className="text-[10px] text-amber-600 block font-mono leading-none font-bold">
-                {selectedRestaurant?.name ? selectedRestaurant.name : 'نظام الكاشير المكتبي'}
-              </span>
-            </div>
+      {/* 🧭 A. LEFT SIDEBAR: Dark Navy Restaurant Navigation */}
+      <aside className="hidden md:flex w-56 lg:w-60 xl:w-64 bg-[#0a1128] text-slate-300 flex-col justify-between shrink-0 h-full border-r border-slate-900/80 z-30 select-none shadow-2xl" dir="rtl">
+        {/* Top Logo & Branding */}
+        <div className="p-4 sm:p-5 flex items-center gap-3 border-b border-white/10 shrink-0">
+          <div className="w-9 h-9 rounded-2xl bg-gradient-to-tr from-amber-600 via-amber-500 to-orange-500 flex items-center justify-center text-white font-black text-xl shadow-md shadow-amber-500/25 shrink-0">
+            Q
           </div>
-
-          {/* 📶 Network & Offline Sync Status Indicator */}
-          <div className={`flex items-center gap-1.5 px-2.5 py-1 rounded-xl text-xs font-bold border shadow-sm ${
-            isOnline 
-              ? 'bg-emerald-50 text-emerald-700 border-emerald-200' 
-              : 'bg-amber-50 text-amber-800 border-amber-300'
-          }`}>
-            <span className={`w-2 h-2 rounded-full ${isOnline ? 'bg-emerald-500 animate-pulse' : 'bg-amber-500'}`} />
-            <span>{isOnline ? 'متصل بالشبكة' : 'أوفلاين (بدون نت)'}</span>
-            {offlineQueue.length > 0 && (
-              <button
-                type="button"
-                onClick={() => selectedRestaurant && syncPendingOrders(selectedRestaurant.id)}
-                disabled={!isOnline || isSyncing}
-                className="ml-1 px-1.5 py-0.5 bg-amber-500 hover:bg-amber-600 disabled:opacity-50 text-white text-[10px] rounded-md transition-colors cursor-pointer"
-                title="مزامنة الفواتير غير المرفوعة"
-              >
-                {isSyncing ? 'جاري المزامنة...' : `مزامنة (${offlineQueue.length})`}
-              </button>
-            )}
-          </div>
-
-          {/* Shift Live Counter Badge - Showing only order counts per payment method, money amounts hidden */}
-          <div className="hidden lg:flex items-center gap-2 bg-slate-50 border border-slate-200 px-3 py-1.5 rounded-xl text-xs shadow-xs">
-            <div className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
-            <span className="text-slate-600 font-bold">الطلبات المسددة:</span>
-            <span className="inline-flex items-center gap-1 font-bold text-slate-800 bg-white px-2 py-0.5 rounded-lg border border-slate-200 shadow-2xs">
-              <span>💵 كاش:</span>
-              <span className="font-mono font-black text-emerald-700">{shiftPaymentCounts.cash}</span>
-            </span>
-            <span className="inline-flex items-center gap-1 font-bold text-blue-800 bg-blue-50/70 px-2 py-0.5 rounded-lg border border-blue-200 shadow-2xs">
-              <span>💳 فيزا:</span>
-              <span className="font-mono font-black text-blue-700">{shiftPaymentCounts.card}</span>
-            </span>
-            <span className="inline-flex items-center gap-1 font-bold text-purple-800 bg-purple-50/70 px-2 py-0.5 rounded-lg border border-purple-200 shadow-2xs">
-              <span>📱 إنستاباي:</span>
-              <span className="font-mono font-black text-purple-700">{shiftPaymentCounts.wallet}</span>
-            </span>
-            <span className="text-slate-300">|</span>
-            <span className="font-mono font-bold text-amber-800 bg-amber-50 px-2 py-0.5 rounded-lg border border-amber-200">
-              إجمالي: {shiftPaymentCounts.total} طلب
+          <div>
+            <h1 className="font-black text-lg text-white tracking-wide leading-none">Qrieta</h1>
+            <span className="text-[10px] text-amber-400 font-bold block mt-1 tracking-wider uppercase">
+              Restaurant POS
             </span>
           </div>
         </div>
 
-        {/* Action Controls */}
-        <div className="flex items-center gap-2">
-          {/* Active Cashier Name Badge */}
-          <div className="flex items-center gap-1.5 bg-slate-100/90 border border-slate-200 px-2.5 py-1.5 rounded-xl text-xs font-bold text-slate-800 shadow-xs">
-            <span className="text-amber-600">👤</span>
-            <span className="text-xs font-black truncate max-w-[120px]">{shift.cashierName || 'كاشير الفرع'}</span>
-            <button
-              type="button"
-              onClick={() => setIsScreenLocked(true)}
-              className="text-[10px] text-blue-600 hover:text-blue-800 hover:underline mr-0.5 font-bold cursor-pointer"
-              title="تبديل الوردية أو تسليم كاشير آخر"
-            >
-              (تبديل)
-            </button>
-          </div>
-
-          {/* Orders History Modal Shortcut Button */}
-          <button
-            onClick={() => setIsOrdersHistoryModalOpen(true)}
-            className="px-3 py-1.5 bg-amber-50 hover:bg-amber-100 text-amber-800 text-xs font-bold rounded-xl flex items-center gap-1.5 border border-amber-200 transition-all cursor-pointer shadow-sm"
-            title="عرض جميع فواتير اليوم والشيفت"
+        {/* Main Navigation - 11 Items */}
+        <nav className="flex-1 overflow-y-auto p-3 space-y-1 text-xs font-bold scrollbar-thin scrollbar-thumb-slate-800">
+          {/* 1. الرئيسية */}
+          <Link
+            to="/admin"
+            className="flex items-center gap-3 px-3 py-2.5 rounded-xl text-slate-400 hover:text-white hover:bg-white/5 transition-all"
           >
-            <Receipt size={15} className="text-amber-600" />
-            <span>الفواتير</span>
-            <span className="w-5 h-5 rounded-full bg-amber-500 text-white font-mono font-bold text-[11px] flex items-center justify-center">
-              {activeOrders.length}
-            </span>
-          </button>
+            <Home size={17} />
+            <span>الرئيسية</span>
+          </Link>
 
-          {/* Held Bills Button */}
+          {/* 2. الكاشير */}
           <button
-            onClick={() => setIsHeldDrawerOpen(true)}
-            className="relative px-3 py-1.5 bg-slate-50 hover:bg-slate-100 text-slate-700 text-xs font-bold rounded-xl flex items-center gap-1.5 border border-slate-200 transition-all cursor-pointer shadow-sm"
+            type="button"
+            onClick={() => {
+              setActiveTab('pos');
+              setSidebarView('cart');
+            }}
+            className={`w-full flex items-center justify-between px-3 py-2.5 rounded-xl transition-all cursor-pointer ${
+              sidebarView === 'cart' && activeTab === 'pos'
+                ? 'bg-amber-500 text-slate-950 font-black shadow-md shadow-amber-500/20'
+                : 'text-slate-300 hover:text-white hover:bg-white/5'
+            }`}
           >
-            <PauseCircle size={15} className="text-amber-500" />
-            <span>معلقة</span>
-            {heldBills.length > 0 && (
-              <span className="w-5 h-5 rounded-full bg-amber-500 text-white font-mono font-bold text-[11px] flex items-center justify-center">
-                {heldBills.length}
+            <div className="flex items-center gap-3">
+              <ShoppingCart size={17} />
+              <span>الكاشير</span>
+            </div>
+            {cart.length > 0 && (
+              <span className={`font-mono text-[10px] font-bold px-1.5 py-0.5 rounded-md ${
+                sidebarView === 'cart' && activeTab === 'pos' ? 'bg-slate-950 text-white' : 'bg-white/10 text-white'
+              }`}>
+                {cart.length}
               </span>
             )}
           </button>
 
-          {/* Cash In / Out */}
+          {/* 3. طلبات الزبائن */}
           <button
-            onClick={() => setIsCashDrawerModalOpen(true)}
-            className="px-2.5 py-1.5 bg-slate-50 hover:bg-slate-100 text-slate-700 text-xs font-bold rounded-xl flex items-center gap-1.5 border border-slate-200 transition-all cursor-pointer"
-            title="تسجيل حركة درج (Cash In / Out)"
+            type="button"
+            onClick={() => {
+              setSidebarView('customer_orders');
+              setHasUnviewedCustomerAlert(false);
+            }}
+            className={`w-full flex items-center justify-between px-3 py-2.5 rounded-xl transition-all cursor-pointer ${
+              sidebarView === 'customer_orders'
+                ? 'bg-amber-500 text-slate-950 font-black shadow-md shadow-amber-500/20'
+                : 'text-slate-300 hover:text-white hover:bg-white/5'
+            }`}
           >
-            <DollarSign size={14} className="text-emerald-600" />
-            <span className="hidden sm:inline">حركة الدرج</span>
+            <div className="flex items-center gap-3">
+              <div className="relative">
+                <Smartphone size={17} />
+                {unhandledCustomerOrdersCount > 0 && (
+                  <span className="absolute -top-1 -right-1 w-2 h-2 rounded-full bg-red-500 animate-ping" />
+                )}
+              </div>
+              <span>طلبات الزبائن</span>
+            </div>
+            {unhandledCustomerOrdersCount > 0 ? (
+              <span className="bg-rose-500 text-white text-[10px] font-mono font-bold px-1.5 py-0.5 rounded-full animate-pulse">
+                {unhandledCustomerOrdersCount}!
+              </span>
+            ) : customerLiveOrders.length > 0 ? (
+              <span className="bg-slate-800 text-slate-300 font-mono text-[10px] px-1.5 py-0.5 rounded-md">
+                {customerLiveOrders.length}
+              </span>
+            ) : null}
           </button>
 
-          {/* Record Waste */}
+          {/* 4. طلب البيع المباشر */}
           <button
+            type="button"
+            onClick={() => {
+              setOrderType('takeaway');
+              setSelectedTable(null);
+              setSidebarView('cart');
+              setActiveTab('pos');
+            }}
+            className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-slate-300 hover:text-white hover:bg-white/5 transition-all cursor-pointer"
+          >
+            <Zap size={17} className="text-amber-400" />
+            <span>طلب البيع المباشر</span>
+          </button>
+
+          {/* 5. كل الطلبات */}
+          <button
+            type="button"
+            onClick={() => {
+              setSidebarView('all_orders');
+            }}
+            className={`w-full flex items-center justify-between px-3 py-2.5 rounded-xl transition-all cursor-pointer ${
+              sidebarView === 'all_orders'
+                ? 'bg-amber-500 text-slate-950 font-black shadow-md shadow-amber-500/20'
+                : 'text-slate-300 hover:text-white hover:bg-white/5'
+            }`}
+          >
+            <div className="flex items-center gap-3">
+              <ListOrdered size={17} />
+              <span>كل الطلبات</span>
+            </div>
+            <span className="bg-rose-500 text-white font-mono text-[10px] font-bold px-1.5 py-0.5 rounded-full">
+              {allSystemOrders.length || activeOrders.length || 0}
+            </span>
+          </button>
+
+          {/* 6. الصالة */}
+          <button
+            type="button"
+            onClick={() => {
+              setOrderType('dine_in');
+              setSidebarView('cart');
+              setActiveTab('pos');
+            }}
+            className={`w-full flex items-center justify-between px-3 py-2.5 rounded-xl transition-all cursor-pointer ${
+              orderType === 'dine_in' && sidebarView === 'cart'
+                ? 'text-amber-400 bg-white/5'
+                : 'text-slate-300 hover:text-white hover:bg-white/5'
+            }`}
+          >
+            <div className="flex items-center gap-3">
+              <UtensilsCrossed size={17} />
+              <span>الصالة</span>
+            </div>
+            {occupiedTablesCount > 0 && (
+              <span className="bg-amber-500/20 text-amber-300 border border-amber-500/30 text-[10px] font-mono px-1.5 py-0.5 rounded-md">
+                {occupiedTablesCount}
+              </span>
+            )}
+          </button>
+
+          {/* 7. الدليفري */}
+          <button
+            type="button"
+            onClick={() => {
+              setOrderType('delivery');
+              setSelectedTable(null);
+              setSidebarView('cart');
+              setActiveTab('pos');
+            }}
+            className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl transition-all cursor-pointer ${
+              orderType === 'delivery' && sidebarView === 'cart'
+                ? 'text-amber-400 bg-white/5'
+                : 'text-slate-300 hover:text-white hover:bg-white/5'
+            }`}
+          >
+            <Bike size={17} />
+            <span>الدليفري</span>
+          </button>
+
+          {/* 8. تيك اوي */}
+          <button
+            type="button"
+            onClick={() => {
+              setOrderType('takeaway');
+              setSelectedTable(null);
+              setSidebarView('cart');
+              setActiveTab('pos');
+            }}
+            className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl transition-all cursor-pointer ${
+              orderType === 'takeaway' && sidebarView === 'cart'
+                ? 'text-amber-400 bg-white/5'
+                : 'text-slate-300 hover:text-white hover:bg-white/5'
+            }`}
+          >
+            <ShoppingBag size={17} />
+            <span>تيك اوي</span>
+          </button>
+
+          {/* 9. المخزون */}
+          <button
+            type="button"
             onClick={() => setIsWasteModalOpen(true)}
-            className="px-2.5 py-1.5 bg-slate-50 hover:bg-slate-100 text-slate-700 text-xs font-bold rounded-xl flex items-center gap-1.5 border border-slate-200 transition-all cursor-pointer"
-            title="تسجيل هالك وتوالف المخزون"
+            className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-slate-300 hover:text-white hover:bg-white/5 transition-all cursor-pointer"
           >
-            <Trash2 size={14} className="text-rose-600" />
-            <span className="hidden sm:inline">هالك</span>
+            <Package size={17} />
+            <span>المخزون</span>
           </button>
 
-          {/* Lock Screen */}
+          {/* 10. التقارير */}
           <button
+            type="button"
+            onClick={() => setIsOrdersHistoryModalOpen(true)}
+            className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-slate-300 hover:text-white hover:bg-white/5 transition-all cursor-pointer"
+          >
+            <BarChart3 size={17} />
+            <span>التقارير</span>
+          </button>
+
+          {/* 11. الإعدادات */}
+          <button
+            type="button"
             onClick={() => setIsScreenLocked(true)}
-            className="p-2 bg-slate-50 hover:bg-amber-50 text-slate-600 hover:text-amber-700 rounded-xl border border-slate-200 transition-all cursor-pointer"
+            className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-slate-300 hover:text-white hover:bg-white/5 transition-all cursor-pointer"
+          >
+            <Settings size={17} />
+            <span>الإعدادات</span>
+          </button>
+        </nav>
+
+        {/* Bottom Branding & Screen Lock */}
+        <div className="p-3.5 border-t border-white/10 shrink-0 flex items-center justify-between text-xs text-slate-400">
+          <div className="flex items-center gap-2">
+            <div className="w-6 h-6 rounded-lg bg-amber-500/20 border border-amber-500/30 flex items-center justify-center text-amber-400 font-bold text-xs">
+              Q
+            </div>
+            <div>
+              <span className="font-bold text-white block text-[11px] leading-tight">Qrieta Intelligent</span>
+              <span className="text-[9px] text-slate-500 font-mono">v2.5.0 POS</span>
+            </div>
+          </div>
+          <button
+            type="button"
+            onClick={() => setIsScreenLocked(true)}
+            className="p-1.5 hover:text-white hover:bg-white/10 rounded-lg transition-colors cursor-pointer"
             title="قفل الشاشة مؤقتاً"
           >
-            <Lock size={16} />
+            <Lock size={15} />
           </button>
         </div>
-      </header>
+      </aside>
 
-      {/* Notice if POS preset was marked disabled */}
-      {restaurantServices && restaurantServices.pos_enabled === false && (
-        <div className="bg-amber-50 border-b border-amber-200 text-amber-900 px-4 py-2 text-xs font-bold flex items-center justify-between shrink-0 shadow-xs">
-          <div className="flex items-center gap-2">
-            <AlertCircle size={15} className="text-amber-600 shrink-0" />
-            <span>تنبيه: باقة هذا المتجر مضبوطة على خدمة محددة. شاشة الكاشير متاحة لك كمسؤول/كاشير بكامل ميزاتها.</span>
+      {/* Mobile Drawer Overlay for Sidebar */}
+      {isMobileSidebarOpen && (
+        <div 
+          className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex md:hidden"
+          onClick={() => setIsMobileSidebarOpen(false)}
+        >
+          <div 
+            className="w-64 bg-[#0a1128] text-slate-300 h-full flex flex-col justify-between shadow-2xl"
+            dir="rtl"
+            onClick={e => e.stopPropagation()}
+          >
+            <div className="p-4 flex items-center justify-between border-b border-white/10">
+              <div className="flex items-center gap-2">
+                <div className="w-8 h-8 rounded-xl bg-amber-500 flex items-center justify-center text-white font-bold">Q</div>
+                <span className="font-bold text-white text-base">Qrieta POS</span>
+              </div>
+              <button onClick={() => setIsMobileSidebarOpen(false)} className="text-slate-400 hover:text-white p-1 cursor-pointer">
+                <X size={18} />
+              </button>
+            </div>
+            <nav className="flex-1 overflow-y-auto p-3 space-y-1 text-xs font-bold">
+              <Link to="/admin" className="flex items-center gap-3 px-3 py-2.5 rounded-xl text-slate-400 hover:text-white hover:bg-white/5">
+                <Home size={17} /><span>الرئيسية</span>
+              </Link>
+              <button onClick={() => { setActiveTab('pos'); setSidebarView('cart'); setIsMobileSidebarOpen(false); }} className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-slate-300 hover:text-white hover:bg-white/5 cursor-pointer">
+                <ShoppingCart size={17} /><span>الكاشير</span>
+              </button>
+              <button onClick={() => { setSidebarView('customer_orders'); setIsMobileSidebarOpen(false); }} className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-slate-300 hover:text-white hover:bg-white/5 cursor-pointer">
+                <Smartphone size={17} /><span>طلبات الزبائن ({customerLiveOrders.length})</span>
+              </button>
+              <button onClick={() => { setSidebarView('all_orders'); setIsMobileSidebarOpen(false); }} className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-slate-300 hover:text-white hover:bg-white/5 cursor-pointer">
+                <ListOrdered size={17} /><span>كل الطلبات</span>
+              </button>
+              <button onClick={() => { setOrderType('dine_in'); setSidebarView('cart'); setActiveTab('pos'); setIsMobileSidebarOpen(false); }} className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-slate-300 hover:text-white hover:bg-white/5 cursor-pointer">
+                <UtensilsCrossed size={17} /><span>الصالة ({occupiedTablesCount})</span>
+              </button>
+              <button onClick={() => { setOrderType('delivery'); setIsMobileSidebarOpen(false); }} className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-slate-300 hover:text-white hover:bg-white/5 cursor-pointer">
+                <Bike size={17} /><span>الدليفري</span>
+              </button>
+              <button onClick={() => { setOrderType('takeaway'); setIsMobileSidebarOpen(false); }} className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-slate-300 hover:text-white hover:bg-white/5 cursor-pointer">
+                <ShoppingBag size={17} /><span>تيك اوي</span>
+              </button>
+              <button onClick={() => { setIsWasteModalOpen(true); setIsMobileSidebarOpen(false); }} className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-slate-300 hover:text-white hover:bg-white/5 cursor-pointer">
+                <Package size={17} /><span>المخزون</span>
+              </button>
+              <button onClick={() => { setIsOrdersHistoryModalOpen(true); setIsMobileSidebarOpen(false); }} className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-slate-300 hover:text-white hover:bg-white/5 cursor-pointer">
+                <BarChart3 size={17} /><span>التقارير</span>
+              </button>
+              <button onClick={() => { setIsScreenLocked(true); setIsMobileSidebarOpen(false); }} className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-slate-300 hover:text-white hover:bg-white/5 cursor-pointer">
+                <Settings size={17} /><span>الإعدادات</span>
+              </button>
+            </nav>
           </div>
-          {selectedRestaurant?.slug && (
-            <a 
-              href={`/r/${selectedRestaurant.slug}`} 
-              target="_blank" 
-              rel="noreferrer" 
-              className="underline hover:text-amber-950 text-[11px] font-bold"
-            >
-              فتح تطبيق الطلبات للزبائن
-            </a>
-          )}
         </div>
       )}
 
-      {/* 📱 MAIN WORKSPACE: Grid Layout (Products 65% | Cart & Settlement 35%) */}
-      <div className="flex-1 flex overflow-hidden">
+      {/* 🖥️ B + C + D + E. CENTER WORKSPACE: Top Header, Categories, Product Grid, Bottom Toolbar */}
+      <div className="flex-1 flex flex-col h-full overflow-hidden bg-slate-100 min-w-0" dir="rtl">
         
-        {/* 🍔 LEFT/CENTER AREA: Categories, Search, Products Grid */}
-        <div className="flex-1 flex flex-col overflow-hidden bg-slate-100 border-l border-slate-200">
-          
-          {/* Search & Category Filter Bar */}
-          <div className="bg-white border-b border-slate-200 shrink-0 shadow-xs">
-            {/* Row 1: Search Box & Mode Tabs & Group Toggle */}
-            <div className="p-2.5 sm:p-3 flex flex-wrap items-center justify-between gap-2 border-b border-slate-100">
-              {/* Barcode Search Box */}
-              <div className="relative flex-1 min-w-[220px] max-w-md">
-                <Search className="absolute right-3 top-2.5 text-slate-400" size={16} />
-                <input
-                  ref={searchInputRef}
-                  type="text"
-                  placeholder="بحث باسم الصنف أو مسح الباركود..."
-                  value={searchQuery}
-                  onChange={e => setSearchQuery(e.target.value)}
-                  onKeyDown={handleBarcodeSearch}
-                  className="w-full bg-slate-50 border border-slate-300 focus:border-amber-500 rounded-xl pr-9 pl-8 py-2 text-xs text-slate-800 placeholder-slate-400 outline-none font-medium shadow-inner"
-                />
-                {searchQuery ? (
-                  <button 
-                    onClick={() => setSearchQuery('')}
-                    className="absolute left-2.5 top-2.5 text-slate-400 hover:text-slate-600 cursor-pointer"
-                  >
-                    <X size={15} />
-                  </button>
-                ) : (
-                  <Barcode className="absolute left-2.5 top-2.5 text-slate-400" size={16} />
-                )}
-              </div>
+        {/* 🌟 B. TOP HEADER */}
+        <header className="h-16 bg-white border-b border-slate-200/90 px-3 sm:px-5 flex items-center justify-between shrink-0 shadow-2xs z-20">
+          {/* Mobile menu toggle button */}
+          <button
+            type="button"
+            onClick={() => setIsMobileSidebarOpen(true)}
+            className="md:hidden p-2 text-slate-600 hover:text-slate-900 rounded-xl hover:bg-slate-100 transition-colors cursor-pointer"
+          >
+            <Menu size={20} />
+          </button>
 
-              {/* Layout Mode & Tab Controls */}
-              <div className="flex items-center gap-1.5">
-                {/* Mode Tabs */}
-                <div className="flex items-center gap-1 bg-slate-100 p-1 rounded-xl border border-slate-200">
-                  <button
-                    onClick={() => setActiveTab('pos')}
-                    className={`px-3 py-1 rounded-lg text-xs font-bold transition-all cursor-pointer ${
-                      activeTab === 'pos' ? 'bg-amber-500 text-white shadow-xs' : 'text-slate-600 hover:text-slate-900'
-                    }`}
-                  >
-                    قائمة الأصناف
-                  </button>
-                  <button
-                    onClick={() => setActiveTab('orders')}
-                    className={`px-3 py-1 rounded-lg text-xs font-bold transition-all cursor-pointer ${
-                      activeTab === 'orders' ? 'bg-amber-500 text-white shadow-xs' : 'text-slate-600 hover:text-slate-900'
-                    }`}
-                  >
-                    الفواتير ({activeOrders.length})
-                  </button>
-                </div>
+          {/* Right: Cashier User Profile & Restaurant Branch */}
+          <div className="flex items-center gap-3 sm:gap-4">
+            {/* Cashier Profile */}
+            <div className="flex items-center gap-2">
+              <div className="w-9 h-9 sm:w-10 sm:h-10 rounded-full bg-slate-900 text-white flex items-center justify-center font-bold shadow-xs shrink-0">
+                <User size={18} />
+              </div>
+              <div className="text-right">
+                <span className="font-black text-xs sm:text-sm text-slate-900 block leading-tight truncate max-w-[120px]">
+                  {shift.cashierName || 'أحمد محمد'}
+                </span>
+                <span className="text-[10px] text-slate-400 font-bold block leading-tight">
+                  كاشير
+                </span>
               </div>
             </div>
 
-            {/* Row 2: Categories Bar with Left & Right Scroll Buttons for Easy Flipping */}
-            {activeTab === 'pos' && (
-              <div className="px-2 py-1.5 bg-slate-50/80 flex items-center gap-1.5">
-                {/* Scroll Right Button (in RTL, Right = Previous) */}
-                <button
-                  type="button"
-                  onClick={() => scrollCategories('right')}
-                  className="w-7 h-7 rounded-lg bg-white hover:bg-amber-50 text-slate-600 hover:text-amber-700 border border-slate-200 flex items-center justify-center shrink-0 shadow-xs transition-colors cursor-pointer"
-                  title="الأقسام السابقة"
-                >
-                  <ChevronRight size={15} />
-                </button>
+            <div className="h-7 w-px bg-slate-200 hidden sm:block" />
 
-                {/* Categories Chips Container */}
-                <div 
-                  ref={categoryScrollRef}
-                  className="flex-1 flex items-center gap-1.5 overflow-x-auto no-scrollbar py-0.5 scroll-smooth"
-                >
-                  <button
-                    onClick={() => setSelectedCategory('all')}
-                    className={`px-3 py-1.5 rounded-xl text-xs font-bold shrink-0 transition-all cursor-pointer ${
-                      selectedCategory === 'all'
-                        ? 'bg-amber-500 text-white shadow-sm shadow-amber-500/20'
-                        : 'bg-white text-slate-700 border border-slate-200 hover:bg-slate-100'
-                    }`}
-                  >
-                    الكل ({products.length})
-                  </button>
-                  {categories.map(cat => {
-                    const catCount = products.filter(p => p.category_id === cat.id).length;
-                    return (
-                      <button
-                        key={cat.id}
-                        onClick={() => {
-                          setSelectedCategory(cat.id);
-                          if (groupByCategory) {
-                            const elem = document.getElementById(`category-sec-${cat.id}`);
-                            if (elem) {
-                              elem.scrollIntoView({ behavior: 'smooth', block: 'start' });
-                            }
-                          }
-                        }}
-                        className={`px-3 py-1.5 rounded-xl text-xs font-bold shrink-0 transition-all cursor-pointer flex items-center gap-1.5 ${
-                          selectedCategory === cat.id
-                            ? 'bg-amber-500 text-white shadow-sm shadow-amber-500/20'
-                            : 'bg-white text-slate-700 border border-slate-200 hover:bg-slate-100'
-                        }`}
-                      >
-                        <span>{cat.name_ar || cat.name_en || (cat as any).name}</span>
-                        <span className={`text-[10px] px-1.5 py-0.2 rounded-full font-mono ${
-                          selectedCategory === cat.id ? 'bg-amber-600/60 text-white' : 'bg-slate-100 text-slate-500'
-                        }`}>
-                          {catCount}
-                        </span>
-                      </button>
-                    );
-                  })}
-                </div>
-
-                {/* Scroll Left Button (in RTL, Left = Next) */}
-                <button
-                  type="button"
-                  onClick={() => scrollCategories('left')}
-                  className="w-7 h-7 rounded-lg bg-white hover:bg-amber-50 text-slate-600 hover:text-amber-700 border border-slate-200 flex items-center justify-center shrink-0 shadow-xs transition-colors cursor-pointer"
-                  title="الأقسام التالية"
-                >
-                  <ChevronLeft size={15} />
-                </button>
+            {/* Restaurant Branch Selector */}
+            <div className="flex items-center gap-1.5 text-xs">
+              <div className="w-7 h-7 rounded-lg bg-amber-50 text-amber-600 flex items-center justify-center shrink-0">
+                <Building2 size={15} />
               </div>
+              <div className="flex items-center gap-1">
+                <span className="text-slate-500 font-bold hidden lg:inline">المطعم الرئيسي :</span>
+                <span className="font-black text-slate-800 bg-slate-100 px-2 py-0.5 rounded-lg border border-slate-200/80 text-[11px] truncate max-w-[120px]">
+                  {selectedRestaurant?.name || 'الفرع الرئيسي'}
+                </span>
+              </div>
+            </div>
+          </div>
+
+          {/* Center: Search Field */}
+          <div className="relative flex-1 max-w-xs sm:max-w-sm md:max-w-md mx-2 sm:mx-4">
+            <Search className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400" size={16} />
+            <input
+              ref={searchInputRef}
+              type="text"
+              placeholder="ابحث عن منتج..."
+              value={searchQuery}
+              onChange={e => setSearchQuery(e.target.value)}
+              onKeyDown={handleBarcodeSearch}
+              className="w-full bg-slate-50 border border-slate-300 focus:border-amber-500 focus:bg-white rounded-xl pr-9 pl-8 py-2 text-xs text-slate-800 placeholder-slate-400 outline-none font-medium shadow-inner transition-colors"
+            />
+            {searchQuery ? (
+              <button 
+                onClick={() => setSearchQuery('')}
+                className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 cursor-pointer"
+              >
+                <X size={15} />
+              </button>
+            ) : null}
+          </div>
+
+          {/* Left: Date & Time, Network Status, Quick Actions */}
+          <div className="flex items-center gap-2 sm:gap-3">
+            {/* Live Date & Time matching reference image */}
+            <div className="hidden xl:flex items-center gap-2 bg-slate-50 border border-slate-200/80 px-2.5 py-1.5 rounded-xl text-xs font-bold text-slate-700 shadow-2xs">
+              <Clock size={14} className="text-amber-500 shrink-0" />
+              <span className="font-sans font-bold">{formattedDateTime}</span>
+            </div>
+
+            {/* Network & Offline Status */}
+            <div className={`flex items-center gap-1.5 px-2.5 py-1 rounded-xl text-xs font-bold border shadow-2xs ${
+              isOnline ? 'bg-emerald-50 text-emerald-700 border-emerald-200' : 'bg-amber-50 text-amber-800 border-amber-300'
+            }`}>
+              <span className={`w-2 h-2 rounded-full ${isOnline ? 'bg-emerald-500 animate-pulse' : 'bg-amber-500'}`} />
+              <span className="hidden sm:inline">{isOnline ? 'متصل' : 'أوفلاين'}</span>
+              {offlineQueue.length > 0 && (
+                <button
+                  type="button"
+                  onClick={() => selectedRestaurant && syncPendingOrders(selectedRestaurant.id)}
+                  disabled={!isOnline || isSyncing}
+                  className="ml-1 px-1.5 py-0.5 bg-amber-500 hover:bg-amber-600 disabled:opacity-50 text-white text-[10px] rounded-md transition-colors cursor-pointer"
+                >
+                  {isSyncing ? '...' : `(${offlineQueue.length})`}
+                </button>
+              )}
+            </div>
+
+            {/* Fast Actions: Orders history, Cash Drawer, Screen Lock */}
+            <button
+              type="button"
+              onClick={() => setIsOrdersHistoryModalOpen(true)}
+              className="p-2 bg-slate-50 hover:bg-slate-100 text-slate-600 rounded-xl border border-slate-200 transition-all cursor-pointer shadow-2xs"
+              title="سجل الفواتير"
+            >
+              <Receipt size={15} className="text-amber-600" />
+            </button>
+            <button
+              type="button"
+              onClick={() => setIsCashDrawerModalOpen(true)}
+              className="p-2 bg-slate-50 hover:bg-slate-100 text-slate-600 rounded-xl border border-slate-200 transition-all cursor-pointer shadow-2xs"
+              title="حركة الدرج"
+            >
+              <DollarSign size={15} className="text-emerald-600" />
+            </button>
+            <button
+              type="button"
+              onClick={() => setIsScreenLocked(true)}
+              className="p-2 bg-slate-50 hover:bg-amber-50 text-slate-600 hover:text-amber-700 rounded-xl border border-slate-200 transition-all cursor-pointer shadow-2xs"
+              title="قفل الشاشة"
+            >
+              <Lock size={15} />
+            </button>
+          </div>
+        </header>
+
+        {/* Notice if POS preset was marked disabled */}
+        {restaurantServices && restaurantServices.pos_enabled === false && (
+          <div className="bg-amber-50 border-b border-amber-200 text-amber-900 px-4 py-2 text-xs font-bold flex items-center justify-between shrink-0 shadow-xs">
+            <div className="flex items-center gap-2">
+              <AlertCircle size={15} className="text-amber-600 shrink-0" />
+              <span>تنبيه: باقة هذا المتجر مضبوطة على خدمة محددة. شاشة الكاشير متاحة لك كمسؤول/كاشير بكامل ميزاتها.</span>
+            </div>
+            {selectedRestaurant?.slug && (
+              <a 
+                href={`/r/${selectedRestaurant.slug}`} 
+                target="_blank" 
+                rel="noreferrer" 
+                className="underline hover:text-amber-950 text-[11px] font-bold"
+              >
+                فتح تطبيق الطلبات للزبائن
+              </a>
             )}
           </div>
+        )}
+
+        {/* 🌟 C. CATEGORIES BAR */}
+        {activeTab === 'pos' && (
+          <div className="bg-white border-b border-slate-200/90 px-3 sm:px-4 py-2 flex items-center gap-2 shrink-0 shadow-2xs">
+            {/* Scroll Right Button (in RTL, Right = Previous) */}
+            <button
+              type="button"
+              onClick={() => scrollCategories('right')}
+              className="w-7 h-7 rounded-lg bg-slate-50 hover:bg-slate-100 text-slate-600 border border-slate-200 flex items-center justify-center shrink-0 shadow-2xs cursor-pointer"
+              title="الأقسام السابقة"
+            >
+              <ChevronRight size={15} />
+            </button>
+
+            {/* Categories Pills Container */}
+            <div 
+              ref={categoryScrollRef}
+              className="flex-1 flex items-center gap-2 overflow-x-auto no-scrollbar py-0.5 scroll-smooth"
+            >
+              {/* All Categories Chip */}
+              <button
+                type="button"
+                onClick={() => setSelectedCategory('all')}
+                className={`px-3.5 py-1.5 rounded-xl text-xs font-bold shrink-0 flex items-center gap-1.5 transition-all cursor-pointer ${
+                  selectedCategory === 'all'
+                    ? 'bg-amber-500 text-white shadow-xs font-black'
+                    : 'bg-slate-100 text-slate-700 hover:bg-slate-200 border border-slate-200/80'
+                }`}
+              >
+                <LayoutGrid size={14} />
+                <span>كل الأصناف</span>
+                <span className={`text-[10px] px-1.5 py-0.2 rounded-md ${
+                  selectedCategory === 'all' ? 'bg-amber-600 text-white' : 'bg-slate-200 text-slate-600'
+                }`}>
+                  {products.length}
+                </span>
+              </button>
+
+              {/* Dynamic Category Chips from Database */}
+              {categories.map(cat => {
+                const isSelected = selectedCategory === cat.id;
+                const count = products.filter(p => p.category_id === cat.id).length;
+                return (
+                  <button
+                    key={cat.id}
+                    type="button"
+                    onClick={() => setSelectedCategory(cat.id)}
+                    className={`px-3.5 py-1.5 rounded-xl text-xs font-bold shrink-0 flex items-center gap-1.5 transition-all cursor-pointer ${
+                      isSelected
+                        ? 'bg-amber-500 text-white shadow-xs font-black'
+                        : 'bg-slate-100 text-slate-700 hover:bg-slate-200 border border-slate-200/80'
+                    }`}
+                  >
+                    {getCategoryIcon(cat.name_ar || cat.name_en || '')}
+                    <span>{cat.name_ar || cat.name_en || (cat as any).name}</span>
+                    <span className={`text-[10px] px-1.5 py-0.2 rounded-md ${
+                      isSelected ? 'bg-amber-600 text-white' : 'bg-slate-200 text-slate-600'
+                    }`}>
+                      {count}
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
+
+            {/* Scroll Left Button (in RTL, Left = Next) */}
+            <button
+              type="button"
+              onClick={() => scrollCategories('left')}
+              className="w-7 h-7 rounded-lg bg-slate-50 hover:bg-slate-100 text-slate-600 border border-slate-200 flex items-center justify-center shrink-0 shadow-2xs cursor-pointer"
+              title="الأقسام التالية"
+            >
+              <ChevronLeft size={15} />
+            </button>
+          </div>
+        )}
 
           {/* 🔔 Clean Banner Alert if new customer orders arrived while viewing Cart */}
           {unhandledCustomerOrdersCount > 0 && sidebarView !== 'customer_orders' && (
@@ -4098,10 +4474,85 @@ export const CashierPOS: React.FC = () => {
               )}
             </div>
           )}
+
+          {/* 🌟 E. BOTTOM TOOLBAR (Fixed under Product Catalog) */}
+          {activeTab === 'pos' && (
+            <div className="h-16 bg-white border-t border-slate-200/90 px-4 sm:px-6 flex items-center justify-between shrink-0 shadow-2xs z-10">
+              {/* Quantity Stepper */}
+              <div className="flex items-center gap-2 bg-slate-100 p-1 rounded-xl border border-slate-200">
+                <button
+                  type="button"
+                  onClick={() => setQuickQty(q => Math.max(1, q - 1))}
+                  className="w-8 h-8 rounded-lg bg-white hover:bg-slate-200 text-slate-800 font-black text-sm flex items-center justify-center border border-slate-200 shadow-2xs cursor-pointer transition-colors"
+                >
+                  -
+                </button>
+                <span className="w-8 text-center font-mono font-black text-sm text-slate-900">
+                  {quickQty}
+                </span>
+                <button
+                  type="button"
+                  onClick={() => setQuickQty(q => q + 1)}
+                  className="w-8 h-8 rounded-lg bg-white hover:bg-slate-200 text-slate-800 font-black text-sm flex items-center justify-center border border-slate-200 shadow-2xs cursor-pointer transition-colors"
+                >
+                  +
+                </button>
+              </div>
+
+              {/* Actions: Cancel / Clear All / Add to Order */}
+              <div className="flex items-center gap-2 sm:gap-3">
+                {/* Cancel Button */}
+                <button
+                  type="button"
+                  onClick={() => {
+                    setSearchQuery('');
+                    setQuickQty(1);
+                  }}
+                  className="px-4 sm:px-5 py-2.5 bg-slate-800 hover:bg-slate-700 text-white rounded-xl text-xs sm:text-sm font-bold flex items-center gap-1.5 shadow-sm transition-all cursor-pointer"
+                  title="إلغاء البحث والكمية"
+                >
+                  <Trash2 size={15} />
+                  <span>إلغاء</span>
+                </button>
+
+                {/* Clear All Button */}
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (cart.length > 0 && confirm('هل تريد بالتأكيد إفراغ سلة الطلب الحالية؟')) {
+                      setCart([]);
+                      setQuickQty(1);
+                    }
+                  }}
+                  disabled={cart.length === 0}
+                  className="px-4 sm:px-5 py-2.5 bg-rose-50 hover:bg-rose-100 disabled:opacity-40 text-rose-600 border border-rose-200 rounded-xl text-xs sm:text-sm font-bold flex items-center gap-1.5 transition-all cursor-pointer"
+                  title="مسح كافة الأصناف في الفاتورة الحالية"
+                >
+                  <X size={15} />
+                  <span>مسح الكل</span>
+                </button>
+
+                {/* Add to Order Button */}
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (filteredProducts.length > 0) {
+                      handleProductClick(filteredProducts[0]);
+                    }
+                  }}
+                  disabled={filteredProducts.length === 0}
+                  className="px-5 sm:px-6 py-2.5 bg-amber-500 hover:bg-amber-600 disabled:opacity-40 text-white rounded-xl text-xs sm:text-sm font-black flex items-center gap-2 shadow-md shadow-amber-500/20 transition-all cursor-pointer"
+                >
+                  <ShoppingCart size={16} />
+                  <span>إضافة للطلب</span>
+                </button>
+              </div>
+            </div>
+          )}
         </div>
 
-        {/* 🧾 LEFT 1/3 SIDEBAR: Dedicated Live Customer Orders Stream or Direct Cashier Cart */}
-        <div className="w-80 md:w-96 lg:w-[420px] xl:w-[460px] bg-white border-r border-slate-200 flex flex-col justify-between shrink-0 shadow-lg h-full overflow-hidden">
+        {/* 🧾 F. RIGHT PANEL: Current Order (الطلب الحالي) or Customer Orders Stream or All Orders */}
+        <div className="w-80 md:w-96 lg:w-[390px] xl:w-[430px] bg-white border-l border-slate-200 flex flex-col justify-between shrink-0 shadow-lg h-full overflow-hidden" dir="rtl">
           
           {/* Top Sidebar Switcher: Direct Cashier Cart vs Customer Orders vs All System Orders */}
           <div className="p-1.5 bg-slate-900 text-white flex items-center justify-between gap-1 shrink-0 border-b border-slate-800">
@@ -4886,21 +5337,47 @@ export const CashierPOS: React.FC = () => {
             </div>
             </ErrorBoundary>
           ) : (
-            /* VIEW 2: DIRECT CASHIER CART & SETTLEMENT */
+            /* VIEW 2: DIRECT CASHIER CART & SETTLEMENT matching Reference Design */
             <div className="flex-1 flex flex-col justify-between overflow-hidden">
-              {/* Order Header / Configuration */}
-              <div className="p-3 bg-white border-b border-slate-200 space-y-2">
-                {/* Order Type Tabs (Dine-in, Takeaway, Delivery) */}
-                <div className="grid grid-cols-3 gap-1 bg-slate-100 p-1 rounded-xl border border-slate-200">
+              {/* Order Header / Configuration matching Reference Image */}
+              <div className="p-3.5 bg-white border-b border-slate-200/90 space-y-3 shrink-0 shadow-2xs">
+                {/* Header Row: Title, Order # Badge, Cashier Pill */}
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <div className="w-8 h-8 rounded-xl bg-amber-500 text-slate-950 flex items-center justify-center font-bold shadow-xs shrink-0">
+                      <ShoppingCart size={16} />
+                    </div>
+                    <div>
+                      <h2 className="font-black text-sm text-slate-900 leading-tight">الطلب الحالي</h2>
+                      <span className="text-[10px] text-slate-400 font-bold block">
+                        {cart.reduce((s, i) => s + i.quantity, 0)} عناصر مختارة
+                      </span>
+                    </div>
+                  </div>
+
+                  <div className="flex items-center gap-2">
+                    {/* Unified Sequential Order Number Badge */}
+                    <span className="px-2.5 py-1 rounded-lg bg-emerald-50 border border-emerald-200 text-emerald-700 font-mono font-black text-xs shadow-2xs">
+                      #{previewOrderNumber || shiftPaymentCounts.total + 1}
+                    </span>
+                    {/* Order Source Pill */}
+                    <span className="px-2 py-0.5 rounded-md bg-slate-900 text-white font-bold text-[10px] tracking-wide">
+                      كاشير
+                    </span>
+                  </div>
+                </div>
+
+                {/* Order Type Tabs: داخل الصالة | تيك اوي | دليفري */}
+                <div className="grid grid-cols-3 gap-1 bg-slate-100 p-1 rounded-xl border border-slate-200/80">
                   <button
                     type="button"
                     onClick={() => setOrderType('dine_in')}
                     className={`py-1.5 rounded-lg text-xs font-bold flex items-center justify-center gap-1 transition-all cursor-pointer ${
-                      orderType === 'dine_in' ? 'bg-amber-500 text-white shadow-sm' : 'text-slate-600 hover:text-slate-900'
+                      orderType === 'dine_in' ? 'bg-amber-500 text-white shadow-xs font-black' : 'text-slate-600 hover:text-slate-900'
                     }`}
                   >
-                    <UtensilsCrossed size={13} />
-                    <span>صالة</span>
+                    <UtensilsCrossed size={12} />
+                    <span>داخل الصالة</span>
                   </button>
                   <button
                     type="button"
@@ -4909,10 +5386,10 @@ export const CashierPOS: React.FC = () => {
                       setSelectedTable(null);
                     }}
                     className={`py-1.5 rounded-lg text-xs font-bold flex items-center justify-center gap-1 transition-all cursor-pointer ${
-                      orderType === 'takeaway' ? 'bg-amber-500 text-white shadow-sm' : 'text-slate-600 hover:text-slate-900'
+                      orderType === 'takeaway' ? 'bg-amber-500 text-white shadow-xs font-black' : 'text-slate-600 hover:text-slate-900'
                     }`}
                   >
-                    <ShoppingBag size={13} />
+                    <ShoppingBag size={12} />
                     <span>تيك اوي</span>
                   </button>
                   <button
@@ -4922,387 +5399,405 @@ export const CashierPOS: React.FC = () => {
                       setSelectedTable(null);
                     }}
                     className={`py-1.5 rounded-lg text-xs font-bold flex items-center justify-center gap-1 transition-all cursor-pointer ${
-                      orderType === 'delivery' ? 'bg-amber-500 text-white shadow-sm' : 'text-slate-600 hover:text-slate-900'
+                      orderType === 'delivery' ? 'bg-amber-500 text-white shadow-xs font-black' : 'text-slate-600 hover:text-slate-900'
                     }`}
                   >
-                    <Bike size={13} />
+                    <Bike size={12} />
                     <span>دليفري</span>
                   </button>
                 </div>
 
-            {/* Conditional Sub-info: Table Picker / Takeaway / Delivery Info */}
-            {orderType === 'dine_in' ? (
-              <div className="flex items-center justify-between bg-slate-50 p-2 rounded-xl border border-slate-200 text-xs">
-                <div className="flex items-center gap-1.5 text-slate-700 font-bold">
-                  <UtensilsCrossed size={13} className="text-amber-600" />
-                  <span>الطاولة (اختياري):</span>
-                </div>
-                <select
-                  value={selectedTable?.id || ''}
-                  onChange={e => {
-                    const tb = tables.find(t => t.id === e.target.value);
-                    setSelectedTable(tb || null);
-                  }}
-                  className="bg-white border border-slate-300 text-slate-800 rounded-lg px-2 py-1 outline-none font-bold text-xs shadow-xs"
-                >
-                  <option value="">بدون طاولة (طلب صالة عام)</option>
-                  {tables.map(t => (
-                    <option key={t.id} value={t.id}>طاولة #{t.table_number}</option>
-                  ))}
-                </select>
-              </div>
-            ) : orderType === 'takeaway' ? (
-              <div className="space-y-1.5 bg-amber-50/50 p-2 rounded-xl border border-amber-200/60 text-xs">
-                <div className="flex items-center justify-between text-amber-900 font-bold">
-                  <span className="flex items-center gap-1">
-                    <ShoppingBag size={13} className="text-amber-600" />
-                    <span>طلب استلام تيك اوي</span>
-                  </span>
-                  <span className="text-[10px] bg-amber-100 text-amber-800 px-2 py-0.5 rounded-full font-bold">بدون خدمة صالة</span>
-                </div>
-                <input
-                  type="text"
-                  placeholder="اسم العميل (اختياري)..."
-                  value={customerName}
-                  onChange={e => setCustomerName(e.target.value)}
-                  className="w-full bg-white border border-slate-300 rounded-lg px-2.5 py-1.5 text-xs text-slate-800 outline-none focus:border-amber-500 shadow-inner"
-                />
-                <input
-                  type="tel"
-                  placeholder="رقم الهاتف (اختياري)..."
-                  value={customerPhone}
-                  onChange={e => setCustomerPhone(e.target.value)}
-                  className="w-full bg-white border border-slate-300 rounded-lg px-2.5 py-1.5 text-xs text-slate-800 outline-none focus:border-amber-500 shadow-inner"
-                />
-              </div>
-            ) : (
-              <div className="space-y-1.5 bg-slate-50 p-2 rounded-xl border border-slate-200 text-xs">
-                <div className="flex items-center gap-1 text-slate-800 font-bold">
-                  <Bike size={13} className="text-blue-600" />
-                  <span>بيانات التوصيل (دليفري)</span>
-                </div>
-                <input
-                  type="text"
-                  placeholder="اسم العميل..."
-                  value={customerName}
-                  onChange={e => setCustomerName(e.target.value)}
-                  className="w-full bg-white border border-slate-300 rounded-lg px-2.5 py-1.5 text-xs text-slate-800 outline-none focus:border-amber-500 shadow-inner"
-                />
-                <input
-                  type="tel"
-                  placeholder="رقم الهاتف للتوصيل..."
-                  value={customerPhone}
-                  onChange={e => setCustomerPhone(e.target.value)}
-                  className="w-full bg-white border border-slate-300 rounded-lg px-2.5 py-1.5 text-xs text-slate-800 outline-none focus:border-amber-500 shadow-inner"
-                />
-                <input
-                  type="text"
-                  placeholder="عنوان التوصيل بالتفصيل..."
-                  value={customerAddress}
-                  onChange={e => setCustomerAddress(e.target.value)}
-                  className="w-full bg-white border border-slate-300 rounded-lg px-2.5 py-1.5 text-xs text-slate-800 outline-none focus:border-amber-500 shadow-inner"
-                />
-              </div>
-            )}
-          </div>
-
-          {/* Cart Items List */}
-          <div className="flex-1 overflow-y-auto p-3 space-y-2 bg-slate-50">
-            {cart.length === 0 ? (
-              <div className="h-full flex flex-col items-center justify-center text-slate-400 space-y-2 py-10">
-                <div className="w-12 h-12 rounded-2xl bg-white border border-slate-200 flex items-center justify-center text-slate-400 shadow-sm">
-                  <ShoppingCart size={24} />
-                </div>
-                <p className="text-xs font-bold text-slate-600">الفاتورة فارغة</p>
-                <p className="text-[10px] text-slate-400">اضغط على الأصناف لإضافتها للفاتورة</p>
-              </div>
-            ) : (
-              cart.map(item => (
-                <div
-                  key={item.id}
-                  className="bg-white border border-slate-200 rounded-2xl p-2.5 space-y-1.5 hover:border-slate-300 transition-all shadow-sm"
-                >
-                  <div className="flex items-start justify-between gap-1">
-                    <div className="flex-1">
-                      <span className="font-bold text-xs text-slate-800 block leading-tight">{item.name}</span>
-                      {item.options && item.options.length > 0 && (
-                        <div className="flex flex-wrap gap-1 mt-1">
-                          {item.options.map((o, idx) => (
-                            <span 
-                              key={idx} 
-                              className={`inline-flex items-center gap-0.5 text-[10px] px-1.5 py-0.5 rounded-md font-bold ${
-                                o.name.includes('سكر') || o.name.includes('سادة') || o.name.includes('مظبوط')
-                                  ? 'bg-amber-50 text-amber-800 border border-amber-200/80'
-                                  : 'bg-blue-50 text-blue-700 border border-blue-200/80'
-                              }`}
-                            >
-                              <span>{o.name}</span>
-                              {o.price > 0 && <span className="text-[9px] font-mono opacity-80">(+{o.price})</span>}
-                            </span>
-                          ))}
-                        </div>
-                      )}
-                      {item.notes && (
-                        <span className="text-[10px] text-rose-600 font-bold block mt-0.5">
-                          📝 {item.notes}
-                        </span>
-                      )}
+                {/* Conditional Sub-info: Table Picker / Takeaway / Delivery Info */}
+                {orderType === 'dine_in' ? (
+                  <div className="flex items-center justify-between bg-slate-50 p-2 rounded-xl border border-slate-200 text-xs">
+                    <div className="flex items-center gap-1.5 text-slate-700 font-bold">
+                      <UtensilsCrossed size={13} className="text-amber-600" />
+                      <span>الطاولة:</span>
                     </div>
-                    <span className="font-mono font-bold text-emerald-600 text-xs shrink-0">
-                      {(item.price * item.quantity).toFixed(2)} ج.م
+                    <select
+                      value={selectedTable?.id || ''}
+                      onChange={e => {
+                        const tb = tables.find(t => t.id === e.target.value);
+                        setSelectedTable(tb || null);
+                      }}
+                      className="bg-white border border-slate-300 text-slate-800 rounded-lg px-2.5 py-1 outline-none font-bold text-xs shadow-2xs"
+                    >
+                      <option value="">بدون طاولة (طلب صالة سريع)</option>
+                      {tables.map(t => (
+                        <option key={t.id} value={t.id}>طاولة #{t.table_number}</option>
+                      ))}
+                    </select>
+                  </div>
+                ) : orderType === 'takeaway' ? (
+                  <div className="space-y-1.5 bg-amber-50/50 p-2 rounded-xl border border-amber-200/60 text-xs">
+                    <div className="flex items-center justify-between text-amber-900 font-bold">
+                      <span className="flex items-center gap-1">
+                        <ShoppingBag size={13} className="text-amber-600" />
+                        <span>طلب استلام تيك اوي</span>
+                      </span>
+                      <span className="text-[10px] bg-amber-100 text-amber-800 px-2 py-0.5 rounded-full font-bold">بدون خدمة صالة</span>
+                    </div>
+                    <input
+                      type="text"
+                      placeholder="اسم العميل (اختياري)..."
+                      value={customerName}
+                      onChange={e => setCustomerName(e.target.value)}
+                      className="w-full bg-white border border-slate-300 rounded-lg px-2.5 py-1.5 text-xs text-slate-800 outline-none focus:border-amber-500 shadow-inner"
+                    />
+                    <input
+                      type="tel"
+                      placeholder="رقم الهاتف (اختياري)..."
+                      value={customerPhone}
+                      onChange={e => setCustomerPhone(e.target.value)}
+                      className="w-full bg-white border border-slate-300 rounded-lg px-2.5 py-1.5 text-xs text-slate-800 outline-none focus:border-amber-500 shadow-inner"
+                    />
+                  </div>
+                ) : (
+                  <div className="space-y-1.5 bg-slate-50 p-2 rounded-xl border border-slate-200 text-xs">
+                    <div className="flex items-center gap-1 text-slate-800 font-bold">
+                      <Bike size={13} className="text-blue-600" />
+                      <span>بيانات التوصيل (دليفري)</span>
+                    </div>
+                    <input
+                      type="text"
+                      placeholder="اسم العميل..."
+                      value={customerName}
+                      onChange={e => setCustomerName(e.target.value)}
+                      className="w-full bg-white border border-slate-300 rounded-lg px-2.5 py-1.5 text-xs text-slate-800 outline-none focus:border-amber-500 shadow-inner"
+                    />
+                    <input
+                      type="tel"
+                      placeholder="رقم الهاتف للتوصيل..."
+                      value={customerPhone}
+                      onChange={e => setCustomerPhone(e.target.value)}
+                      className="w-full bg-white border border-slate-300 rounded-lg px-2.5 py-1.5 text-xs text-slate-800 outline-none focus:border-amber-500 shadow-inner"
+                    />
+                    <input
+                      type="text"
+                      placeholder="عنوان التوصيل بالتفصيل..."
+                      value={customerAddress}
+                      onChange={e => setCustomerAddress(e.target.value)}
+                      className="w-full bg-white border border-slate-300 rounded-lg px-2.5 py-1.5 text-xs text-slate-800 outline-none focus:border-amber-500 shadow-inner"
+                    />
+                  </div>
+                )}
+
+                {/* Table Column Headers matching reference */}
+                <div className="grid grid-cols-12 text-[11px] font-black text-slate-400 px-2 pt-1 border-t border-slate-100">
+                  <span className="col-span-6 text-right">الصنف</span>
+                  <span className="col-span-3 text-center">الكمية</span>
+                  <span className="col-span-3 text-left">السعر</span>
+                </div>
+              </div>
+
+              {/* Cart Items List */}
+              <div className="flex-1 overflow-y-auto p-3 space-y-2 bg-slate-50/80">
+                {cart.length === 0 ? (
+                  <div className="h-full flex flex-col items-center justify-center text-slate-400 space-y-3 py-12">
+                    <div className="w-14 h-14 rounded-2xl bg-white border border-slate-200 flex items-center justify-center text-slate-400 shadow-2xs">
+                      <ShoppingCart size={26} />
+                    </div>
+                    <div className="text-center">
+                      <p className="font-bold text-xs text-slate-700">لا توجد أصناف في الطلب حالياً</p>
+                      <p className="text-[11px] text-slate-400 mt-0.5">انقر على الأصناف لإضافتها للفاتورة</p>
+                    </div>
+                  </div>
+                ) : (
+                  cart.map(item => (
+                    <div
+                      key={item.id}
+                      className="bg-white border border-slate-200/90 rounded-2xl p-2.5 space-y-1.5 hover:border-slate-300 transition-all shadow-2xs"
+                    >
+                      <div className="grid grid-cols-12 items-center gap-2">
+                        {/* Item Info + Thumbnail */}
+                        <div className="col-span-6 flex items-center gap-2 min-w-0">
+                          {/* Product Image Thumbnail */}
+                          {item.image_url ? (
+                            <img
+                              src={item.image_url}
+                              alt={item.name}
+                              className="w-10 h-10 rounded-xl object-cover border border-slate-200 shrink-0 shadow-2xs"
+                              onError={(e) => {
+                                (e.target as HTMLElement).style.display = 'none';
+                              }}
+                            />
+                          ) : (
+                            <div className="w-10 h-10 rounded-xl bg-amber-50 border border-amber-200/80 flex items-center justify-center text-amber-600 shrink-0 shadow-2xs">
+                              <UtensilsCrossed size={16} />
+                            </div>
+                          )}
+
+                          <div className="min-w-0 flex-1">
+                            <span className="font-bold text-xs text-slate-900 block leading-tight truncate">
+                              {item.name}
+                            </span>
+                            {item.options && item.options.length > 0 && (
+                              <div className="flex flex-wrap gap-1 mt-0.5">
+                                {item.options.map((o, idx) => (
+                                  <span
+                                    key={idx}
+                                    className="text-[9px] px-1 py-0.2 rounded bg-slate-100 text-slate-600 font-medium"
+                                  >
+                                    {o.name}
+                                  </span>
+                                ))}
+                              </div>
+                            )}
+                            {item.notes && (
+                              <span className="text-[9px] text-rose-600 font-bold block truncate mt-0.5">
+                                📝 {item.notes}
+                              </span>
+                            )}
+                          </div>
+                        </div>
+
+                        {/* Quantity Stepper */}
+                        <div className="col-span-3 flex items-center justify-center gap-1 bg-slate-100 px-1.5 py-1 rounded-xl border border-slate-200">
+                          <button
+                            type="button"
+                            onClick={() => updateQuantity(item.id, -1)}
+                            className="w-4 h-4 bg-white hover:bg-slate-200 text-slate-800 rounded flex items-center justify-center font-bold text-xs cursor-pointer border border-slate-200"
+                          >
+                            -
+                          </button>
+                          <span className="w-4 text-center font-mono font-bold text-xs text-slate-900">
+                            {item.quantity}
+                          </span>
+                          <button
+                            type="button"
+                            onClick={() => updateQuantity(item.id, 1)}
+                            className="w-4 h-4 bg-amber-500 hover:bg-amber-600 text-white rounded flex items-center justify-center font-bold text-xs cursor-pointer"
+                          >
+                            +
+                          </button>
+                        </div>
+
+                        {/* Price & Delete Button */}
+                        <div className="col-span-3 flex items-center justify-end gap-1.5">
+                          <span className="font-mono font-bold text-emerald-600 text-xs shrink-0">
+                            {(item.price * item.quantity).toFixed(2)}
+                          </span>
+                          <button
+                            type="button"
+                            onClick={() => handleRemoveCartItem(item)}
+                            className="p-1 text-slate-400 hover:text-rose-600 rounded-lg transition-colors cursor-pointer"
+                            title="حذف الصنف"
+                          >
+                            <Trash2 size={13} />
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  ))
+                )}
+              </div>
+
+              {/* Quick Actions (Hold / Split Bill / Send to Kitchen) */}
+              {cart.length > 0 && (
+                <div className="p-2 bg-slate-100/90 border-t border-slate-200 grid grid-cols-3 gap-1.5 shrink-0">
+                  <button
+                    type="button"
+                    onClick={handleHoldBill}
+                    className="py-1.5 bg-white hover:bg-slate-50 text-amber-800 font-bold text-[11px] rounded-xl border border-slate-200 flex items-center justify-center gap-1 transition-all cursor-pointer shadow-2xs"
+                    title="تعليق الفاتورة والعودة لها لاحقاً"
+                  >
+                    <PauseCircle size={13} className="text-amber-600" />
+                    <span>تعليق</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => setIsSplitBillModalOpen(true)}
+                    className="py-1.5 bg-white hover:bg-slate-50 text-indigo-800 font-bold text-[11px] rounded-xl border border-slate-200 flex items-center justify-center gap-1 transition-all cursor-pointer shadow-2xs"
+                    title="تقسيم الفاتورة بالتساوي أو بالأصناف"
+                  >
+                    <Split size={13} className="text-indigo-600" />
+                    <span>تقسيم</span>
+                  </button>
+
+                  {restaurantServices.kitchen_enabled ? (
+                    <button
+                      type="button"
+                      onClick={handleSendOrderToKitchenAndPrint}
+                      disabled={cart.length === 0}
+                      className="py-1.5 bg-amber-50 hover:bg-amber-100 text-amber-800 font-bold text-[11px] rounded-xl border border-amber-200 flex items-center justify-center gap-1 transition-all cursor-pointer shadow-2xs disabled:opacity-40"
+                      title="إرسال الطلب للمطبخ وطباعة بون التشغيل تلقائياً"
+                    >
+                      <ChefHat size={13} className="text-amber-600" />
+                      <span>إرسال بون</span>
+                    </button>
+                  ) : (
+                    <div
+                      className="py-1.5 px-2 bg-emerald-50 text-emerald-800 font-bold text-[11px] rounded-xl border border-emerald-200 flex items-center justify-center gap-1 shadow-2xs select-none"
+                    >
+                      <Zap size={13} className="text-emerald-600" />
+                      <span>تسليم فوري</span>
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* Settlement / Financial Totals & Payment Section */}
+              <div className="p-3.5 bg-white border-t border-slate-200 space-y-2.5 shrink-0">
+                {/* Financial summary breakdown */}
+                <div className="space-y-1 text-xs">
+                  <div className="flex justify-between text-slate-600">
+                    <span>المجموع الفرعي:</span>
+                    <span className="font-mono font-bold text-slate-800">{subtotal.toFixed(2)} ج.م</span>
+                  </div>
+
+                  {discountAmount > 0 && (
+                    <div className="flex justify-between text-amber-700 font-bold">
+                      <span className="flex items-center gap-1">
+                        <Tag size={12} className="text-amber-600" />
+                        <span>الخصم:</span>
+                      </span>
+                      <span className="font-mono text-amber-700 font-bold">-{discountAmount.toFixed(2)} ج.م</span>
+                    </div>
+                  )}
+
+                  {serviceFeeAmount > 0 && (
+                    <div className="flex justify-between text-slate-600">
+                      <span>خدمة الصالة ({serviceFeeRate}%):</span>
+                      <span className="font-mono text-slate-800">+{serviceFeeAmount.toFixed(2)} ج.م</span>
+                    </div>
+                  )}
+
+                  {taxAmount > 0 && (
+                    <div className="flex justify-between text-slate-600">
+                      <span>ضريبة القيمة المضافة ({taxRate}%):</span>
+                      <span className="font-mono text-slate-800">+{taxAmount.toFixed(2)} ج.م</span>
+                    </div>
+                  )}
+
+                  {deliveryFee > 0 && (
+                    <div className="flex justify-between text-slate-600">
+                      <span>رسوم التوصيل:</span>
+                      <span className="font-mono text-slate-800">+{deliveryFee.toFixed(2)} ج.م</span>
+                    </div>
+                  )}
+
+                  {/* Grand Total matching reference image */}
+                  <div className="flex justify-between items-center pt-2 border-t border-slate-200 text-sm font-bold">
+                    <span className="text-slate-900 font-black">الإجمالي:</span>
+                    <span className="font-mono text-xl font-black text-emerald-600">
+                      {finalTotal.toFixed(2)} <span className="text-xs font-sans">ج.م</span>
                     </span>
                   </div>
+                </div>
 
-                  {/* Quantity and Delete Controls */}
-                  <div className="flex items-center justify-between pt-1 border-t border-slate-100">
-                    <div className="flex items-center gap-1.5 bg-slate-50 px-2 py-0.5 rounded-xl border border-slate-200">
-                      <button
-                        onClick={() => updateQuantity(item.id, -1)}
-                        className="w-5 h-5 bg-white hover:bg-slate-200 text-slate-800 rounded-lg flex items-center justify-center font-bold text-xs cursor-pointer border border-slate-200"
-                      >
-                        -
-                      </button>
-                      <span className="w-6 text-center font-mono font-bold text-xs text-slate-800">
-                        {item.quantity}
-                      </span>
-                      <button
-                        onClick={() => updateQuantity(item.id, 1)}
-                        className="w-5 h-5 bg-amber-500 hover:bg-amber-600 text-white rounded-lg flex items-center justify-center font-bold text-xs cursor-pointer"
-                      >
-                        +
-                      </button>
+                {/* Payment Method Selector */}
+                <div className="grid grid-cols-4 gap-1 pt-0.5">
+                  <button
+                    type="button"
+                    onClick={() => setPaymentMethod('cash')}
+                    className={`py-1.5 rounded-xl text-xs font-bold flex flex-col items-center justify-center gap-0.5 transition-all cursor-pointer ${
+                      paymentMethod === 'cash' ? 'bg-emerald-600 text-white shadow-xs' : 'bg-slate-50 text-slate-600 hover:text-slate-900 border border-slate-200'
+                    }`}
+                  >
+                    <DollarSign size={13} />
+                    <span>كاش</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => setPaymentMethod('card')}
+                    className={`py-1.5 rounded-xl text-xs font-bold flex flex-col items-center justify-center gap-0.5 transition-all cursor-pointer ${
+                      paymentMethod === 'card' ? 'bg-blue-600 text-white shadow-xs' : 'bg-slate-50 text-slate-600 hover:text-slate-900 border border-slate-200'
+                    }`}
+                  >
+                    <CreditCard size={13} />
+                    <span>فيزا</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => setPaymentMethod('wallet')}
+                    className={`py-1.5 rounded-xl text-xs font-bold flex flex-col items-center justify-center gap-0.5 transition-all cursor-pointer ${
+                      paymentMethod === 'wallet' ? 'bg-purple-600 text-white shadow-xs' : 'bg-slate-50 text-slate-600 hover:text-slate-900 border border-slate-200'
+                    }`}
+                  >
+                    <Smartphone size={13} />
+                    <span>إنستاباي</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => setIsSplitPaymentModalOpen(true)}
+                    className={`py-1.5 rounded-xl text-xs font-bold flex flex-col items-center justify-center gap-0.5 transition-all cursor-pointer ${
+                      paymentMethod === 'split' ? 'bg-indigo-600 text-white shadow-xs' : 'bg-slate-50 text-slate-600 hover:text-slate-900 border border-slate-200'
+                    }`}
+                  >
+                    <Split size={13} />
+                    <span>مقسم</span>
+                  </button>
+                </div>
+
+                {/* Quick Cash Tendered Buttons if Cash */}
+                {paymentMethod === 'cash' && (
+                  <div className="space-y-1 pt-0.5">
+                    <div className="flex items-center justify-between text-[11px] text-slate-500">
+                      <span>المبلغ المستلم:</span>
+                      <div className="flex items-center gap-1">
+                        {[50, 100, 200, 500].map(val => (
+                          <button
+                            key={val}
+                            type="button"
+                            onClick={() => setCashTendered(val.toString())}
+                            className="px-1.5 py-0.5 bg-slate-100 hover:bg-slate-200 border border-slate-200 rounded text-slate-700 font-mono text-[10px] cursor-pointer"
+                          >
+                            {val}
+                          </button>
+                        ))}
+                      </div>
                     </div>
 
-                    <button
-                      onClick={() => handleRemoveCartItem(item)}
-                      className="p-1 text-slate-400 hover:text-rose-600 rounded-lg transition-colors cursor-pointer"
-                      title="حذف الصنف"
-                    >
-                      <Trash2 size={14} />
-                    </button>
+                    <div className="grid grid-cols-2 gap-2">
+                      <input
+                        type="number"
+                        placeholder="المدفوع..."
+                        value={cashTendered}
+                        onChange={e => setCashTendered(e.target.value)}
+                        className="w-full bg-slate-50 border border-slate-300 rounded-xl px-2.5 py-1 text-xs font-mono font-bold text-slate-800 outline-none focus:border-emerald-500 shadow-inner"
+                      />
+                      <div className="bg-slate-50 border border-slate-200 rounded-xl px-2.5 py-1 flex items-center justify-between text-xs">
+                        <span className="text-slate-500 text-[10px]">الباقي:</span>
+                        <span className="font-mono font-bold text-emerald-600">{changeDue.toFixed(2)} ج.م</span>
+                      </div>
+                    </div>
                   </div>
+                )}
+
+                {/* 🌟 Final Action Buttons matching Reference Image: طباعة الطلب (Dark Navy) & إكمال الطلب (Bright Green) */}
+                <div className="flex items-center gap-2 pt-1">
+                  {/* طباعة الطلب (Print Order) */}
+                  <button
+                    type="button"
+                    onClick={handlePrintCurrentCart}
+                    disabled={cart.length === 0}
+                    className="flex-1 py-3 px-3 bg-[#0a1128] hover:bg-slate-800 disabled:opacity-40 text-white font-bold text-xs rounded-xl flex items-center justify-center gap-2 shadow-md transition-all cursor-pointer"
+                    title="طباعة فاتورة الطلب الحالي فوراً"
+                  >
+                    <Printer size={16} />
+                    <span className="whitespace-nowrap">طباعة الطلب</span>
+                  </button>
+
+                  {/* إكمال الطلب (Complete Order) */}
+                  <button
+                    type="button"
+                    onClick={() => handleProcessPayment()}
+                    disabled={cart.length === 0}
+                    className="flex-1 py-3 px-3 bg-emerald-600 hover:bg-emerald-700 disabled:opacity-40 text-white font-black text-xs rounded-xl flex items-center justify-center gap-2 shadow-md shadow-emerald-600/20 active:scale-98 transition-all cursor-pointer"
+                    title="تحصيل القيمة وتسجيل الفاتورة رسمياً"
+                  >
+                    <CheckCircle2 size={16} />
+                    <span className="whitespace-nowrap">إكمال الطلب</span>
+                  </button>
                 </div>
-              ))
-            )}
-          </div>
-
-          {/* Quick Actions (Hold / Split Bill / Send to Kitchen) */}
-          {cart.length > 0 && (
-            <div className="p-2.5 bg-slate-100/90 border-t border-slate-200 grid grid-cols-3 gap-1.5 shrink-0">
-              <button
-                onClick={handleHoldBill}
-                className="py-1.5 bg-white hover:bg-slate-50 text-amber-800 font-bold text-[11px] rounded-xl border border-slate-200 flex items-center justify-center gap-1 transition-all cursor-pointer shadow-sm"
-                title="تعليق الفاتورة والعودة لها لاحقاً"
-              >
-                <PauseCircle size={13} className="text-amber-600" />
-                <span>تعليق (Hold)</span>
-              </button>
-
-              <button
-                onClick={() => setIsSplitBillModalOpen(true)}
-                className="py-1.5 bg-white hover:bg-slate-50 text-indigo-800 font-bold text-[11px] rounded-xl border border-slate-200 flex items-center justify-center gap-1 transition-all cursor-pointer shadow-sm"
-                title="تقسيم الفاتورة بالتساوي أو بالأصناف"
-              >
-                <Split size={13} className="text-indigo-600" />
-                <span>تقسيم</span>
-              </button>
-
-              {restaurantServices.kitchen_enabled ? (
-                <button
-                  type="button"
-                  onClick={handleSendOrderToKitchenAndPrint}
-                  disabled={cart.length === 0}
-                  className="py-1.5 bg-amber-50 hover:bg-amber-100 text-amber-800 font-bold text-[11px] rounded-xl border border-amber-200 flex items-center justify-center gap-1 transition-all cursor-pointer shadow-sm disabled:opacity-40"
-                  title="إرسال الطلب للمطبخ وطباعة بون التشغيل تلقائياً"
-                >
-                  <ChefHat size={13} className="text-amber-600" />
-                  <span>إرسال بون للمطبخ</span>
-                </button>
-              ) : (
-                <div
-                  className="py-1.5 px-2 bg-emerald-50 text-emerald-800 font-bold text-[11px] rounded-xl border border-emerald-200 flex items-center justify-center gap-1 shadow-sm select-none"
-                  title="تسليم فوري ومباشر بدون شاشة مطبخ"
-                >
-                  <Zap size={13} className="text-emerald-600" />
-                  <span>تسليم فوري</span>
-                </div>
-              )}
+              </div>
             </div>
           )}
-
-          {/* Settlement / Financial Totals & Payment Section */}
-          <div className="p-3 bg-white border-t border-slate-200 space-y-2 shrink-0">
-            {/* Financial summary breakdown */}
-            <div className="space-y-1 text-xs">
-              <div className="flex justify-between text-slate-600">
-                <span>المجموع الفرعي:</span>
-                <span className="font-mono font-bold text-slate-800">{subtotal.toFixed(2)} ج.م</span>
-              </div>
-
-              {/* Discount Display (Only shown if discount amount exists, selector buttons removed) */}
-              {discountAmount > 0 && (
-                <div className="flex justify-between text-amber-700 font-bold">
-                  <span className="flex items-center gap-1">
-                    <Tag size={12} className="text-amber-600" />
-                    <span>الخصم:</span>
-                  </span>
-                  <span className="font-mono text-amber-700 font-bold">-{discountAmount.toFixed(2)} ج.م</span>
-                </div>
-              )}
-
-              {serviceFeeAmount > 0 && (
-                <div className="flex justify-between text-slate-600">
-                  <span>خدمة الصالة ({serviceFeeRate}%):</span>
-                  <span className="font-mono text-slate-800">+{serviceFeeAmount.toFixed(2)} ج.م</span>
-                </div>
-              )}
-
-              {taxAmount > 0 && (
-                <div className="flex justify-between text-slate-600">
-                  <span>ضريبة القيمة المضافة ({taxRate}%):</span>
-                  <span className="font-mono text-slate-800">+{taxAmount.toFixed(2)} ج.م</span>
-                </div>
-              )}
-
-              {deliveryFee > 0 && (
-                <div className="flex justify-between text-slate-600">
-                  <span>رسوم التوصيل:</span>
-                  <span className="font-mono text-slate-800">+{deliveryFee.toFixed(2)} ج.م</span>
-                </div>
-              )}
-
-              {/* Grand Total */}
-              <div className="flex justify-between items-center pt-1.5 border-t border-slate-200 text-sm font-bold">
-                <span className="text-slate-800">الإجمالي المستحق:</span>
-                <span className="font-mono text-xl text-emerald-600">
-                  {finalTotal.toFixed(2)} <span className="text-xs font-sans">ج.م</span>
-                </span>
-              </div>
-            </div>
-
-            {/* Payment Method Selector */}
-            <div className="grid grid-cols-4 gap-1 pt-1">
-              <button
-                type="button"
-                onClick={() => setPaymentMethod('cash')}
-                className={`py-2 rounded-xl text-xs font-bold flex flex-col items-center justify-center gap-0.5 transition-all cursor-pointer ${
-                  paymentMethod === 'cash' ? 'bg-emerald-600 text-white shadow-md shadow-emerald-600/20' : 'bg-slate-50 text-slate-600 hover:text-slate-900 border border-slate-200'
-                }`}
-              >
-                <DollarSign size={14} />
-                <span>كاش</span>
-              </button>
-
-              <button
-                type="button"
-                onClick={() => setPaymentMethod('card')}
-                className={`py-2 rounded-xl text-xs font-bold flex flex-col items-center justify-center gap-0.5 transition-all cursor-pointer ${
-                  paymentMethod === 'card' ? 'bg-blue-600 text-white shadow-md shadow-blue-600/20' : 'bg-slate-50 text-slate-600 hover:text-slate-900 border border-slate-200'
-                }`}
-              >
-                <CreditCard size={14} />
-                <span>فيزا</span>
-              </button>
-
-              <button
-                type="button"
-                onClick={() => setPaymentMethod('wallet')}
-                className={`py-2 rounded-xl text-xs font-bold flex flex-col items-center justify-center gap-0.5 transition-all cursor-pointer ${
-                  paymentMethod === 'wallet' ? 'bg-purple-600 text-white shadow-md shadow-purple-600/20' : 'bg-slate-50 text-slate-600 hover:text-slate-900 border border-slate-200'
-                }`}
-              >
-                <Smartphone size={14} />
-                <span>إنستاباي</span>
-              </button>
-
-              <button
-                type="button"
-                onClick={() => setIsSplitPaymentModalOpen(true)}
-                className={`py-2 rounded-xl text-xs font-bold flex flex-col items-center justify-center gap-0.5 transition-all cursor-pointer ${
-                  paymentMethod === 'split' ? 'bg-indigo-600 text-white shadow-md shadow-indigo-600/20' : 'bg-slate-50 text-slate-600 hover:text-slate-900 border border-slate-200'
-                }`}
-              >
-                <Split size={14} />
-                <span>مقسم</span>
-              </button>
-            </div>
-
-            {/* Quick Cash Tendered Buttons if Cash */}
-            {paymentMethod === 'cash' && (
-              <div className="space-y-1.5 pt-1">
-                <div className="flex items-center justify-between text-[11px] text-slate-500">
-                  <span>المبلغ المستلم:</span>
-                  <div className="flex items-center gap-1">
-                    {[50, 100, 200, 500].map(val => (
-                      <button
-                        key={val}
-                        onClick={() => setCashTendered(val.toString())}
-                        className="px-1.5 py-0.5 bg-slate-100 hover:bg-slate-200 border border-slate-200 rounded text-slate-700 font-mono text-[10px] cursor-pointer"
-                      >
-                        {val}
-                      </button>
-                    ))}
-                  </div>
-                </div>
-
-                <div className="grid grid-cols-2 gap-2">
-                  <input
-                    type="number"
-                    placeholder="المبلغ المدفوع..."
-                    value={cashTendered}
-                    onChange={e => setCashTendered(e.target.value)}
-                    className="w-full bg-slate-50 border border-slate-300 rounded-xl px-2.5 py-1.5 text-xs font-mono font-bold text-slate-800 outline-none focus:border-emerald-500 shadow-inner"
-                  />
-                  <div className="bg-slate-50 border border-slate-200 rounded-xl px-2.5 py-1.5 flex items-center justify-between text-xs">
-                    <span className="text-slate-500 text-[10px]">الباقي:</span>
-                    <span className="font-mono font-bold text-emerald-600">{changeDue.toFixed(2)} ج.م</span>
-                  </div>
-                </div>
-              </div>
-            )}
-
-            {/* Action Buttons: Large Send to Kitchen & Complete Payment side by side */}
-            <div className="flex flex-col sm:flex-row items-stretch gap-2 pt-1">
-              <div className="flex items-center gap-2 flex-1">
-                <button
-                  type="button"
-                  onClick={handleClearCart}
-                  disabled={cart.length === 0}
-                  className="p-3 bg-slate-100 hover:bg-rose-50 text-slate-500 hover:text-rose-600 rounded-2xl border border-slate-200 transition-all cursor-pointer disabled:opacity-40 shrink-0"
-                  title="إلغاء الفاتورة بالكامل"
-                >
-                  <Trash2 size={18} />
-                </button>
-
-                {/* زر إرسال للمطبخ كبير ومميز بجانب إتمام الدفع */}
-                <button
-                  type="button"
-                  onClick={handleSendOrderToKitchenAndPrint}
-                  disabled={cart.length === 0}
-                  className="flex-1 py-3.5 px-3 bg-gradient-to-r from-amber-500 via-amber-600 to-orange-500 hover:from-amber-600 hover:to-orange-600 active:scale-98 disabled:opacity-50 text-white font-black text-xs md:text-sm rounded-2xl flex items-center justify-center gap-2 shadow-lg shadow-amber-500/25 transition-all cursor-pointer border border-amber-400/30"
-                  title="إرسال الطلب للمطبخ وطباعة بون التشغيل فوراً"
-                >
-                  <ChefHat size={20} className="shrink-0 animate-pulse" />
-                  <span className="whitespace-nowrap">إرسال للمطبخ وطباعة البون</span>
-                </button>
-              </div>
-
-              {/* زر إتمام الدفع والفاتورة */}
-              <button
-                type="button"
-                onClick={() => handleProcessPayment()}
-                disabled={cart.length === 0}
-                className="flex-1 py-3.5 px-3 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-700 hover:to-teal-700 disabled:opacity-50 text-white font-black text-xs md:text-sm rounded-2xl flex items-center justify-center gap-2 shadow-lg shadow-emerald-600/25 active:scale-98 transition-all cursor-pointer border border-emerald-500/30"
-              >
-                <CheckCircle2 size={20} className="shrink-0" />
-                <span className="whitespace-nowrap">إتمام الدفع ({finalTotal.toFixed(2)} ج.م)</span>
-              </button>
-            </div>
-          </div>
         </div>
-      )}
-    </div>
-  </div>
 
       {/* 🛠️ MODALS INTEGRATION */}
 

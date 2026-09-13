@@ -11,7 +11,15 @@ async function startServer() {
   const app = express();
   const PORT = 3000;
 
-  app.use(express.json());
+  app.use(express.json({ limit: "25mb" }));
+  app.use(express.urlencoded({ extended: true, limit: "25mb" }));
+
+  // Ensure uploads directory exists and is statically served
+  const uploadsDir = path.join(process.cwd(), "public", "uploads", "products");
+  if (!fs.existsSync(uploadsDir)) {
+    fs.mkdirSync(uploadsDir, { recursive: true });
+  }
+  app.use("/uploads", express.static(path.join(process.cwd(), "public", "uploads")));
 
   // Supabase Cloud Storage & Database Sync Engine
   const supabaseUrl = process.env.VITE_SUPABASE_URL || process.env.SUPABASE_URL || "";
@@ -330,6 +338,105 @@ async function startServer() {
     } catch (err: any) {
       console.error("Delete product API exception:", err);
       res.status(500).json({ error: err.message || "فشل في حذف المنتج" });
+    }
+  });
+
+  // Admin Upload Product Image API endpoint
+  app.post("/api/admin/upload-product-image", async (req, res) => {
+    const { image_data, file_name, product_id, mime_type } = req.body;
+    if (!image_data) {
+      return res.status(400).json({ error: "بيانات الصورة مطلوبة." });
+    }
+
+    try {
+      const supabaseUrl = process.env.VITE_SUPABASE_URL || process.env.SUPABASE_URL;
+      const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+      const anonKey = process.env.VITE_SUPABASE_ANON_KEY || process.env.SUPABASE_ANON_KEY;
+
+      let publicUrl = "";
+
+      // 1. Try Supabase Storage if configured
+      if (supabaseUrl && (serviceRoleKey || anonKey)) {
+        try {
+          const client = serviceRoleKey
+            ? createClient(supabaseUrl, serviceRoleKey)
+            : createClient(supabaseUrl, anonKey || "");
+
+          // Check or create 'product-images' bucket
+          const { data: buckets } = await client.storage.listBuckets();
+          if (!buckets?.some((b: any) => b.name === "product-images")) {
+            await client.storage.createBucket("product-images", { public: true });
+          }
+
+          // Extract base64 payload
+          const base64Parts = image_data.split(";base64,");
+          const contentType = mime_type || (base64Parts[0] ? base64Parts[0].replace("data:", "") : "image/jpeg");
+          const rawData = base64Parts[1] || image_data;
+          const buffer = Buffer.from(rawData, "base64");
+
+          const ext = contentType.includes("png") ? "png" : contentType.includes("webp") ? "webp" : "jpg";
+          const cleanName = `prod_${Date.now()}_${Math.random().toString(36).substring(2, 8)}.${ext}`;
+
+          const { error: uploadError } = await client.storage
+            .from("product-images")
+            .upload(cleanName, buffer, {
+              contentType,
+              upsert: true,
+            });
+
+          if (!uploadError) {
+            const { data: pubData } = client.storage.from("product-images").getPublicUrl(cleanName);
+            if (pubData?.publicUrl) {
+              publicUrl = pubData.publicUrl;
+            }
+          } else {
+            console.warn("Supabase storage upload error, using local/data url fallback:", uploadError);
+          }
+        } catch (storageErr) {
+          console.warn("Storage exception, using fallback:", storageErr);
+        }
+      }
+
+      // 2. If storage URL wasn't generated, save to public/uploads directory or use data URL
+      if (!publicUrl) {
+        try {
+          const targetDir = path.join(process.cwd(), "public", "uploads", "products");
+          if (!fs.existsSync(targetDir)) {
+            fs.mkdirSync(targetDir, { recursive: true });
+          }
+          const base64Parts = image_data.split(";base64,");
+          const contentType = mime_type || (base64Parts[0] ? base64Parts[0].replace("data:", "") : "image/jpeg");
+          const rawData = base64Parts[1] || image_data;
+          const buffer = Buffer.from(rawData, "base64");
+          const ext = contentType.includes("png") ? "png" : contentType.includes("webp") ? "webp" : "jpg";
+          const localFileName = `img_${Date.now()}_${Math.random().toString(36).substring(2, 8)}.${ext}`;
+          fs.writeFileSync(path.join(targetDir, localFileName), buffer);
+          publicUrl = `/uploads/products/${localFileName}`;
+        } catch (localFsErr) {
+          publicUrl = image_data;
+        }
+      }
+
+      // 3. If product_id is given, update product in Supabase directly
+      if (product_id && supabaseUrl && (serviceRoleKey || anonKey)) {
+        try {
+          const client = serviceRoleKey
+            ? createClient(supabaseUrl, serviceRoleKey)
+            : createClient(supabaseUrl, anonKey || "");
+          await client.from("products").update({ image_url: publicUrl }).eq("id", product_id);
+        } catch (dbErr) {
+          console.warn("Updating product image in DB note:", dbErr);
+        }
+      }
+
+      res.status(200).json({
+        success: true,
+        image_url: publicUrl,
+        message: "تم حفظ صورة المنتج بنجاح",
+      });
+    } catch (err: any) {
+      console.error("Upload product image exception:", err);
+      res.status(500).json({ error: err.message || "فشل في رفع الصورة" });
     }
   });
 
