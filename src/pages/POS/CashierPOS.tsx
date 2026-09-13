@@ -55,6 +55,7 @@ import { WasteModal } from '../../components/POS/WasteModal';
 import { HeldBillsDrawer } from '../../components/POS/HeldBillsDrawer';
 import { OrdersHistoryModal } from '../../components/POS/OrdersHistoryModal';
 import { TableSettleModal } from '../../components/POS/TableSettleModal';
+import { ErrorBoundary } from '../../components/ErrorBoundary';
 import { 
   getCashierShiftConfigs, 
   CashierShiftConfig, 
@@ -2805,9 +2806,54 @@ export const CashierPOS: React.FC = () => {
   );
   const currentPresetInfo = getRestaurantPresetDef(effectivePreset);
 
+  // Helper to safely extract items array from any order object
+  const getSafeOrderItems = (ord: any): any[] => {
+    if (!ord) return [];
+    let raw = ord.items || ord.order_items;
+    if (typeof raw === 'string') {
+      try { raw = JSON.parse(raw); } catch { raw = []; }
+    }
+    if (!Array.isArray(raw)) return [];
+    return raw;
+  };
+
+  // Helper to safely format option string/object for rendering
+  const getSafeOptionDisplay = (opt: any): string => {
+    if (!opt) return '';
+    if (typeof opt === 'string') return opt;
+    if (typeof opt === 'object') {
+      const name = opt.name || opt.name_ar || opt.label || opt.title || opt.option_name;
+      const price = Number(opt.price || opt.additional_price || 0);
+      if (name && price > 0) return `${name} (+${price} ج.م)`;
+      if (name) return String(name);
+      return '';
+    }
+    return String(opt);
+  };
+
+  // Helper to safely format dates without throwing Invalid time value
+  const getSafeFormattedDate = (val: any): { time: string; date: string } => {
+    if (!val) return { time: '', date: '' };
+    try {
+      const d = new Date(val);
+      if (isNaN(d.getTime())) {
+        if (typeof val === 'string' && val.includes(':')) return { time: val, date: '' };
+        return { time: '', date: '' };
+      }
+      return {
+        time: d.toLocaleTimeString('ar-EG', { hour: '2-digit', minute: '2-digit' }),
+        date: d.toLocaleDateString('ar-EG', { day: 'numeric', month: 'short' })
+      };
+    } catch {
+      return { time: '', date: '' };
+    }
+  };
+
   const openTaxReceiptForOrder = (ord: any) => {
-    const tot = ord.total_price || ord.total_amount || 0;
+    const tot = Number(ord.total_price || ord.total_amount || 0);
     const num = ord.daily_order_number || getDisplayOrderNumber(ord);
+    const safeItems = getSafeOrderItems(ord);
+    const validDate = ord.created_at && !isNaN(new Date(ord.created_at).getTime()) ? new Date(ord.created_at) : new Date();
     const receiptData: TaxReceiptData = {
       restaurantName: selectedRestaurant?.name || 'مطعم وكافيه كريتا',
       taxNumber: restaurantGeofence?.tax_number || '100-245-890',
@@ -2817,17 +2863,17 @@ export const CashierPOS: React.FC = () => {
       invoiceNumber: `INV-${num}`,
       dailyOrderNumber: num,
       orderType: ord.order_type || 'dine_in',
-      tableNumber: ord.table_number,
+      tableNumber: typeof ord.table_number === 'object' ? ord.table_number?.table_number : ord.table_number,
       cashierName: shift.cashierName || 'الكاشير الرئيسي',
-      dateTime: new Date(ord.created_at || Date.now()),
-      items: Array.isArray(ord.items) ? ord.items.map((it: any) => ({
+      dateTime: validDate,
+      items: safeItems.map((it: any) => ({
         name: it.name || it.product?.name_ar || it.product?.name_en || 'صنف',
-        quantity: it.quantity || 1,
-        unitPrice: it.price || 0,
-        totalPrice: (it.price || 0) * (it.quantity || 1),
-        notes: it.notes,
-        options: it.options,
-      })) : [],
+        quantity: Number(it.quantity || 1),
+        unitPrice: Number(it.price || it.unitPrice || it.price_at_order || 0),
+        totalPrice: Number(it.price || it.unitPrice || it.price_at_order || 0) * Number(it.quantity || 1),
+        notes: typeof it.notes === 'string' ? it.notes : undefined,
+        options: Array.isArray(it.options) ? it.options : [],
+      })),
       subtotal: tot - (ord.tax_amount || 0) - (ord.service_fee || 0),
       taxRate: 14,
       taxAmount: ord.tax_amount || 0,
@@ -2839,51 +2885,50 @@ export const CashierPOS: React.FC = () => {
       paymentMethod: ord.payment_method || 'cash',
       amountPaid: tot,
       changeDue: 0,
-      customerName: ord.customer_name,
-      customerPhone: ord.customer_phone,
+      customerName: typeof ord.customer_name === 'string' ? ord.customer_name : '',
+      customerPhone: typeof ord.customer_phone === 'string' ? ord.customer_phone : '',
     };
     setTaxReceiptData(receiptData);
     setIsReceiptModalOpen(true);
   };
 
   const printKOTForOrder = (ord: any) => {
+    const safeItems = getSafeOrderItems(ord);
     printKitchenTicket({
       restaurantName: selectedRestaurant?.name || 'مطعم وكافيه كريتا',
       orderNumber: ord.daily_order_number || getDisplayOrderNumber(ord),
       orderType: ord.order_type || 'dine_in',
-      tableNumber: ord.table_number,
-      customerName: ord.customer_name,
-      customerPhone: ord.customer_phone,
-      deliveryAddress: ord.delivery_address,
+      tableNumber: typeof ord.table_number === 'object' ? ord.table_number?.table_number : ord.table_number,
+      customerName: typeof ord.customer_name === 'string' ? ord.customer_name : undefined,
+      customerPhone: typeof ord.customer_phone === 'string' ? ord.customer_phone : undefined,
+      deliveryAddress: typeof ord.delivery_address === 'string' ? ord.delivery_address : undefined,
       cashierName: shift.cashierName || 'الرئيسي',
-      items: (ord.items || []).map((it: any) => ({
+      items: safeItems.map((it: any) => ({
         name: it.name || it.product?.name_ar || it.product?.name_en || 'صنف',
-        quantity: it.quantity || 1,
-        notes: it.notes
+        quantity: Number(it.quantity || 1),
+        notes: typeof it.notes === 'string' ? it.notes : undefined,
+        options: Array.isArray(it.options) ? it.options : []
       })),
-      orderNotes: ord.notes || ord.delivery_notes
+      orderNotes: typeof ord.notes === 'string' ? ord.notes : ord.delivery_notes
     });
   };
 
   const loadOrderToCart = (ord: any) => {
-    if (Array.isArray(ord.items) && ord.items.length > 0) {
-      const loadedItems: POSCartItem[] = ord.items.map((it: any, index: number) => {
-        const p = products.find(prod => prod.id === it.id || prod.id === it.product_id);
+    const rawItems = getSafeOrderItems(ord);
+    if (rawItems.length > 0) {
+      const loadedItems: POSCartItem[] = rawItems.map((it: any, index: number) => {
+        const p = products.find(prod => prod.id === it.id || prod.id === it.product_id || prod.id === it.menuItemId);
+        const catObj = p?.category_id ? categories.find(c => c.id === p.category_id) : undefined;
+        const station = getStationForCategory(catObj?.name_ar || catObj?.name_en || (catObj as any)?.name);
         return {
-          cartItemId: `all-ord-${ord.id}-${index}-${Date.now()}`,
-          product: p || {
-            id: it.id || it.product_id || `temp-${index}`,
-            restaurant_id: selectedRestaurant?.id || '',
-            name_ar: it.name || 'صنف',
-            name_en: it.name || 'Item',
-            price: it.price || 0,
-            is_active: true,
-            created_at: new Date().toISOString()
-          },
-          quantity: it.quantity || 1,
-          notes: it.notes || '',
-          selectedOptions: [],
-          selectedOptionLabels: it.options || []
+          id: `all-ord-${ord.id}-${index}-${Date.now()}`,
+          menuItemId: it.id || it.product_id || it.menuItemId || p?.id || `temp-${index}`,
+          name: it.name || p?.name_ar || p?.name_en || 'صنف',
+          price: Number(it.price || it.unitPrice || it.price_at_order || p?.price || 0),
+          quantity: Number(it.quantity || 1),
+          notes: typeof it.notes === 'string' ? it.notes : '',
+          options: Array.isArray(it.options) ? it.options : [],
+          station
         };
       });
       setCart(loadedItems);
@@ -2897,10 +2942,10 @@ export const CashierPOS: React.FC = () => {
         const tb = tables.find(t => String(t.table_number) === String(ord.table_number));
         if (tb) setSelectedTable(tb);
       }
-      if (ord.customer_name) setCustomerName(ord.customer_name);
-      if (ord.customer_phone) setCustomerPhone(ord.customer_phone);
-      if (ord.delivery_address) setCustomerAddress(ord.delivery_address);
-      if (ord.notes) setOrderNotes(ord.notes);
+      if (typeof ord.customer_name === 'string') setCustomerName(ord.customer_name);
+      if (typeof ord.customer_phone === 'string') setCustomerPhone(ord.customer_phone);
+      if (typeof ord.delivery_address === 'string') setCustomerAddress(ord.delivery_address);
+      if (typeof ord.notes === 'string') setOrderNotes(ord.notes);
       setSidebarView('cart');
     }
   };
@@ -4127,7 +4172,8 @@ export const CashierPOS: React.FC = () => {
 
           {/* VIEW 0: ALL ORDERS STREAM (Unified view of all system orders: Cashier, Customer App, Takeaway, Delivery, Dine-in) */}
           {sidebarView === 'all_orders' ? (
-            <div className="flex-1 flex flex-col overflow-hidden bg-slate-50">
+            <ErrorBoundary fallbackTitle="تعذر عرض قائمة كل الطلبات" onReset={() => setSidebarView('cart')}>
+              <div className="flex-1 flex flex-col overflow-hidden bg-slate-50">
               {/* All Orders Header & Controls */}
               <div className="p-2.5 bg-white border-b border-slate-200 shrink-0 space-y-2">
                 <div className="flex items-center justify-between">
@@ -4227,9 +4273,15 @@ export const CashierPOS: React.FC = () => {
                   filteredAllSystemOrders.map((ord: any) => {
                     const isCustomer = ord.source === 'customer_app' || (typeof ord.notes === 'string' && ord.notes.includes('[طلب زبون'));
                     const oType = ord.order_type || 'dine_in';
-                    const totalVal = ord.total_price || ord.total_amount || 0;
+                    const totalVal = Number(ord.total_price || ord.total_amount || 0);
                     const isPaid = ord.payment_status === 'paid';
-                    const dispNum = ord.daily_order_number || getDisplayOrderNumber(ord);
+                    const dispNum = String(ord.daily_order_number || getDisplayOrderNumber(ord) || '1');
+                    const dateInfo = getSafeFormattedDate(ord.created_at);
+                    const custName = typeof ord.customer_name === 'string' ? ord.customer_name : (ord.customer_name?.name || '');
+                    const custPhone = typeof ord.customer_phone === 'string' ? ord.customer_phone : '';
+                    const delivAddress = typeof ord.delivery_address === 'string' ? ord.delivery_address : (ord.delivery_address?.address || '');
+                    const tableNumStr = typeof ord.table_number === 'object' ? String(ord.table_number?.table_number || '') : String(ord.table_number || '');
+                    const safeItems = getSafeOrderItems(ord);
 
                     return (
                       <div
@@ -4252,7 +4304,7 @@ export const CashierPOS: React.FC = () => {
                                   {isCustomer ? '📱 تطبيق العميل' : '💻 كاشير المطعم'}
                                 </span>
                                 <span className="px-2 py-0.5 rounded-md text-[10px] font-bold bg-slate-100 text-slate-700 border border-slate-200">
-                                  {oType === 'dine_in' ? `🍽️ صالة ${ord.table_number ? `(طاولة #${ord.table_number})` : ''}` :
+                                  {oType === 'dine_in' ? `🍽️ صالة ${tableNumStr ? `(طاولة #${tableNumStr})` : ''}` :
                                    oType === 'takeaway' ? '🛍️ تيك اوي' : '🛵 دليفري'}
                                 </span>
                                 <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded-md ${
@@ -4263,9 +4315,13 @@ export const CashierPOS: React.FC = () => {
                               </div>
                               <div className="flex items-center gap-2 text-[11px] text-slate-400 font-mono">
                                 <Clock size={11} className="text-slate-400 shrink-0" />
-                                <span>{new Date(ord.created_at || Date.now()).toLocaleTimeString('ar-EG', { hour: '2-digit', minute: '2-digit' })}</span>
-                                <span>•</span>
-                                <span>{new Date(ord.created_at || Date.now()).toLocaleDateString('ar-EG', { day: 'numeric', month: 'short' })}</span>
+                                <span>{dateInfo.time || 'الآن'}</span>
+                                {dateInfo.date && (
+                                  <>
+                                    <span>•</span>
+                                    <span>{dateInfo.date}</span>
+                                  </>
+                                )}
                               </div>
                             </div>
                           </div>
@@ -4283,31 +4339,31 @@ export const CashierPOS: React.FC = () => {
                              ord.status === 'preparing' ? 'جاري التحضير' :
                              ord.status === 'ready' ? 'جاهز للتسليم' :
                              ord.status === 'completed' ? 'مكتمل ومسلم' :
-                             ord.status === 'cancelled' ? 'ملغي' : ord.status || 'معلق'}
+                             ord.status === 'cancelled' ? 'ملغي' : (typeof ord.status === 'string' ? ord.status : 'معلق')}
                           </span>
                         </div>
 
                         {/* 2. Customer Info & Delivery Address (if present) */}
-                        {(ord.customer_name || ord.customer_phone || (oType === 'delivery' && ord.delivery_address)) && (
+                        {(custName || custPhone || (oType === 'delivery' && delivAddress)) && (
                           <div className="bg-slate-50 rounded-xl p-2 text-xs text-slate-700 border border-slate-100 space-y-1">
-                            {(ord.customer_name || ord.customer_phone) && (
+                            {(custName || custPhone) && (
                               <div className="flex items-center justify-between gap-1">
                                 <span className="font-bold flex items-center gap-1">
                                   <User size={12} className="text-slate-400 shrink-0" />
-                                  <span>{ord.customer_name || 'عميل'}</span>
+                                  <span>{custName || 'عميل'}</span>
                                 </span>
-                                {ord.customer_phone && (
-                                  <a href={`tel:${ord.customer_phone}`} className="font-mono text-slate-600 flex items-center gap-1 hover:text-amber-600 dir-ltr text-[11px]">
+                                {custPhone && (
+                                  <a href={`tel:${custPhone}`} className="font-mono text-slate-600 flex items-center gap-1 hover:text-amber-600 dir-ltr text-[11px]">
                                     <Phone size={11} className="text-slate-400 shrink-0" />
-                                    <span>{ord.customer_phone}</span>
+                                    <span>{custPhone}</span>
                                   </a>
                                 )}
                               </div>
                             )}
-                            {oType === 'delivery' && ord.delivery_address && (
+                            {oType === 'delivery' && delivAddress && (
                               <div className="flex items-start gap-1 text-[11px] text-slate-600 pt-1 border-t border-slate-200/60">
                                 <MapPin size={12} className="shrink-0 text-amber-600 mt-0.5" />
-                                <span className="leading-snug">{ord.delivery_address}</span>
+                                <span className="leading-snug">{delivAddress}</span>
                               </div>
                             )}
                           </div>
@@ -4318,18 +4374,22 @@ export const CashierPOS: React.FC = () => {
                           <div className="text-[11px] font-bold text-slate-500 flex items-center justify-between pb-1.5 border-b border-slate-200/70">
                             <span>الأصناف المطلوبة</span>
                             <span className="font-mono text-[10px] text-slate-400">
-                              {Array.isArray(ord.items) ? ord.items.reduce((s: number, i: any) => s + (Number(i.quantity) || 1), 0) : 0} صنف
+                              {safeItems.reduce((s: number, i: any) => s + (Number(i?.quantity) || 1), 0)} صنف
                             </span>
                           </div>
 
-                          {Array.isArray(ord.items) && ord.items.length > 0 ? (
+                          {safeItems.length > 0 ? (
                             <div className="space-y-1.5">
-                              {ord.items.map((item: any, idx: number) => {
-                                const itemName = item.name || item.product?.name_ar || item.product?.name_en || 'صنف';
-                                const qty = Number(item.quantity) || 1;
-                                const price = Number(item.price || item.unitPrice || item.price_at_order || 0);
+                              {safeItems.map((item: any, idx: number) => {
+                                const itemName = typeof item?.name === 'string' ? item.name : (item?.product?.name_ar || item?.product?.name_en || 'صنف');
+                                const qty = Math.max(1, Number(item?.quantity || 1));
+                                const price = Number(item?.price || item?.unitPrice || item?.price_at_order || 0);
                                 const itemTotal = price > 0 ? price * qty : 0;
-                                const itemOptions = Array.isArray(item.options) ? item.options : (typeof item.options === 'string' ? [item.options] : []);
+                                let rawOpts = item?.options;
+                                if (typeof rawOpts === 'string') {
+                                  try { rawOpts = JSON.parse(rawOpts); } catch { rawOpts = [rawOpts]; }
+                                }
+                                const itemOptions = Array.isArray(rawOpts) ? rawOpts : [];
 
                                 return (
                                   <div key={idx} className="flex items-start justify-between gap-2 text-xs py-0.5">
@@ -4343,14 +4403,18 @@ export const CashierPOS: React.FC = () => {
                                         </div>
                                         {itemOptions.length > 0 && (
                                           <div className="flex flex-wrap gap-1 mt-0.5">
-                                            {itemOptions.map((opt: string, optIdx: number) => (
-                                              <span key={optIdx} className="text-[9px] bg-white border border-slate-200 text-slate-600 px-1.5 py-0.2 rounded font-medium">
-                                                {opt}
-                                              </span>
-                                            ))}
+                                            {itemOptions.map((opt: any, optIdx: number) => {
+                                              const optText = getSafeOptionDisplay(opt);
+                                              if (!optText) return null;
+                                              return (
+                                                <span key={optIdx} className="text-[9px] bg-white border border-slate-200 text-slate-600 px-1.5 py-0.2 rounded font-medium">
+                                                  {optText}
+                                                </span>
+                                              );
+                                            })}
                                           </div>
                                         )}
-                                        {item.notes && (
+                                        {typeof item?.notes === 'string' && item.notes && (
                                           <div className="text-[10px] text-amber-700 italic mt-0.5">
                                             ملاحظة: {item.notes}
                                           </div>
@@ -4383,7 +4447,7 @@ export const CashierPOS: React.FC = () => {
                           <div className="flex items-center justify-between pt-2 border-t border-slate-200 mt-1">
                             <span className="text-xs font-bold text-slate-600">الإجمالي الكلي:</span>
                             <span className="font-mono font-black text-sm text-slate-900 bg-white border border-slate-200 px-2.5 py-0.5 rounded-lg shadow-2xs">
-                              {Number(totalVal).toFixed(2)} ج.م
+                              {totalVal.toFixed(2)} ج.م
                             </span>
                           </div>
                         </div>
@@ -4403,7 +4467,7 @@ export const CashierPOS: React.FC = () => {
                             </button>
 
                             {/* Print Kitchen Ticket */}
-                            {Array.isArray(ord.items) && ord.items.length > 0 && (
+                            {safeItems.length > 0 && (
                               <button
                                 type="button"
                                 onClick={() => printKOTForOrder(ord)}
@@ -4416,7 +4480,7 @@ export const CashierPOS: React.FC = () => {
                             )}
 
                             {/* Edit in Cart */}
-                            {Array.isArray(ord.items) && ord.items.length > 0 && ord.status !== 'completed' && ord.status !== 'cancelled' && (
+                            {safeItems.length > 0 && ord.status !== 'completed' && ord.status !== 'cancelled' && (
                               <button
                                 type="button"
                                 onClick={() => loadOrderToCart(ord)}
@@ -4491,8 +4555,10 @@ export const CashierPOS: React.FC = () => {
                 )}
               </div>
             </div>
+          </ErrorBoundary>
           ) : sidebarView === 'customer_orders' ? (
-            <div className="flex-1 flex flex-col overflow-hidden bg-slate-50">
+            <ErrorBoundary fallbackTitle="تعذر عرض قائمة طلبات الزبائن" onReset={() => setSidebarView('cart')}>
+              <div className="flex-1 flex flex-col overflow-hidden bg-slate-50">
               {/* Live Stream Controls Header */}
               <div className="p-2.5 bg-white border-b border-slate-200 shrink-0 space-y-2">
                 <div className="flex items-center justify-between">
@@ -4586,13 +4652,16 @@ export const CashierPOS: React.FC = () => {
                     </p>
                   </div>
                 ) : (
-                  filteredCustomerOrders.map(ord => {
+                  filteredCustomerOrders.map((ord: any) => {
                     const isNew = ord.status === 'new';
                     const isDelivery = ord.order_type === 'delivery';
-                    const formattedDate = new Date(ord.created_at).toLocaleTimeString('ar-EG', {
-                      hour: '2-digit',
-                      minute: '2-digit'
-                    });
+                    const dateInfo = getSafeFormattedDate(ord.created_at);
+                    const safeItems = getSafeOrderItems(ord);
+                    const totalVal = Number(ord.total_price || ord.total_amount || 0);
+                    const custName = typeof ord.customer_name === 'string' ? ord.customer_name : (ord.customer_name?.name || '');
+                    const custPhone = typeof ord.customer_phone === 'string' ? ord.customer_phone : '';
+                    const delivAddress = typeof ord.delivery_address === 'string' ? ord.delivery_address : (ord.delivery_address?.address || '');
+                    const tableNumStr = typeof ord.table_number === 'object' ? String(ord.table_number?.table_number || '') : String(ord.table_number || 'صالة');
 
                     return (
                       <div
@@ -4622,13 +4691,13 @@ export const CashierPOS: React.FC = () => {
                               ) : (
                                 <span className="px-2 py-0.5 bg-blue-100 text-blue-800 border border-blue-200 rounded-md text-[10px] font-black flex items-center gap-1">
                                   <UtensilsCrossed size={11} />
-                                  <span>طاولة #{ord.table_number || 'صالة'}</span>
+                                  <span>طاولة #{tableNumStr}</span>
                                 </span>
                               )}
                             </div>
                             <p className="text-[10px] text-slate-400 font-mono mt-0.5 flex items-center gap-1">
                               <Clock size={10} />
-                              <span>{formattedDate}</span>
+                              <span>{dateInfo.time || 'الآن'}</span>
                               <span>• تطبيق الزبائن</span>
                             </p>
                           </div>
@@ -4656,7 +4725,7 @@ export const CashierPOS: React.FC = () => {
                               </span>
                             ) : (
                               <span className="px-2 py-0.5 bg-slate-500 text-white rounded-lg text-[10px] font-black inline-block">
-                                {ord.status}
+                                {typeof ord.status === 'string' ? ord.status : 'معلق'}
                               </span>
                             )}
                           </div>
@@ -4668,22 +4737,22 @@ export const CashierPOS: React.FC = () => {
                             <div className="flex items-center justify-between">
                               <p className="font-bold flex items-center gap-1">
                                 <User size={11} className="text-purple-700" />
-                                <span>{ord.customer_name || 'عميل دليفري'}</span>
+                                <span>{custName || 'عميل دليفري'}</span>
                               </p>
-                              {ord.customer_phone && (
-                                <a href={`tel:${ord.customer_phone}`} className="font-mono text-purple-800 flex items-center gap-1 underline font-bold">
+                              {custPhone && (
+                                <a href={`tel:${custPhone}`} className="font-mono text-purple-800 flex items-center gap-1 underline font-bold">
                                   <Phone size={11} className="text-purple-700" />
-                                  <span>{ord.customer_phone}</span>
+                                  <span>{custPhone}</span>
                                 </a>
                               )}
                             </div>
-                            {ord.delivery_address && (
+                            {delivAddress && (
                               <p className="text-[10px] text-purple-900 flex items-start gap-1 leading-tight">
                                 <MapPin size={11} className="text-purple-700 shrink-0 mt-0.5" />
-                                <span>{ord.delivery_address}</span>
+                                <span>{delivAddress}</span>
                               </p>
                             )}
-                            {ord.notes && (
+                            {typeof ord.notes === 'string' && ord.notes && (
                               <p className="text-[10px] text-purple-800 bg-white/70 p-1 rounded border border-purple-200/50">
                                 ملاحظة: {ord.notes}
                               </p>
@@ -4694,45 +4763,60 @@ export const CashierPOS: React.FC = () => {
                         {/* Items List - Spacious, clear and comfortable */}
                         <div className="bg-slate-100/80 p-2.5 rounded-xl border border-slate-200 space-y-1.5 max-h-72 overflow-y-auto">
                           <div className="flex items-center justify-between text-[11px] font-black text-slate-600 pb-1 border-b border-slate-200">
-                            <span>الأصناف المطلوبة ({ord.items.reduce((acc, it) => acc + (it.quantity || 1), 0)}):</span>
+                            <span>الأصناف المطلوبة ({safeItems.reduce((acc, it) => acc + (Number(it.quantity) || 1), 0)}):</span>
                             <span className="text-[10px] text-slate-500 font-bold">السعر</span>
                           </div>
-                          {ord.items.map((item, idx) => (
-                            <div key={idx} className="bg-white p-2 rounded-xl border border-slate-200 flex items-start justify-between gap-2 shadow-xs">
-                              <div className="flex items-start gap-2">
-                                <span className="w-5 h-5 rounded-md bg-amber-500 text-white font-mono font-black text-xs flex items-center justify-center shrink-0 mt-0.5 shadow-xs">
-                                  {item.quantity}
-                                </span>
-                                <div>
-                                  <p className="font-bold text-xs text-slate-900 leading-snug">{item.name}</p>
-                                  {item.options && item.options.length > 0 && (
-                                    <div className="flex flex-wrap gap-1 mt-1">
-                                      {item.options.map((o: any, oi: number) => (
-                                        <span key={oi} className="text-[10px] bg-blue-50 text-blue-700 border border-blue-200 px-1.5 py-0.2 rounded font-medium">
-                                          +{typeof o === 'string' ? o : (o.name || o.name_ar || o)}
-                                        </span>
-                                      ))}
-                                    </div>
-                                  )}
-                                  {item.notes && (
-                                    <p className="text-[10px] text-amber-800 bg-amber-50 px-1.5 py-0.5 rounded border border-amber-200 mt-1 font-medium">
-                                      📝 {item.notes}
-                                    </p>
-                                  )}
+                          {safeItems.map((item, idx) => {
+                            const itemName = typeof item?.name === 'string' ? item.name : (item?.product?.name_ar || item?.product?.name_en || 'صنف');
+                            const qty = Math.max(1, Number(item?.quantity || 1));
+                            const itemPrice = Number(item?.price || item?.unitPrice || 0);
+                            let rawOpts = item?.options;
+                            if (typeof rawOpts === 'string') {
+                              try { rawOpts = JSON.parse(rawOpts); } catch { rawOpts = [rawOpts]; }
+                            }
+                            const itemOptions = Array.isArray(rawOpts) ? rawOpts : [];
+
+                            return (
+                              <div key={idx} className="bg-white p-2 rounded-xl border border-slate-200 flex items-start justify-between gap-2 shadow-xs">
+                                <div className="flex items-start gap-2">
+                                  <span className="w-5 h-5 rounded-md bg-amber-500 text-white font-mono font-black text-xs flex items-center justify-center shrink-0 mt-0.5 shadow-xs">
+                                    {qty}
+                                  </span>
+                                  <div>
+                                    <p className="font-bold text-xs text-slate-900 leading-snug">{itemName}</p>
+                                    {itemOptions.length > 0 && (
+                                      <div className="flex flex-wrap gap-1 mt-1">
+                                        {itemOptions.map((o: any, oi: number) => {
+                                          const optText = getSafeOptionDisplay(o);
+                                          if (!optText) return null;
+                                          return (
+                                            <span key={oi} className="text-[10px] bg-blue-50 text-blue-700 border border-blue-200 px-1.5 py-0.2 rounded font-medium">
+                                              +{optText}
+                                            </span>
+                                          );
+                                        })}
+                                      </div>
+                                    )}
+                                    {typeof item.notes === 'string' && item.notes && (
+                                      <p className="text-[10px] text-amber-800 bg-amber-50 px-1.5 py-0.5 rounded border border-amber-200 mt-1 font-medium">
+                                        📝 {item.notes}
+                                      </p>
+                                    )}
+                                  </div>
                                 </div>
+                                <span className="font-mono font-black text-slate-700 text-xs shrink-0 mt-0.5">
+                                  {(itemPrice * qty).toFixed(2)} ج.م
+                                </span>
                               </div>
-                              <span className="font-mono font-black text-slate-700 text-xs shrink-0 mt-0.5">
-                                {((item.price || 0) * (item.quantity || 1)).toFixed(2)} ج.م
-                              </span>
-                            </div>
-                          ))}
+                            );
+                          })}
                         </div>
 
                         {/* Total Price & Payment Status */}
                         <div className="flex items-center justify-between pt-1 border-t border-slate-100">
                           <span className="text-[11px] text-slate-500">الإجمالي:</span>
                           <span className="font-mono font-black text-emerald-600 text-sm">
-                            {ord.total_price.toFixed(2)} ج.م
+                            {totalVal.toFixed(2)} ج.م
                           </span>
                           <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-slate-100 text-slate-600">
                             {ord.payment_status === 'paid' ? 'مدفوع مسبقاً' : 'دفع عند الاستلام'}
@@ -4800,6 +4884,7 @@ export const CashierPOS: React.FC = () => {
                 )}
               </div>
             </div>
+            </ErrorBoundary>
           ) : (
             /* VIEW 2: DIRECT CASHIER CART & SETTLEMENT */
             <div className="flex-1 flex flex-col justify-between overflow-hidden">
