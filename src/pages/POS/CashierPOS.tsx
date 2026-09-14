@@ -3178,19 +3178,12 @@ export const CashierPOS: React.FC = () => {
           {/* Quick Actions */}
           <button
             type="button"
-            onClick={() => setIsOrdersHistoryModalOpen(true)}
-            className="p-2 bg-slate-50 hover:bg-slate-100 text-slate-600 rounded-xl border border-slate-200 transition-all cursor-pointer shadow-2xs"
-            title="سجل الفواتير السريع"
-          >
-            <Receipt size={15} className="text-amber-600" />
-          </button>
-          <button
-            type="button"
             onClick={() => setIsCashDrawerModalOpen(true)}
-            className="p-2 bg-slate-50 hover:bg-slate-100 text-slate-600 rounded-xl border border-slate-200 transition-all cursor-pointer shadow-2xs"
+            className="px-3 py-1.5 bg-slate-50 hover:bg-slate-100 text-slate-700 font-bold text-xs rounded-xl border border-slate-200 transition-all cursor-pointer shadow-2xs flex items-center gap-1.5"
             title="حركة الدرج والخزينة"
           >
             <DollarSign size={15} className="text-emerald-600" />
+            <span>حركة الدرج</span>
           </button>
           <button
             type="button"
@@ -4169,7 +4162,7 @@ export const CashierPOS: React.FC = () => {
         </div>
 
         {/* 🧾 F. RIGHT PANEL: Current Order (الطلب الحالي) or Customer Orders Stream or All Orders */}
-        <div className="w-80 md:w-96 lg:w-[390px] xl:w-[430px] bg-white border-l border-slate-200 flex flex-col justify-between shrink-0 shadow-lg h-full overflow-hidden" dir="rtl">
+        <div className="w-80 md:w-96 lg:w-[410px] xl:w-[440px] bg-white border-l border-slate-200 flex flex-col justify-between shrink-0 shadow-lg h-full overflow-hidden" dir="rtl">
           
           {/* Top Sidebar Switcher: Direct Cashier Cart vs Customer Orders vs All System Orders */}
           <div className="p-1.5 bg-slate-900 text-white flex items-center justify-between gap-1 shrink-0 border-b border-slate-800">
@@ -4954,42 +4947,42 @@ export const CashierPOS: React.FC = () => {
             </div>
             </ErrorBoundary>
           ) : (
-            /* VIEW 2: DIRECT CASHIER CART & SETTLEMENT matching Reference Design */
+            /* VIEW 2: DIRECT CASHIER CART & SETTLEMENT (مع مساحة واسعة للأصناف والتحصيل السريع) */
             <div className="flex-1 flex flex-col justify-between overflow-hidden">
-              {/* Order Header / Configuration matching Reference Image */}
-              <div className="p-3.5 bg-white border-b border-slate-200/90 space-y-3 shrink-0 shadow-2xs">
+              {/* Order Header / Configuration - Compact & Ergonomic */}
+              <div className="p-2.5 bg-white border-b border-slate-200/90 space-y-2 shrink-0 shadow-2xs">
                 {/* Header Row: Title, Order # Badge, Cashier Pill */}
                 <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-2">
-                    <div className="w-8 h-8 rounded-xl bg-amber-500 text-slate-950 flex items-center justify-center font-bold shadow-xs shrink-0">
-                      <ShoppingCart size={16} />
+                  <div className="flex items-center gap-1.5">
+                    <div className="w-7 h-7 rounded-lg bg-amber-500 text-slate-950 flex items-center justify-center font-bold shadow-xs shrink-0">
+                      <ShoppingCart size={15} />
                     </div>
-                    <div>
-                      <h2 className="font-black text-sm text-slate-900 leading-tight">الطلب الحالي</h2>
-                      <span className="text-[10px] text-slate-400 font-bold block">
-                        {cart.reduce((s, i) => s + i.quantity, 0)} عناصر مختارة
+                    <div className="flex items-baseline gap-1.5">
+                      <h2 className="font-black text-xs sm:text-sm text-slate-900 leading-tight">الطلب الحالي</h2>
+                      <span className="text-[10px] text-slate-400 font-bold">
+                        ({cart.reduce((s, i) => s + i.quantity, 0)} عناصر)
                       </span>
                     </div>
                   </div>
 
-                  <div className="flex items-center gap-2">
+                  <div className="flex items-center gap-1.5">
                     {/* Unified Sequential Order Number Badge */}
-                    <span className="px-2.5 py-1 rounded-lg bg-emerald-50 border border-emerald-200 text-emerald-700 font-mono font-black text-xs shadow-2xs">
+                    <span className="px-2 py-0.5 rounded-md bg-emerald-50 border border-emerald-200 text-emerald-700 font-mono font-black text-xs shadow-2xs">
                       #{previewOrderNumber || shiftPaymentCounts.total + 1}
                     </span>
                     {/* Order Source Pill */}
-                    <span className="px-2 py-0.5 rounded-md bg-slate-900 text-white font-bold text-[10px] tracking-wide">
+                    <span className="px-1.5 py-0.5 rounded bg-slate-900 text-white font-bold text-[9px] tracking-wide">
                       كاشير
                     </span>
                   </div>
                 </div>
 
                 {/* Order Type Tabs: داخل الصالة | تيك اوي | دليفري */}
-                <div className="grid grid-cols-3 gap-1 bg-slate-100 p-1 rounded-xl border border-slate-200/80">
+                <div className="grid grid-cols-3 gap-1 bg-slate-100 p-0.5 rounded-xl border border-slate-200/80">
                   <button
                     type="button"
                     onClick={() => setOrderType('dine_in')}
-                    className={`py-1.5 rounded-lg text-xs font-bold flex items-center justify-center gap-1 transition-all cursor-pointer ${
+                    className={`py-1 rounded-lg text-[11px] font-bold flex items-center justify-center gap-1 transition-all cursor-pointer ${
                       orderType === 'dine_in' ? 'bg-amber-500 text-white shadow-xs font-black' : 'text-slate-600 hover:text-slate-900'
                     }`}
                   >
@@ -5002,7 +4995,7 @@ export const CashierPOS: React.FC = () => {
                       setOrderType('takeaway');
                       setSelectedTable(null);
                     }}
-                    className={`py-1.5 rounded-lg text-xs font-bold flex items-center justify-center gap-1 transition-all cursor-pointer ${
+                    className={`py-1 rounded-lg text-[11px] font-bold flex items-center justify-center gap-1 transition-all cursor-pointer ${
                       orderType === 'takeaway' ? 'bg-amber-500 text-white shadow-xs font-black' : 'text-slate-600 hover:text-slate-900'
                     }`}
                   >
@@ -5015,7 +5008,7 @@ export const CashierPOS: React.FC = () => {
                       setOrderType('delivery');
                       setSelectedTable(null);
                     }}
-                    className={`py-1.5 rounded-lg text-xs font-bold flex items-center justify-center gap-1 transition-all cursor-pointer ${
+                    className={`py-1 rounded-lg text-[11px] font-bold flex items-center justify-center gap-1 transition-all cursor-pointer ${
                       orderType === 'delivery' ? 'bg-amber-500 text-white shadow-xs font-black' : 'text-slate-600 hover:text-slate-900'
                     }`}
                   >
@@ -5024,12 +5017,12 @@ export const CashierPOS: React.FC = () => {
                   </button>
                 </div>
 
-                {/* Conditional Sub-info: Table Picker / Takeaway / Delivery Info */}
+                {/* Conditional Sub-info: Table Picker / Takeaway Badge (No phone/name) / Delivery Info */}
                 {orderType === 'dine_in' ? (
-                  <div className="flex items-center justify-between bg-slate-50 p-2 rounded-xl border border-slate-200 text-xs">
+                  <div className="flex items-center justify-between bg-slate-50 px-2 py-1 rounded-xl border border-slate-200 text-xs">
                     <div className="flex items-center gap-1.5 text-slate-700 font-bold">
-                      <UtensilsCrossed size={13} className="text-amber-600" />
-                      <span>الطاولة:</span>
+                      <UtensilsCrossed size={12} className="text-amber-600" />
+                      <span className="text-[11px]">الطاولة:</span>
                     </div>
                     <select
                       value={selectedTable?.id || ''}
@@ -5037,7 +5030,7 @@ export const CashierPOS: React.FC = () => {
                         const tb = tables.find(t => t.id === e.target.value);
                         setSelectedTable(tb || null);
                       }}
-                      className="bg-white border border-slate-300 text-slate-800 rounded-lg px-2.5 py-1 outline-none font-bold text-xs shadow-2xs"
+                      className="bg-white border border-slate-300 text-slate-800 rounded-lg px-2 py-0.5 outline-none font-bold text-xs shadow-2xs"
                     >
                       <option value="">بدون طاولة (طلب صالة سريع)</option>
                       {tables.map(t => (
@@ -5046,73 +5039,61 @@ export const CashierPOS: React.FC = () => {
                     </select>
                   </div>
                 ) : orderType === 'takeaway' ? (
-                  <div className="space-y-1.5 bg-amber-50/50 p-2 rounded-xl border border-amber-200/60 text-xs">
-                    <div className="flex items-center justify-between text-amber-900 font-bold">
-                      <span className="flex items-center gap-1">
-                        <ShoppingBag size={13} className="text-amber-600" />
-                        <span>طلب استلام تيك اوي</span>
-                      </span>
-                      <span className="text-[10px] bg-amber-100 text-amber-800 px-2 py-0.5 rounded-full font-bold">بدون خدمة صالة</span>
-                    </div>
-                    <input
-                      type="text"
-                      placeholder="اسم العميل (اختياري)..."
-                      value={customerName}
-                      onChange={e => setCustomerName(e.target.value)}
-                      className="w-full bg-white border border-slate-300 rounded-lg px-2.5 py-1.5 text-xs text-slate-800 outline-none focus:border-amber-500 shadow-inner"
-                    />
-                    <input
-                      type="tel"
-                      placeholder="رقم الهاتف (اختياري)..."
-                      value={customerPhone}
-                      onChange={e => setCustomerPhone(e.target.value)}
-                      className="w-full bg-white border border-slate-300 rounded-lg px-2.5 py-1.5 text-xs text-slate-800 outline-none focus:border-amber-500 shadow-inner"
-                    />
+                  <div className="flex items-center justify-between bg-amber-50/70 px-2.5 py-1 rounded-xl border border-amber-200/70 text-xs">
+                    <span className="flex items-center gap-1.5 text-amber-900 font-bold text-[11px]">
+                      <ShoppingBag size={13} className="text-amber-600" />
+                      <span>طلب استلام تيك اوي</span>
+                    </span>
+                    <span className="text-[10px] bg-amber-100 text-amber-800 px-2 py-0.2 rounded-md font-bold">
+                      بدون خدمة صالة
+                    </span>
                   </div>
                 ) : (
-                  <div className="space-y-1.5 bg-slate-50 p-2 rounded-xl border border-slate-200 text-xs">
-                    <div className="flex items-center gap-1 text-slate-800 font-bold">
-                      <Bike size={13} className="text-blue-600" />
+                  <div className="space-y-1 bg-slate-50 p-2 rounded-xl border border-slate-200 text-xs">
+                    <div className="flex items-center gap-1 text-slate-800 font-bold text-[11px]">
+                      <Bike size={12} className="text-blue-600" />
                       <span>بيانات التوصيل (دليفري)</span>
                     </div>
-                    <input
-                      type="text"
-                      placeholder="اسم العميل..."
-                      value={customerName}
-                      onChange={e => setCustomerName(e.target.value)}
-                      className="w-full bg-white border border-slate-300 rounded-lg px-2.5 py-1.5 text-xs text-slate-800 outline-none focus:border-amber-500 shadow-inner"
-                    />
-                    <input
-                      type="tel"
-                      placeholder="رقم الهاتف للتوصيل..."
-                      value={customerPhone}
-                      onChange={e => setCustomerPhone(e.target.value)}
-                      className="w-full bg-white border border-slate-300 rounded-lg px-2.5 py-1.5 text-xs text-slate-800 outline-none focus:border-amber-500 shadow-inner"
-                    />
+                    <div className="grid grid-cols-2 gap-1.5">
+                      <input
+                        type="text"
+                        placeholder="اسم العميل..."
+                        value={customerName}
+                        onChange={e => setCustomerName(e.target.value)}
+                        className="w-full bg-white border border-slate-300 rounded-lg px-2 py-1 text-xs text-slate-800 outline-none focus:border-amber-500 shadow-inner"
+                      />
+                      <input
+                        type="tel"
+                        placeholder="رقم الهاتف..."
+                        value={customerPhone}
+                        onChange={e => setCustomerPhone(e.target.value)}
+                        className="w-full bg-white border border-slate-300 rounded-lg px-2 py-1 text-xs text-slate-800 outline-none focus:border-amber-500 shadow-inner"
+                      />
+                    </div>
                     <input
                       type="text"
                       placeholder="عنوان التوصيل بالتفصيل..."
                       value={customerAddress}
                       onChange={e => setCustomerAddress(e.target.value)}
-                      className="w-full bg-white border border-slate-300 rounded-lg px-2.5 py-1.5 text-xs text-slate-800 outline-none focus:border-amber-500 shadow-inner"
+                      className="w-full bg-white border border-slate-300 rounded-lg px-2 py-1 text-xs text-slate-800 outline-none focus:border-amber-500 shadow-inner"
                     />
                   </div>
                 )}
 
-                {/* Table Column Headers matching reference */}
-                <div className="grid grid-cols-12 text-[11px] font-black text-slate-400 px-2 pt-1 border-t border-slate-100">
+                {/* Table Column Headers */}
+                <div className="grid grid-cols-12 text-[10px] font-black text-slate-400 px-1 pt-0.5 border-t border-slate-100">
                   <span className="col-span-6 text-right">الصنف</span>
                   <span className="col-span-3 text-center">الكمية</span>
                   <span className="col-span-3 text-left">السعر</span>
                 </div>
               </div>
 
-              {/* Cart Items List */}
-              <div className="flex-1 overflow-y-auto p-3 space-y-2 bg-slate-50/80">
+              {/* 🌟 Cart Items List (مساحة واسعة ومرنة ومريحة للأصناف) */}
+              <div className="flex-1 overflow-y-auto p-2.5 space-y-1.5 bg-slate-50/80 min-h-[160px]">
                 {cart.length === 0 ? (
-                  <div className="h-full flex flex-col items-center justify-center text-slate-400 space-y-3 py-12">
-                    <div className="w-14 h-14 rounded-2xl bg-white border border-slate-200 flex items-center justify-center text-slate-400 shadow-2xs">
-                      <ShoppingCart size={26} />
+                  <div className="h-full min-h-[200px] flex flex-col items-center justify-center text-slate-400 space-y-2 py-8">
+                    <div className="w-12 h-12 rounded-2xl bg-white border border-slate-200 flex items-center justify-center text-slate-400 shadow-2xs">
+                      <ShoppingCart size={22} />
                     </div>
                     <div className="text-center">
                       <p className="font-bold text-xs text-slate-700">لا توجد أصناف في الطلب حالياً</p>
@@ -5123,9 +5104,9 @@ export const CashierPOS: React.FC = () => {
                   cart.map(item => (
                     <div
                       key={item.id}
-                      className="bg-white border border-slate-200/90 rounded-2xl p-2.5 space-y-1.5 hover:border-slate-300 transition-all shadow-2xs"
+                      className="bg-white border border-slate-200/90 rounded-xl p-2 space-y-1 hover:border-amber-300 hover:shadow-xs transition-all"
                     >
-                      <div className="grid grid-cols-12 items-center gap-2">
+                      <div className="grid grid-cols-12 items-center gap-1.5">
                         {/* Item Info + Thumbnail */}
                         <div className="col-span-6 flex items-center gap-2 min-w-0">
                           {/* Product Image Thumbnail */}
@@ -5133,14 +5114,14 @@ export const CashierPOS: React.FC = () => {
                             <img
                               src={item.image_url}
                               alt={item.name}
-                              className="w-10 h-10 rounded-xl object-cover border border-slate-200 shrink-0 shadow-2xs"
+                              className="w-8 h-8 rounded-lg object-cover border border-slate-200 shrink-0 shadow-2xs"
                               onError={(e) => {
                                 (e.target as HTMLElement).style.display = 'none';
                               }}
                             />
                           ) : (
-                            <div className="w-10 h-10 rounded-xl bg-amber-50 border border-amber-200/80 flex items-center justify-center text-amber-600 shrink-0 shadow-2xs">
-                              <UtensilsCrossed size={16} />
+                            <div className="w-8 h-8 rounded-lg bg-amber-50 border border-amber-200/80 flex items-center justify-center text-amber-600 shrink-0">
+                              <UtensilsCrossed size={14} />
                             </div>
                           )}
 
@@ -5169,7 +5150,7 @@ export const CashierPOS: React.FC = () => {
                         </div>
 
                         {/* Quantity Stepper */}
-                        <div className="col-span-3 flex items-center justify-center gap-1 bg-slate-100 px-1.5 py-1 rounded-xl border border-slate-200">
+                        <div className="col-span-3 flex items-center justify-center gap-1 bg-slate-100 px-1 py-0.5 rounded-lg border border-slate-200">
                           <button
                             type="button"
                             onClick={() => updateQuantity(item.id, -1)}
@@ -5190,14 +5171,14 @@ export const CashierPOS: React.FC = () => {
                         </div>
 
                         {/* Price & Delete Button */}
-                        <div className="col-span-3 flex items-center justify-end gap-1.5">
+                        <div className="col-span-3 flex items-center justify-end gap-1">
                           <span className="font-mono font-bold text-emerald-600 text-xs shrink-0">
                             {(item.price * item.quantity).toFixed(2)}
                           </span>
                           <button
                             type="button"
                             onClick={() => handleRemoveCartItem(item)}
-                            className="p-1 text-slate-400 hover:text-rose-600 rounded-lg transition-colors cursor-pointer"
+                            className="p-1 text-slate-400 hover:text-rose-600 rounded-md transition-colors cursor-pointer"
                             title="حذف الصنف"
                           >
                             <Trash2 size={13} />
@@ -5209,26 +5190,26 @@ export const CashierPOS: React.FC = () => {
                 )}
               </div>
 
-              {/* Quick Actions (Hold / Split Bill / Send to Kitchen) */}
+              {/* Quick Actions (Hold / Split Bill / Send to Kitchen) - Compact Bar */}
               {cart.length > 0 && (
-                <div className="p-2 bg-slate-100/90 border-t border-slate-200 grid grid-cols-3 gap-1.5 shrink-0">
+                <div className="px-2.5 py-1 bg-slate-100/90 border-t border-slate-200 grid grid-cols-3 gap-1.5 shrink-0">
                   <button
                     type="button"
                     onClick={handleHoldBill}
-                    className="py-1.5 bg-white hover:bg-slate-50 text-amber-800 font-bold text-[11px] rounded-xl border border-slate-200 flex items-center justify-center gap-1 transition-all cursor-pointer shadow-2xs"
+                    className="py-1 bg-white hover:bg-slate-50 text-amber-800 font-bold text-[11px] rounded-lg border border-slate-200 flex items-center justify-center gap-1 transition-all cursor-pointer shadow-2xs"
                     title="تعليق الفاتورة والعودة لها لاحقاً"
                   >
-                    <PauseCircle size={13} className="text-amber-600" />
+                    <PauseCircle size={12} className="text-amber-600" />
                     <span>تعليق</span>
                   </button>
 
                   <button
                     type="button"
                     onClick={() => setIsSplitBillModalOpen(true)}
-                    className="py-1.5 bg-white hover:bg-slate-50 text-indigo-800 font-bold text-[11px] rounded-xl border border-slate-200 flex items-center justify-center gap-1 transition-all cursor-pointer shadow-2xs"
+                    className="py-1 bg-white hover:bg-slate-50 text-indigo-800 font-bold text-[11px] rounded-lg border border-slate-200 flex items-center justify-center gap-1 transition-all cursor-pointer shadow-2xs"
                     title="تقسيم الفاتورة بالتساوي أو بالأصناف"
                   >
-                    <Split size={13} className="text-indigo-600" />
+                    <Split size={12} className="text-indigo-600" />
                     <span>تقسيم</span>
                   </button>
 
@@ -5237,27 +5218,27 @@ export const CashierPOS: React.FC = () => {
                       type="button"
                       onClick={handleSendOrderToKitchenAndPrint}
                       disabled={cart.length === 0}
-                      className="py-1.5 bg-amber-50 hover:bg-amber-100 text-amber-800 font-bold text-[11px] rounded-xl border border-amber-200 flex items-center justify-center gap-1 transition-all cursor-pointer shadow-2xs disabled:opacity-40"
+                      className="py-1 bg-amber-50 hover:bg-amber-100 text-amber-800 font-bold text-[11px] rounded-lg border border-amber-200 flex items-center justify-center gap-1 transition-all cursor-pointer shadow-2xs disabled:opacity-40"
                       title="إرسال الطلب للمطبخ وطباعة بون التشغيل تلقائياً"
                     >
-                      <ChefHat size={13} className="text-amber-600" />
+                      <ChefHat size={12} className="text-amber-600" />
                       <span>إرسال بون</span>
                     </button>
                   ) : (
                     <div
-                      className="py-1.5 px-2 bg-emerald-50 text-emerald-800 font-bold text-[11px] rounded-xl border border-emerald-200 flex items-center justify-center gap-1 shadow-2xs select-none"
+                      className="py-1 px-2 bg-emerald-50 text-emerald-800 font-bold text-[11px] rounded-lg border border-emerald-200 flex items-center justify-center gap-1 shadow-2xs select-none"
                     >
-                      <Zap size={13} className="text-emerald-600" />
+                      <Zap size={12} className="text-emerald-600" />
                       <span>تسليم فوري</span>
                     </div>
                   )}
                 </div>
               )}
 
-              {/* Settlement / Financial Totals & Payment Section */}
-              <div className="p-3.5 bg-white border-t border-slate-200 space-y-2.5 shrink-0">
-                {/* Financial summary breakdown */}
-                <div className="space-y-1 text-xs">
+              {/* Settlement / Financial Totals & Payment Section - Compact & High Contrast */}
+              <div className="p-2.5 bg-white border-t border-slate-200 space-y-2 shrink-0">
+                {/* Financial summary breakdown (Compact) */}
+                <div className="space-y-0.5 text-[11px] pb-1 border-b border-slate-100">
                   <div className="flex justify-between text-slate-600">
                     <span>المجموع الفرعي:</span>
                     <span className="font-mono font-bold text-slate-800">{subtotal.toFixed(2)} ج.م</span>
@@ -5266,7 +5247,7 @@ export const CashierPOS: React.FC = () => {
                   {discountAmount > 0 && (
                     <div className="flex justify-between text-amber-700 font-bold">
                       <span className="flex items-center gap-1">
-                        <Tag size={12} className="text-amber-600" />
+                        <Tag size={11} className="text-amber-600" />
                         <span>الخصم:</span>
                       </span>
                       <span className="font-mono text-amber-700 font-bold">-{discountAmount.toFixed(2)} ج.م</span>
@@ -5274,86 +5255,86 @@ export const CashierPOS: React.FC = () => {
                   )}
 
                   {serviceFeeAmount > 0 && (
-                    <div className="flex justify-between text-slate-600">
+                    <div className="flex justify-between text-slate-500">
                       <span>خدمة الصالة ({serviceFeeRate}%):</span>
-                      <span className="font-mono text-slate-800">+{serviceFeeAmount.toFixed(2)} ج.م</span>
+                      <span className="font-mono text-slate-700">+{serviceFeeAmount.toFixed(2)} ج.م</span>
                     </div>
                   )}
 
                   {taxAmount > 0 && (
-                    <div className="flex justify-between text-slate-600">
+                    <div className="flex justify-between text-slate-500">
                       <span>ضريبة القيمة المضافة ({taxRate}%):</span>
-                      <span className="font-mono text-slate-800">+{taxAmount.toFixed(2)} ج.م</span>
+                      <span className="font-mono text-slate-700">+{taxAmount.toFixed(2)} ج.م</span>
                     </div>
                   )}
 
                   {deliveryFee > 0 && (
-                    <div className="flex justify-between text-slate-600">
+                    <div className="flex justify-between text-slate-500">
                       <span>رسوم التوصيل:</span>
-                      <span className="font-mono text-slate-800">+{deliveryFee.toFixed(2)} ج.م</span>
+                      <span className="font-mono text-slate-700">+{deliveryFee.toFixed(2)} ج.م</span>
                     </div>
                   )}
-
-                  {/* Grand Total matching reference image */}
-                  <div className="flex justify-between items-center pt-2 border-t border-slate-200 text-sm font-bold">
-                    <span className="text-slate-900 font-black">الإجمالي:</span>
-                    <span className="font-mono text-xl font-black text-emerald-600">
-                      {finalTotal.toFixed(2)} <span className="text-xs font-sans">ج.م</span>
-                    </span>
-                  </div>
                 </div>
 
-                {/* Payment Method Selector */}
-                <div className="grid grid-cols-4 gap-1 pt-0.5">
+                {/* Grand Total */}
+                <div className="flex justify-between items-center">
+                  <span className="text-slate-900 font-black text-xs sm:text-sm">الإجمالي:</span>
+                  <span className="font-mono text-lg sm:text-xl font-black text-emerald-600">
+                    {finalTotal.toFixed(2)} <span className="text-[11px] font-sans">ج.م</span>
+                  </span>
+                </div>
+
+                {/* Payment Method Selector (Sleek 1-line buttons) */}
+                <div className="grid grid-cols-4 gap-1">
                   <button
                     type="button"
                     onClick={() => setPaymentMethod('cash')}
-                    className={`py-1.5 rounded-xl text-xs font-bold flex flex-col items-center justify-center gap-0.5 transition-all cursor-pointer ${
+                    className={`py-1 rounded-lg text-[11px] font-bold flex items-center justify-center gap-1 transition-all cursor-pointer ${
                       paymentMethod === 'cash' ? 'bg-emerald-600 text-white shadow-xs' : 'bg-slate-50 text-slate-600 hover:text-slate-900 border border-slate-200'
                     }`}
                   >
-                    <DollarSign size={13} />
+                    <DollarSign size={12} />
                     <span>كاش</span>
                   </button>
 
                   <button
                     type="button"
                     onClick={() => setPaymentMethod('card')}
-                    className={`py-1.5 rounded-xl text-xs font-bold flex flex-col items-center justify-center gap-0.5 transition-all cursor-pointer ${
+                    className={`py-1 rounded-lg text-[11px] font-bold flex items-center justify-center gap-1 transition-all cursor-pointer ${
                       paymentMethod === 'card' ? 'bg-blue-600 text-white shadow-xs' : 'bg-slate-50 text-slate-600 hover:text-slate-900 border border-slate-200'
                     }`}
                   >
-                    <CreditCard size={13} />
+                    <CreditCard size={12} />
                     <span>فيزا</span>
                   </button>
 
                   <button
                     type="button"
                     onClick={() => setPaymentMethod('wallet')}
-                    className={`py-1.5 rounded-xl text-xs font-bold flex flex-col items-center justify-center gap-0.5 transition-all cursor-pointer ${
+                    className={`py-1 rounded-lg text-[11px] font-bold flex items-center justify-center gap-1 transition-all cursor-pointer ${
                       paymentMethod === 'wallet' ? 'bg-purple-600 text-white shadow-xs' : 'bg-slate-50 text-slate-600 hover:text-slate-900 border border-slate-200'
                     }`}
                   >
-                    <Smartphone size={13} />
+                    <Smartphone size={12} />
                     <span>إنستاباي</span>
                   </button>
 
                   <button
                     type="button"
                     onClick={() => setIsSplitPaymentModalOpen(true)}
-                    className={`py-1.5 rounded-xl text-xs font-bold flex flex-col items-center justify-center gap-0.5 transition-all cursor-pointer ${
+                    className={`py-1 rounded-lg text-[11px] font-bold flex items-center justify-center gap-1 transition-all cursor-pointer ${
                       paymentMethod === 'split' ? 'bg-indigo-600 text-white shadow-xs' : 'bg-slate-50 text-slate-600 hover:text-slate-900 border border-slate-200'
                     }`}
                   >
-                    <Split size={13} />
+                    <Split size={12} />
                     <span>مقسم</span>
                   </button>
                 </div>
 
                 {/* Quick Cash Tendered Buttons if Cash */}
                 {paymentMethod === 'cash' && (
-                  <div className="space-y-1 pt-0.5">
-                    <div className="flex items-center justify-between text-[11px] text-slate-500">
+                  <div className="space-y-1 bg-slate-50 p-1.5 rounded-lg border border-slate-200">
+                    <div className="flex items-center justify-between text-[10px] text-slate-500">
                       <span>المبلغ المستلم:</span>
                       <div className="flex items-center gap-1">
                         {[50, 100, 200, 500].map(val => (
@@ -5361,7 +5342,7 @@ export const CashierPOS: React.FC = () => {
                             key={val}
                             type="button"
                             onClick={() => setCashTendered(val.toString())}
-                            className="px-1.5 py-0.5 bg-slate-100 hover:bg-slate-200 border border-slate-200 rounded text-slate-700 font-mono text-[10px] cursor-pointer"
+                            className="px-1.5 py-0.2 bg-white hover:bg-slate-200 border border-slate-200 rounded text-slate-700 font-mono text-[9px] cursor-pointer"
                           >
                             {val}
                           </button>
@@ -5369,33 +5350,33 @@ export const CashierPOS: React.FC = () => {
                       </div>
                     </div>
 
-                    <div className="grid grid-cols-2 gap-2">
+                    <div className="grid grid-cols-2 gap-1.5">
                       <input
                         type="number"
                         placeholder="المدفوع..."
                         value={cashTendered}
                         onChange={e => setCashTendered(e.target.value)}
-                        className="w-full bg-slate-50 border border-slate-300 rounded-xl px-2.5 py-1 text-xs font-mono font-bold text-slate-800 outline-none focus:border-emerald-500 shadow-inner"
+                        className="w-full bg-white border border-slate-300 rounded-lg px-2 py-0.5 text-xs font-mono font-bold text-slate-800 outline-none focus:border-emerald-500 shadow-inner"
                       />
-                      <div className="bg-slate-50 border border-slate-200 rounded-xl px-2.5 py-1 flex items-center justify-between text-xs">
-                        <span className="text-slate-500 text-[10px]">الباقي:</span>
-                        <span className="font-mono font-bold text-emerald-600">{changeDue.toFixed(2)} ج.م</span>
+                      <div className="bg-white border border-slate-200 rounded-lg px-2 py-0.5 flex items-center justify-between text-xs">
+                        <span className="text-slate-400 text-[10px]">الباقي:</span>
+                        <span className="font-mono font-bold text-emerald-600 text-xs">{changeDue.toFixed(2)} ج.م</span>
                       </div>
                     </div>
                   </div>
                 )}
 
-                {/* 🌟 Final Action Buttons matching Reference Image: طباعة الطلب (Dark Navy) & إكمال الطلب (Bright Green) */}
-                <div className="flex items-center gap-2 pt-1">
+                {/* Final Action Buttons: Print & Complete Checkout */}
+                <div className="flex items-center gap-1.5 pt-0.5">
                   {/* طباعة الفاتورة */}
                   <button
                     type="button"
                     onClick={handlePrintCurrentCart}
                     disabled={cart.length === 0}
-                    className="p-3 bg-slate-100 hover:bg-slate-200 disabled:opacity-40 text-slate-700 font-bold rounded-xl flex items-center justify-center border border-slate-200 transition-all cursor-pointer shadow-xs"
+                    className="p-2.5 bg-slate-100 hover:bg-slate-200 disabled:opacity-40 text-slate-700 font-bold rounded-xl flex items-center justify-center border border-slate-200 transition-all cursor-pointer shadow-xs shrink-0"
                     title="طباعة فاتورة الطلب الحالي فوراً"
                   >
-                    <Printer size={18} />
+                    <Printer size={16} />
                   </button>
 
                   {/* إكمال ودفع الفاتورة */}
@@ -5403,12 +5384,12 @@ export const CashierPOS: React.FC = () => {
                     type="button"
                     onClick={() => handleProcessPayment()}
                     disabled={cart.length === 0}
-                    className="flex-1 py-3 px-4 bg-emerald-600 hover:bg-emerald-700 disabled:opacity-40 text-white font-black text-sm rounded-xl flex items-center justify-center gap-2 shadow-md shadow-emerald-600/20 active:scale-98 transition-all cursor-pointer"
+                    className="flex-1 py-2.5 px-3 bg-emerald-600 hover:bg-emerald-700 disabled:opacity-40 text-white font-black text-xs sm:text-sm rounded-xl flex items-center justify-center gap-1.5 shadow-md shadow-emerald-600/20 active:scale-98 transition-all cursor-pointer"
                     title="تحصيل القيمة وتسجيل الفاتورة رسمياً"
                   >
-                    <CheckCircle2 size={18} />
+                    <CheckCircle2 size={16} />
                     <span>إكمال ودفع الفاتورة</span>
-                    <span className="font-mono text-xs bg-emerald-700/60 px-2 py-0.5 rounded-lg mr-1">
+                    <span className="font-mono text-xs bg-emerald-700/60 px-1.5 py-0.5 rounded-md mr-1">
                       {finalTotal.toFixed(2)} ج.م
                     </span>
                   </button>
