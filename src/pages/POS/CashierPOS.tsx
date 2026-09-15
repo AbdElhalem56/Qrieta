@@ -5190,9 +5190,9 @@ export const CashierPOS: React.FC = () => {
                 )}
               </div>
 
-              {/* Quick Actions (Hold / Split Bill / Send to Kitchen) - Compact Bar */}
+              {/* Quick Actions (Hold / Split Bill) - Compact Bar */}
               {cart.length > 0 && (
-                <div className="px-2.5 py-1 bg-slate-100/90 border-t border-slate-200 grid grid-cols-3 gap-1.5 shrink-0">
+                <div className="px-2.5 py-1 bg-slate-100/90 border-t border-slate-200 grid grid-cols-2 gap-1.5 shrink-0">
                   <button
                     type="button"
                     onClick={handleHoldBill}
@@ -5200,7 +5200,7 @@ export const CashierPOS: React.FC = () => {
                     title="تعليق الفاتورة والعودة لها لاحقاً"
                   >
                     <PauseCircle size={12} className="text-amber-600" />
-                    <span>تعليق</span>
+                    <span>تعليق الفاتورة</span>
                   </button>
 
                   <button
@@ -5210,28 +5210,8 @@ export const CashierPOS: React.FC = () => {
                     title="تقسيم الفاتورة بالتساوي أو بالأصناف"
                   >
                     <Split size={12} className="text-indigo-600" />
-                    <span>تقسيم</span>
+                    <span>تقسيم الفاتورة</span>
                   </button>
-
-                  {restaurantServices.kitchen_enabled ? (
-                    <button
-                      type="button"
-                      onClick={handleSendOrderToKitchenAndPrint}
-                      disabled={cart.length === 0}
-                      className="py-1 bg-amber-50 hover:bg-amber-100 text-amber-800 font-bold text-[11px] rounded-lg border border-amber-200 flex items-center justify-center gap-1 transition-all cursor-pointer shadow-2xs disabled:opacity-40"
-                      title="إرسال الطلب للمطبخ وطباعة بون التشغيل تلقائياً"
-                    >
-                      <ChefHat size={12} className="text-amber-600" />
-                      <span>إرسال بون</span>
-                    </button>
-                  ) : (
-                    <div
-                      className="py-1 px-2 bg-emerald-50 text-emerald-800 font-bold text-[11px] rounded-lg border border-emerald-200 flex items-center justify-center gap-1 shadow-2xs select-none"
-                    >
-                      <Zap size={12} className="text-emerald-600" />
-                      <span>تسليم فوري</span>
-                    </div>
-                  )}
                 </div>
               )}
 
@@ -5366,7 +5346,7 @@ export const CashierPOS: React.FC = () => {
                   </div>
                 )}
 
-                {/* Final Action Buttons: Print & Complete Checkout */}
+                {/* Final Action Buttons: Print, Send to Kitchen Unpaid & Complete Checkout */}
                 <div className="flex items-center gap-1.5 pt-0.5">
                   {/* طباعة الفاتورة */}
                   <button
@@ -5379,17 +5359,29 @@ export const CashierPOS: React.FC = () => {
                     <Printer size={16} />
                   </button>
 
+                  {/* إرسال للمطبخ دون الدفع */}
+                  <button
+                    type="button"
+                    onClick={handleSendOrderToKitchenAndPrint}
+                    disabled={cart.length === 0}
+                    className="flex-1 py-2.5 px-2 bg-amber-500 hover:bg-amber-600 disabled:opacity-40 text-slate-950 font-black text-xs rounded-xl flex items-center justify-center gap-1.5 shadow-sm active:scale-98 transition-all cursor-pointer text-center"
+                    title="إرسال الطلب للمطبخ دون الدفع وطباعة بون المطبخ"
+                  >
+                    <ChefHat size={16} className="shrink-0 text-slate-950" />
+                    <span className="truncate">إرسال للمطبخ دون الدفع</span>
+                  </button>
+
                   {/* إكمال ودفع الفاتورة */}
                   <button
                     type="button"
                     onClick={() => handleProcessPayment()}
                     disabled={cart.length === 0}
-                    className="flex-1 py-2.5 px-3 bg-emerald-600 hover:bg-emerald-700 disabled:opacity-40 text-white font-black text-xs sm:text-sm rounded-xl flex items-center justify-center gap-1.5 shadow-md shadow-emerald-600/20 active:scale-98 transition-all cursor-pointer"
+                    className="flex-1 py-2.5 px-2 bg-emerald-600 hover:bg-emerald-700 disabled:opacity-40 text-white font-black text-xs rounded-xl flex items-center justify-center gap-1 shadow-md shadow-emerald-600/20 active:scale-98 transition-all cursor-pointer text-center"
                     title="تحصيل القيمة وتسجيل الفاتورة رسمياً"
                   >
-                    <CheckCircle2 size={16} />
-                    <span>إكمال ودفع الفاتورة</span>
-                    <span className="font-mono text-xs bg-emerald-700/60 px-1.5 py-0.5 rounded-md mr-1">
+                    <CheckCircle2 size={16} className="shrink-0" />
+                    <span className="truncate">إكمال ودفع الفاتورة</span>
+                    <span className="font-mono text-[11px] bg-emerald-700/60 px-1 py-0.5 rounded-md mr-1 shrink-0 whitespace-nowrap">
                       {finalTotal.toFixed(2)} ج.م
                     </span>
                   </button>
