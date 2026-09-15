@@ -67,6 +67,8 @@ export const TaxReceiptModal: React.FC<TaxReceiptModalProps> = ({
     unpaid: 'غير مسدد / آجل',
   }[receiptData.paymentMethod] || 'نقداً';
 
+  const hasTax = (receiptData.taxRate !== undefined && Number(receiptData.taxRate) > 0) || (receiptData.taxAmount !== undefined && Number(receiptData.taxAmount) > 0);
+
   return (
     <div className="fixed inset-0 z-[200] flex items-center justify-center p-4 bg-black/75 backdrop-blur-sm overflow-y-auto">
       {/* Container with Print CSS specific rules */}
@@ -121,22 +123,30 @@ export const TaxReceiptModal: React.FC<TaxReceiptModalProps> = ({
                 </div>
               )}
               <h1 className="text-lg font-black text-gray-900 tracking-tight">{receiptData.restaurantName}</h1>
-              <p className="text-[11px] font-bold text-gray-600 mt-0.5">فاتورة ضريبية مبسطة (إيصال إلكتروني)</p>
-              <p className="text-[10px] text-gray-500 mt-0.5">Simplified Tax Invoice</p>
+              <p className="text-[11px] font-bold text-gray-600 mt-0.5">
+                {hasTax ? 'فاتورة ضريبية مبسطة (إيصال إلكتروني)' : 'فاتورة حساب (إيصال طلب)'}
+              </p>
+              <p className="text-[10px] text-gray-500 mt-0.5">
+                {hasTax ? 'Simplified Tax Invoice' : 'Order Receipt'}
+              </p>
 
-              {/* Tax Registration Details */}
-              <div className="mt-2 text-[10px] text-gray-700 bg-gray-100 py-1.5 px-2 rounded-lg border border-gray-200 space-y-0.5 font-mono">
-                <div className="flex justify-between font-bold">
-                  <span>الرقم الضريبي:</span>
-                  <span className="tracking-wider">{receiptData.taxNumber || 'غير مسجل'}</span>
+              {/* Tax Registration Details (Only when tax registered) */}
+              {(hasTax || receiptData.taxNumber) && (
+                <div className="mt-2 text-[10px] text-gray-700 bg-gray-100 py-1.5 px-2 rounded-lg border border-gray-200 space-y-0.5 font-mono">
+                  {hasTax && (
+                    <div className="flex justify-between font-bold">
+                      <span>الرقم الضريبي:</span>
+                      <span className="tracking-wider">{receiptData.taxNumber || 'غير مسجل'}</span>
+                    </div>
+                  )}
+                  {receiptData.commercialRegistration && (
+                    <div className="flex justify-between">
+                      <span>السجل التجاري:</span>
+                      <span>{receiptData.commercialRegistration}</span>
+                    </div>
+                  )}
                 </div>
-                {receiptData.commercialRegistration && (
-                  <div className="flex justify-between">
-                    <span>السجل التجاري:</span>
-                    <span>{receiptData.commercialRegistration}</span>
-                  </div>
-                )}
-              </div>
+              )}
 
               {receiptData.branchAddress && (
                 <p className="text-[10px] text-gray-500 mt-1 flex items-center justify-center gap-1">
@@ -242,7 +252,7 @@ export const TaxReceiptModal: React.FC<TaxReceiptModalProps> = ({
             {/* Financial Summary & Tax Breakdown */}
             <div className="py-2.5 border-b-2 border-dashed border-gray-400 text-[11px] space-y-1">
               <div className="flex justify-between text-gray-600">
-                <span>المجموع الفرعي (قبل الضريبة):</span>
+                <span>{hasTax ? 'المجموع الفرعي (قبل الضريبة):' : 'المجموع الفرعي:'}</span>
                 <span className="font-mono">{receiptData.subtotal.toFixed(2)} ج.م</span>
               </div>
 
@@ -253,11 +263,13 @@ export const TaxReceiptModal: React.FC<TaxReceiptModalProps> = ({
                 </div>
               ) : null}
 
-              {/* Egyptian VAT 14% */}
-              <div className="flex justify-between text-gray-800 font-bold bg-amber-50/70 px-1.5 py-0.5 rounded">
-                <span>ضريبة القيمة المضافة ({receiptData.taxRate || 14}% VAT):</span>
-                <span className="font-mono">{receiptData.taxAmount.toFixed(2)} ج.م</span>
-              </div>
+              {/* VAT Line - Only display when tax rate / tax amount is greater than 0 */}
+              {hasTax && (
+                <div className="flex justify-between text-gray-800 font-bold bg-amber-50/70 px-1.5 py-0.5 rounded">
+                  <span>ضريبة القيمة المضافة ({receiptData.taxRate || 14}% VAT):</span>
+                  <span className="font-mono">{receiptData.taxAmount.toFixed(2)} ج.م</span>
+                </div>
+              )}
 
               {receiptData.serviceFeeAmount && receiptData.serviceFeeAmount > 0 ? (
                 <div className="flex justify-between text-gray-600">
@@ -311,10 +323,10 @@ export const TaxReceiptModal: React.FC<TaxReceiptModalProps> = ({
                 />
               </div>
               <p className="text-[9px] font-bold text-gray-700 mt-1.5 tracking-tight">
-                امسح الرمز للتحقق من الفاتورة الضريبية
+                {hasTax ? 'امسح الرمز للتحقق من الفاتورة الضريبية' : 'امسح الرمز للتحقق من تفاصيل الطلب'}
               </p>
               <p className="text-[8px] text-gray-500">
-                منظومة الفاتورة والإيصال الإلكتروني - مصلحة الضرائب المصرية
+                {hasTax ? 'منظومة الفاتورة والإيصال الإلكتروني - مصلحة الضرائب المصرية' : 'إيصال إلكتروني معتمد - نظام إدارة المطاعم'}
               </p>
             </div>
 

@@ -1295,14 +1295,16 @@ export const CashierPOS: React.FC = () => {
   const discountedSubtotal = Math.max(0, subtotal - discountAmount);
 
   // Tax and Service Charge calculations
-  const taxRate = restaurantGeofence?.tax_rate || 14;
+  const taxRate = typeof restaurantGeofence?.tax_rate === 'number' ? restaurantGeofence.tax_rate : 14;
   const isTaxInclusive = restaurantGeofence?.is_tax_inclusive || false;
-  const serviceFeeRate = orderType === 'dine_in' ? (restaurantGeofence?.service_fee_rate || 12) : 0;
+  const serviceFeeRate = orderType === 'dine_in' ? (typeof restaurantGeofence?.service_fee_rate === 'number' ? restaurantGeofence.service_fee_rate : 12) : 0;
 
   const serviceFeeAmount = (discountedSubtotal * serviceFeeRate) / 100;
-  const taxAmount = isTaxInclusive 
-    ? (discountedSubtotal - (discountedSubtotal / (1 + (taxRate / 100))))
-    : ((discountedSubtotal + serviceFeeAmount) * taxRate) / 100;
+  const taxAmount = taxRate <= 0 
+    ? 0 
+    : (isTaxInclusive 
+        ? (discountedSubtotal - (discountedSubtotal / (1 + (taxRate / 100))))
+        : ((discountedSubtotal + serviceFeeAmount) * taxRate) / 100);
 
   const deliveryFee = orderType === 'delivery' ? (restaurantGeofence?.delivery_fee || 25) : 0;
   const finalTotal = (isTaxInclusive ? discountedSubtotal + serviceFeeAmount : discountedSubtotal + taxAmount + serviceFeeAmount) + deliveryFee + tipsAmount;
@@ -3022,7 +3024,7 @@ export const CashierPOS: React.FC = () => {
         options: Array.isArray(it.options) ? it.options : [],
       })),
       subtotal: tot - (ord.tax_amount || 0) - (ord.service_fee || 0),
-      taxRate: 14,
+      taxRate: typeof restaurantGeofence?.tax_rate === 'number' ? restaurantGeofence.tax_rate : (ord.tax_amount && ord.tax_amount > 0 ? 14 : 0),
       taxAmount: ord.tax_amount || 0,
       serviceFeeRate: 12,
       serviceFeeAmount: ord.service_fee || 0,
@@ -3640,7 +3642,7 @@ export const CashierPOS: React.FC = () => {
                                     options: it.options,
                                   })) : [],
                                   subtotal: total - (ord.tax_amount || 0) - (ord.service_fee || 0),
-                                  taxRate: 14,
+                                  taxRate: typeof restaurantGeofence?.tax_rate === 'number' ? restaurantGeofence.tax_rate : (ord.tax_amount && ord.tax_amount > 0 ? 14 : 0),
                                   taxAmount: ord.tax_amount || 0,
                                   serviceFeeRate: 12,
                                   serviceFeeAmount: ord.service_fee || 0,
@@ -5346,25 +5348,14 @@ export const CashierPOS: React.FC = () => {
                   </div>
                 )}
 
-                {/* Final Action Buttons: Print, Send to Kitchen Unpaid & Complete Checkout */}
-                <div className="flex items-center gap-1.5 pt-0.5">
-                  {/* طباعة الفاتورة */}
-                  <button
-                    type="button"
-                    onClick={handlePrintCurrentCart}
-                    disabled={cart.length === 0}
-                    className="p-2.5 bg-slate-100 hover:bg-slate-200 disabled:opacity-40 text-slate-700 font-bold rounded-xl flex items-center justify-center border border-slate-200 transition-all cursor-pointer shadow-xs shrink-0"
-                    title="طباعة فاتورة الطلب الحالي فوراً"
-                  >
-                    <Printer size={16} />
-                  </button>
-
+                {/* Final Action Buttons: Send to Kitchen Unpaid & Complete Checkout */}
+                <div className="flex items-center gap-2 pt-0.5">
                   {/* إرسال للمطبخ دون الدفع */}
                   <button
                     type="button"
                     onClick={handleSendOrderToKitchenAndPrint}
                     disabled={cart.length === 0}
-                    className="flex-1 py-2.5 px-2 bg-amber-500 hover:bg-amber-600 disabled:opacity-40 text-slate-950 font-black text-xs rounded-xl flex items-center justify-center gap-1.5 shadow-sm active:scale-98 transition-all cursor-pointer text-center"
+                    className="flex-1 py-2.5 px-2.5 bg-amber-500 hover:bg-amber-600 disabled:opacity-40 text-slate-950 font-black text-xs rounded-xl flex items-center justify-center gap-1.5 shadow-sm active:scale-98 transition-all cursor-pointer text-center"
                     title="إرسال الطلب للمطبخ دون الدفع وطباعة بون المطبخ"
                   >
                     <ChefHat size={16} className="shrink-0 text-slate-950" />
@@ -5376,12 +5367,12 @@ export const CashierPOS: React.FC = () => {
                     type="button"
                     onClick={() => handleProcessPayment()}
                     disabled={cart.length === 0}
-                    className="flex-1 py-2.5 px-2 bg-emerald-600 hover:bg-emerald-700 disabled:opacity-40 text-white font-black text-xs rounded-xl flex items-center justify-center gap-1 shadow-md shadow-emerald-600/20 active:scale-98 transition-all cursor-pointer text-center"
+                    className="flex-1 py-2.5 px-2.5 bg-emerald-600 hover:bg-emerald-700 disabled:opacity-40 text-white font-black text-xs rounded-xl flex items-center justify-center gap-1.5 shadow-md shadow-emerald-600/20 active:scale-98 transition-all cursor-pointer text-center"
                     title="تحصيل القيمة وتسجيل الفاتورة رسمياً"
                   >
                     <CheckCircle2 size={16} className="shrink-0" />
                     <span className="truncate">إكمال ودفع الفاتورة</span>
-                    <span className="font-mono text-[11px] bg-emerald-700/60 px-1 py-0.5 rounded-md mr-1 shrink-0 whitespace-nowrap">
+                    <span className="font-mono text-[11px] bg-emerald-700/60 px-1.5 py-0.5 rounded-md mr-1 shrink-0 whitespace-nowrap">
                       {finalTotal.toFixed(2)} ج.م
                     </span>
                   </button>

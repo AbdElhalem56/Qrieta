@@ -92,7 +92,7 @@ export const OrdersHistoryModal: React.FC<OrdersHistoryModalProps> = ({
         options: it.options,
       })) : [],
       subtotal: (ord.total_amount || ord.total_price || 0) - (ord.tax_amount || 0) - (ord.service_fee || 0),
-      taxRate: 14,
+      taxRate: typeof restaurantGeofence?.tax_rate === 'number' ? restaurantGeofence.tax_rate : (ord.tax_amount && ord.tax_amount > 0 ? 14 : 0),
       taxAmount: ord.tax_amount || 0,
       serviceFeeRate: 12,
       serviceFeeAmount: ord.service_fee || 0,

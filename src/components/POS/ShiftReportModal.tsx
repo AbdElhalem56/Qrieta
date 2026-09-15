@@ -269,10 +269,12 @@ export const ShiftReportModal: React.FC<ShiftReportModalProps> = ({
                   <span className="font-mono font-bold text-rose-600">-{totalCashOut.toFixed(2)} ج.م</span>
                 </div>
 
-                <div className="flex justify-between py-1 border-b border-slate-100 text-slate-600">
-                  <span>ضريبة القيمة المضافة (Tax / VAT 14%):</span>
-                  <span className="font-mono font-bold text-slate-700">{shift.totalTax.toFixed(2)} ج.م</span>
-                </div>
+                {shift.totalTax > 0 && (
+                  <div className="flex justify-between py-1 border-b border-slate-100 text-slate-600">
+                    <span>ضريبة القيمة المضافة (Tax / VAT):</span>
+                    <span className="font-mono font-bold text-slate-700">{shift.totalTax.toFixed(2)} ج.م</span>
+                  </div>
+                )}
 
                 {shift.totalServiceFee > 0 && (
                   <div className="flex justify-between py-1 border-b border-slate-100 text-slate-600">
@@ -474,7 +476,9 @@ export const ShiftReportModal: React.FC<ShiftReportModalProps> = ({
                   <div className="flex justify-between text-[10px]"><span>- مبيعات كاش ({effectiveCashCount}):</span><span>{effectiveCashSales.toFixed(2)} ج.م</span></div>
                   <div className="flex justify-between text-[10px]"><span>- مبيعات فيزا ({effectiveCardCount}):</span><span>{effectiveCardSales.toFixed(2)} ج.م</span></div>
                   <div className="flex justify-between text-[10px]"><span>- محافظ / إنستاباي ({effectiveWalletCount}):</span><span>{effectiveWalletSales.toFixed(2)} ج.م</span></div>
-                  <div className="flex justify-between text-[10px]"><span>- ضريبة ق.م 14%:</span><span>{shift.totalTax.toFixed(2)} ج.م</span></div>
+                  {shift.totalTax > 0 && (
+                    <div className="flex justify-between text-[10px]"><span>- ضريبة القيمة المضافة:</span><span>{shift.totalTax.toFixed(2)} ج.م</span></div>
+                  )}
                 </div>
 
                 {/* Orders breakdown in thermal preview */}
@@ -601,10 +605,12 @@ export const ShiftReportModal: React.FC<ShiftReportModalProps> = ({
                 <span>- محافظ / إنستاباي ({effectiveWalletCount}):</span>
                 <span className="font-mono">{effectiveWalletSales.toFixed(2)} ج.م</span>
               </div>
-              <div className="flex justify-between text-[10px]">
-                <span>- ضريبة القيمة المضافة 14%:</span>
-                <span className="font-mono">{shift.totalTax.toFixed(2)} ج.م</span>
-              </div>
+              {shift.totalTax > 0 && (
+                <div className="flex justify-between text-[10px]">
+                  <span>- ضريبة القيمة المضافة:</span>
+                  <span className="font-mono">{shift.totalTax.toFixed(2)} ج.م</span>
+                </div>
+              )}
               {shift.totalServiceFee > 0 && (
                 <div className="flex justify-between text-[10px]">
                   <span>- خدمة الصالة:</span>
