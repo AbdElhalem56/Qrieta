@@ -92,9 +92,15 @@ export const OrdersHistoryModal: React.FC<OrdersHistoryModalProps> = ({
         options: it.options,
       })) : [],
       subtotal: (ord.total_amount || ord.total_price || 0) - (ord.tax_amount || 0) - (ord.service_fee || 0),
-      taxRate: typeof restaurantGeofence?.tax_rate === 'number' ? restaurantGeofence.tax_rate : (ord.tax_amount && ord.tax_amount > 0 ? 14 : 0),
+      taxRate: typeof restaurantGeofence?.tax_rate === 'number' 
+        ? restaurantGeofence.tax_rate 
+        : (ord.tax_amount && ord.tax_amount > 0 ? 14 : 0),
       taxAmount: ord.tax_amount || 0,
-      serviceFeeRate: 12,
+      serviceFeeRate: typeof restaurantGeofence?.service_fee_percentage === 'number'
+        ? restaurantGeofence.service_fee_percentage
+        : (typeof restaurantGeofence?.service_fee_rate === 'number'
+            ? restaurantGeofence.service_fee_rate
+            : (ord.service_fee && ord.service_fee > 0 ? 12 : 0)),
       serviceFeeAmount: ord.service_fee || 0,
       deliveryFee: ord.delivery_fee || 0,
       discountAmount: ord.discount_amount || 0,

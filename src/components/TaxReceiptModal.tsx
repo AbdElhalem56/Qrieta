@@ -266,7 +266,7 @@ export const TaxReceiptModal: React.FC<TaxReceiptModalProps> = ({
               {/* VAT Line - Only display when tax rate / tax amount is greater than 0 */}
               {hasTax && (
                 <div className="flex justify-between text-gray-800 font-bold bg-amber-50/70 px-1.5 py-0.5 rounded">
-                  <span>ضريبة القيمة المضافة ({receiptData.taxRate || 14}% VAT):</span>
+                  <span>ضريبة القيمة المضافة ({receiptData.taxRate ?? 0}% VAT):</span>
                   <span className="font-mono">{receiptData.taxAmount.toFixed(2)} ج.م</span>
                 </div>
               )}

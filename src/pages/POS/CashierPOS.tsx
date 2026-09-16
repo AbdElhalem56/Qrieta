@@ -12,7 +12,7 @@ import {
   RestaurantServicePreset,
   getRestaurantPresetDef 
 } from '../../lib/supabase';
-import { fetchAllServerGeofences, RestaurantGeofence } from '../../lib/geoHelper';
+import { fetchAllServerGeofences, getLocalRestaurantGeofence, RestaurantGeofence } from '../../lib/geoHelper';
 import { TaxReceiptModal } from '../../components/TaxReceiptModal';
 import { TaxReceiptData, generateInvoiceNumber } from '../../lib/taxReceiptHelper';
 import { formatCurrency, cn } from '../../lib/utils';
@@ -581,10 +581,44 @@ export const CashierPOS: React.FC = () => {
             }
 
             setLockedRestaurantId(targetRest.id);
-            setSelectedRestaurant(targetRest);
-            const geo = geofences[targetRest.id] || null;
-            setRestaurantGeofence(geo);
-            await loadRestaurantDetails(targetRest.id, geo, targetRest);
+            const geo = geofences[targetRest.id] || (targetRest.slug ? geofences[targetRest.slug] : null) || getLocalRestaurantGeofence(targetRest.id) || (targetRest.slug ? getLocalRestaurantGeofence(targetRest.slug) : null);
+            
+            const resolvedTax = typeof geo?.tax_rate === 'number'
+              ? geo.tax_rate
+              : (typeof (targetRest as any).tax_rate === 'number' ? (targetRest as any).tax_rate : 0);
+
+            const resolvedService = typeof geo?.service_fee_percentage === 'number'
+              ? geo.service_fee_percentage
+              : (typeof geo?.service_fee_rate === 'number'
+                  ? geo.service_fee_rate
+                  : (typeof (targetRest as any).service_fee_percentage === 'number' ? (targetRest as any).service_fee_percentage : 0));
+
+            const resolvedGeo: RestaurantGeofence = {
+              ...(geo || {}),
+              tax_rate: resolvedTax,
+              service_fee_percentage: resolvedService,
+              service_fee_rate: resolvedService,
+              tax_number: geo?.tax_number || (targetRest as any).tax_number || '',
+              commercial_registration: geo?.commercial_registration || (targetRest as any).commercial_registration || '',
+              address: geo?.address || (targetRest as any).address || '',
+              phone: geo?.phone || (targetRest as any).phone || '',
+              invoice_prefix: geo?.invoice_prefix || (targetRest as any).invoice_prefix || 'INV',
+            };
+
+            const mergedRest: Restaurant = {
+              ...targetRest,
+              tax_rate: resolvedTax,
+              service_fee_percentage: resolvedService,
+              tax_number: resolvedGeo.tax_number,
+              commercial_registration: resolvedGeo.commercial_registration,
+              address: resolvedGeo.address,
+              phone: resolvedGeo.phone,
+              invoice_prefix: resolvedGeo.invoice_prefix,
+            };
+
+            setSelectedRestaurant(mergedRest);
+            setRestaurantGeofence(resolvedGeo);
+            await loadRestaurantDetails(targetRest.id, resolvedGeo, mergedRest);
           } else {
             // If candidate exists, ensure details are loaded
             await loadRestaurantDetails(initialCandidateId, null, null);
@@ -1294,10 +1328,26 @@ export const CashierPOS: React.FC = () => {
 
   const discountedSubtotal = Math.max(0, subtotal - discountAmount);
 
-  // Tax and Service Charge calculations
-  const taxRate = typeof restaurantGeofence?.tax_rate === 'number' ? restaurantGeofence.tax_rate : 14;
-  const isTaxInclusive = restaurantGeofence?.is_tax_inclusive || false;
-  const serviceFeeRate = orderType === 'dine_in' ? (typeof restaurantGeofence?.service_fee_rate === 'number' ? restaurantGeofence.service_fee_rate : 12) : 0;
+  // Tax and Service Charge calculations (Respects restaurant-specific settings & 0% configuration)
+  const taxRate = typeof restaurantGeofence?.tax_rate === 'number' 
+    ? restaurantGeofence.tax_rate 
+    : (typeof (selectedRestaurant as any)?.tax_rate === 'number' 
+        ? (selectedRestaurant as any).tax_rate 
+        : 0);
+
+  const isTaxInclusive = Boolean(restaurantGeofence?.is_tax_inclusive ?? (selectedRestaurant as any)?.is_tax_inclusive);
+
+  const rawServiceFee = typeof restaurantGeofence?.service_fee_percentage === 'number'
+    ? restaurantGeofence.service_fee_percentage
+    : (typeof restaurantGeofence?.service_fee_rate === 'number'
+        ? restaurantGeofence.service_fee_rate
+        : (typeof (selectedRestaurant as any)?.service_fee_percentage === 'number'
+            ? (selectedRestaurant as any).service_fee_percentage
+            : (typeof (selectedRestaurant as any)?.service_fee_rate === 'number'
+                ? (selectedRestaurant as any).service_fee_rate
+                : 0)));
+
+  const serviceFeeRate = orderType === 'dine_in' ? rawServiceFee : 0;
 
   const serviceFeeAmount = (discountedSubtotal * serviceFeeRate) / 100;
   const taxAmount = taxRate <= 0 
@@ -3024,9 +3074,19 @@ export const CashierPOS: React.FC = () => {
         options: Array.isArray(it.options) ? it.options : [],
       })),
       subtotal: tot - (ord.tax_amount || 0) - (ord.service_fee || 0),
-      taxRate: typeof restaurantGeofence?.tax_rate === 'number' ? restaurantGeofence.tax_rate : (ord.tax_amount && ord.tax_amount > 0 ? 14 : 0),
+      taxRate: typeof restaurantGeofence?.tax_rate === 'number' 
+        ? restaurantGeofence.tax_rate 
+        : (typeof (selectedRestaurant as any)?.tax_rate === 'number' 
+            ? (selectedRestaurant as any).tax_rate 
+            : (ord.tax_amount && ord.tax_amount > 0 ? 14 : 0)),
       taxAmount: ord.tax_amount || 0,
-      serviceFeeRate: 12,
+      serviceFeeRate: typeof restaurantGeofence?.service_fee_percentage === 'number'
+        ? restaurantGeofence.service_fee_percentage
+        : (typeof restaurantGeofence?.service_fee_rate === 'number'
+            ? restaurantGeofence.service_fee_rate
+            : (typeof (selectedRestaurant as any)?.service_fee_percentage === 'number'
+                ? (selectedRestaurant as any).service_fee_percentage
+                : (ord.service_fee && ord.service_fee > 0 ? 12 : 0))),
       serviceFeeAmount: ord.service_fee || 0,
       deliveryFee: ord.delivery_fee || 0,
       discountAmount: ord.discount_amount || 0,
@@ -3642,9 +3702,19 @@ export const CashierPOS: React.FC = () => {
                                     options: it.options,
                                   })) : [],
                                   subtotal: total - (ord.tax_amount || 0) - (ord.service_fee || 0),
-                                  taxRate: typeof restaurantGeofence?.tax_rate === 'number' ? restaurantGeofence.tax_rate : (ord.tax_amount && ord.tax_amount > 0 ? 14 : 0),
+                                  taxRate: typeof restaurantGeofence?.tax_rate === 'number' 
+                                    ? restaurantGeofence.tax_rate 
+                                    : (typeof (selectedRestaurant as any)?.tax_rate === 'number' 
+                                        ? (selectedRestaurant as any).tax_rate 
+                                        : (ord.tax_amount && ord.tax_amount > 0 ? 14 : 0)),
                                   taxAmount: ord.tax_amount || 0,
-                                  serviceFeeRate: 12,
+                                  serviceFeeRate: typeof restaurantGeofence?.service_fee_percentage === 'number'
+                                    ? restaurantGeofence.service_fee_percentage
+                                    : (typeof restaurantGeofence?.service_fee_rate === 'number'
+                                        ? restaurantGeofence.service_fee_rate
+                                        : (typeof (selectedRestaurant as any)?.service_fee_percentage === 'number'
+                                            ? (selectedRestaurant as any).service_fee_percentage
+                                            : (ord.service_fee && ord.service_fee > 0 ? 12 : 0))),
                                   serviceFeeAmount: ord.service_fee || 0,
                                   deliveryFee: ord.delivery_fee || 0,
                                   discountAmount: ord.discount_amount || 0,

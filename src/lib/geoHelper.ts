@@ -6,6 +6,8 @@ export interface RestaurantGeofence {
   longitude?: number | null;
   geofence_radius_meters?: number;
   service_fee_percentage?: number;
+  service_fee_rate?: number; // Alias for service fee rate
+  is_tax_inclusive?: boolean;
   is_prepaid?: boolean;
   payment_model?: 'prepaid' | 'postpaid';
   // Modular System Services & Presets
@@ -19,10 +21,11 @@ export interface RestaurantGeofence {
   // POS & Egyptian Tax Authority Settings
   tax_number?: string; // الرقم الضريبي / رقم التسجيل الضريبي (9 أرقام)
   commercial_registration?: string; // السجل التجاري
-  tax_rate?: number; // نسبة ضريبة القيمة المضافة الافتراضية 14%
+  tax_rate?: number; // نسبة ضريبة القيمة المضافة
   invoice_prefix?: string; // بادئة الفاتورة مثل INV- أو EGY-
   address?: string; // عنوان الفرع/المطعم
   phone?: string; // هاتف المطعم
+  delivery_fee?: number;
 }
 
 // Calculate distance in meters between two GPS coordinates using Haversine formula
@@ -122,16 +125,23 @@ export async function syncRestaurantGeofence(restaurantId: string, geofence: Res
 }
 
 export async function fetchAllServerGeofences(): Promise<Record<string, RestaurantGeofence>> {
+  let localData: Record<string, RestaurantGeofence> = {};
+  try {
+    const raw = localStorage.getItem(GEOFENCE_STORAGE_KEY);
+    if (raw) localData = JSON.parse(raw);
+  } catch (e) {}
+
   try {
     const res = await fetch('/api/restaurants/geofence');
     if (res.ok) {
       const data = await res.json();
       if (data && data.geofences) {
-        // Cache locally
+        // Merge server geofences with local cache, preserving any local entries
+        const merged = { ...localData, ...data.geofences };
         try {
-          localStorage.setItem(GEOFENCE_STORAGE_KEY, JSON.stringify(data.geofences));
+          localStorage.setItem(GEOFENCE_STORAGE_KEY, JSON.stringify(merged));
         } catch (e) {}
-        return data.geofences;
+        return merged;
       }
     }
   } catch (e) {
@@ -139,10 +149,5 @@ export async function fetchAllServerGeofences(): Promise<Record<string, Restaura
   }
   
   // Fallback to local storage
-  try {
-    const raw = localStorage.getItem(GEOFENCE_STORAGE_KEY);
-    return raw ? JSON.parse(raw) : {};
-  } catch (e) {
-    return {};
-  }
+  return localData;
 }

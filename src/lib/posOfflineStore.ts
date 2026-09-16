@@ -289,6 +289,8 @@ export function getInitialOfflineFallbackData(restaurantId: string): {
     logo_url: '',
     primary_color: '#f59e0b',
     secondary_color: '#1e293b',
+    service_fee_percentage: 0,
+    tax_rate: 0,
   };
 
   return {

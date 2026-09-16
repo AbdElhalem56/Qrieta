@@ -287,7 +287,7 @@ export default function SuperAdminDashboard() {
             waiter_enabled: g?.waiter_enabled !== undefined ? g.waiter_enabled : (r.waiter_enabled ?? true),
             tax_number: g?.tax_number || r.tax_number || '',
             commercial_registration: g?.commercial_registration || r.commercial_registration || '',
-            tax_rate: g?.tax_rate !== undefined ? g.tax_rate : (r.tax_rate ?? 14),
+            tax_rate: g?.tax_rate !== undefined ? g.tax_rate : (r.tax_rate !== undefined ? r.tax_rate : 0),
             invoice_prefix: g?.invoice_prefix || r.invoice_prefix || 'INV',
             address: g?.address || r.address || '',
             phone: g?.phone || r.phone || '',
@@ -516,16 +516,21 @@ export default function SuperAdminDashboard() {
         ? Number(editingRes.service_fee_percentage)
         : 0;
 
+      const taxRate = editingRes.tax_rate !== undefined && editingRes.tax_rate !== null
+        ? Number(editingRes.tax_rate)
+        : 0;
+
       const isPrepaid = editingRes.is_prepaid !== undefined 
         ? !!editingRes.is_prepaid 
         : editingRes.payment_model === 'prepaid';
 
       const geofencePayload = {
         geofence_enabled: !!editingRes.geofence_enabled,
-        latitude: editingRes.latitude !== undefined && editingRes.latitude !== null && editingRes.latitude !== '' ? Number(editingRes.latitude) : null,
-        longitude: editingRes.longitude !== undefined && editingRes.longitude !== null && editingRes.longitude !== '' ? Number(editingRes.longitude) : null,
+        latitude: editingRes.latitude !== undefined && editingRes.latitude !== null && (editingRes.latitude as any) !== '' ? Number(editingRes.latitude) : null,
+        longitude: editingRes.longitude !== undefined && editingRes.longitude !== null && (editingRes.longitude as any) !== '' ? Number(editingRes.longitude) : null,
         geofence_radius_meters: editingRes.geofence_radius_meters ? Number(editingRes.geofence_radius_meters) : 100,
         service_fee_percentage: serviceFee,
+        service_fee_rate: serviceFee,
         is_prepaid: isPrepaid,
         payment_model: (isPrepaid ? 'prepaid' : 'postpaid') as 'prepaid' | 'postpaid',
         business_type_preset: editingRes.business_type_preset || 'full_system',
@@ -537,7 +542,7 @@ export default function SuperAdminDashboard() {
         waiter_enabled: editingRes.waiter_enabled !== undefined ? !!editingRes.waiter_enabled : true,
         tax_number: editingRes.tax_number ? String(editingRes.tax_number).trim() : '',
         commercial_registration: editingRes.commercial_registration ? String(editingRes.commercial_registration).trim() : '',
-        tax_rate: editingRes.tax_rate !== undefined && editingRes.tax_rate !== null ? Number(editingRes.tax_rate) : 14,
+        tax_rate: taxRate,
         invoice_prefix: editingRes.invoice_prefix ? String(editingRes.invoice_prefix).trim() : 'INV',
         address: editingRes.address ? String(editingRes.address).trim() : '',
         phone: editingRes.phone ? String(editingRes.phone).trim() : '',
@@ -550,6 +555,14 @@ export default function SuperAdminDashboard() {
         primary_color: editingRes.primary_color || '#f97316',
         secondary_color: editingRes.secondary_color || '#1f2937',
         is_active: editingRes.is_active !== undefined ? editingRes.is_active : true,
+        service_fee_percentage: serviceFee,
+        pos_enabled: editingRes.pos_enabled !== undefined ? !!editingRes.pos_enabled : true,
+        kitchen_enabled: editingRes.kitchen_enabled !== undefined ? !!editingRes.kitchen_enabled : true,
+        tables_enabled: editingRes.tables_enabled !== undefined ? !!editingRes.tables_enabled : true,
+        customer_app_enabled: editingRes.customer_app_enabled !== undefined ? !!editingRes.customer_app_enabled : true,
+        delivery_enabled: editingRes.delivery_enabled !== undefined ? !!editingRes.delivery_enabled : true,
+        waiter_enabled: editingRes.waiter_enabled !== undefined ? !!editingRes.waiter_enabled : true,
+        business_type_preset: editingRes.business_type_preset || 'full_system',
       };
       if (editingRes.logo_url !== undefined) {
         pureStandardDbPayload.logo_url = editingRes.logo_url;
@@ -889,6 +902,13 @@ export default function SuperAdminDashboard() {
                       customer_app_enabled: true,
                       delivery_enabled: true,
                       waiter_enabled: true,
+                      service_fee_percentage: 0,
+                      tax_rate: 0,
+                      tax_number: '',
+                      commercial_registration: '',
+                      invoice_prefix: 'INV',
+                      address: '',
+                      phone: '',
                     }); 
                     setIsResModalOpen(true); 
                   }}
@@ -2844,10 +2864,10 @@ export default function SuperAdminDashboard() {
                                   min="0"
                                   max="50"
                                   step="0.5"
-                                  placeholder="14"
+                                  placeholder="0"
                                   className="w-full bg-gray-800/90 border border-gray-700 px-4 py-2.5 rounded-xl outline-none font-mono text-sm text-white focus:border-blue-500 transition-colors pl-8 text-left"
                                   dir="ltr"
-                                  value={editingRes?.tax_rate ?? 14}
+                                  value={editingRes?.tax_rate !== undefined && editingRes?.tax_rate !== null ? editingRes.tax_rate : 0}
                                   onChange={e => setEditingRes({ ...editingRes, tax_rate: e.target.value === '' ? 0 : parseFloat(e.target.value) })}
                                 />
                                 <span className="absolute left-3 text-gray-400 font-bold text-sm pointer-events-none">%</span>

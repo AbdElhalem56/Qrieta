@@ -684,15 +684,23 @@ async function startServer() {
           : createClient(supabaseUrl, anonKey || "");
 
         try {
-          await client.from("restaurants").update({
-            geofence_enabled: geofence.geofence_enabled,
-            latitude: geofence.latitude,
-            longitude: geofence.longitude,
-            geofence_radius_meters: geofence.geofence_radius_meters,
-            service_fee_percentage: geofence.service_fee_percentage,
-            is_prepaid: geofence.is_prepaid,
-            payment_model: geofence.payment_model
-          }).eq("id", restaurant_id);
+          const updatePayload: Record<string, any> = {};
+          if (geofence.service_fee_percentage !== undefined) updatePayload.service_fee_percentage = Number(geofence.service_fee_percentage);
+          if (geofence.geofence_enabled !== undefined) updatePayload.geofence_enabled = !!geofence.geofence_enabled;
+          if (geofence.latitude !== undefined && geofence.latitude !== null && geofence.latitude !== '') updatePayload.latitude = Number(geofence.latitude);
+          if (geofence.longitude !== undefined && geofence.longitude !== null && geofence.longitude !== '') updatePayload.longitude = Number(geofence.longitude);
+          if (geofence.geofence_radius_meters !== undefined) updatePayload.geofence_radius_meters = Number(geofence.geofence_radius_meters);
+          if (geofence.pos_enabled !== undefined) updatePayload.pos_enabled = !!geofence.pos_enabled;
+          if (geofence.kitchen_enabled !== undefined) updatePayload.kitchen_enabled = !!geofence.kitchen_enabled;
+          if (geofence.tables_enabled !== undefined) updatePayload.tables_enabled = !!geofence.tables_enabled;
+          if (geofence.customer_app_enabled !== undefined) updatePayload.customer_app_enabled = !!geofence.customer_app_enabled;
+          if (geofence.delivery_enabled !== undefined) updatePayload.delivery_enabled = !!geofence.delivery_enabled;
+          if (geofence.waiter_enabled !== undefined) updatePayload.waiter_enabled = !!geofence.waiter_enabled;
+          if (geofence.business_type_preset !== undefined) updatePayload.business_type_preset = geofence.business_type_preset;
+
+          if (Object.keys(updatePayload).length > 0) {
+            await client.from("restaurants").update(updatePayload).eq("id", restaurant_id);
+          }
         } catch (dbErr) {
           // In case column doesn't exist yet, file store is the source of truth
         }
