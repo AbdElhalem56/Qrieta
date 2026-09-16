@@ -3698,34 +3698,20 @@ export const CashierPOS: React.FC = () => {
                             </span>
                           </div>
 
-                          {/* Action Buttons: Settle, Edit/Add items, or Open new order */}
+                          {/* Action Buttons: Settle or Open new order */}
                           {hasDue ? (
-                            <div className="flex items-center gap-1 w-full">
-                              <button
-                                type="button"
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  setSettleModalTable(t);
-                                }}
-                                className="flex-1 py-1.5 px-2 bg-rose-600 hover:bg-rose-700 text-white rounded-xl font-bold text-[11px] flex items-center justify-center gap-1 shadow-xs active:scale-95 transition-all cursor-pointer"
-                                title="سداد وتحصيل حساب الطاولة"
-                              >
-                                <DollarSign size={12} />
-                                <span>تحصيل</span>
-                              </button>
-                              <button
-                                type="button"
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  handleLoadTableToCart(t);
-                                }}
-                                className="py-1.5 px-2 bg-white hover:bg-slate-100 text-slate-700 border border-slate-200 rounded-xl font-bold text-[11px] flex items-center justify-center gap-1 active:scale-95 transition-all cursor-pointer"
-                                title="إضافة أصناف جديدة لحساب الطاولة"
-                              >
-                                <ShoppingCart size={12} />
-                                <span>+صنف</span>
-                              </button>
-                            </div>
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                setSettleModalTable(t);
+                              }}
+                              className="w-full py-1.5 px-2 bg-rose-600 hover:bg-rose-700 text-white rounded-xl font-bold text-[11px] flex items-center justify-center gap-1 shadow-xs active:scale-95 transition-all cursor-pointer"
+                              title="سداد وتحصيل حساب الطاولة"
+                            >
+                              <DollarSign size={12} />
+                              <span>تحصيل</span>
+                            </button>
                           ) : t.isOccupied ? (
                             <button
                               type="button"
