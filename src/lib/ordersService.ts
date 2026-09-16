@@ -37,97 +37,125 @@ export interface LiveOrder {
   is_offline?: boolean;
 }
 
+// Mutex promise to serialize concurrent sequence requests on the same client instance
+let clientSequenceLock: Promise<any> = Promise.resolve();
+
 // 1. Get next unified sequential daily order number from central server
-export async function getNextDailyOrderNumber(restaurantId: string): Promise<number> {
-  const today = new Date().toISOString().slice(0, 10);
-  const localKey = `qrieta_pos_seq_${restaurantId}_${today}`;
-  let localNext = 1;
+export function getNextDailyOrderNumber(restaurantId: string): Promise<number> {
+  const runner = async (): Promise<number> => {
+    const today = new Date().toISOString().slice(0, 10);
+    const localKey = `qrieta_pos_seq_${restaurantId}_${today}`;
+    let localNext = 1;
 
-  try {
-    const currentLocal = parseInt(localStorage.getItem(localKey) || '0', 10);
-    localNext = currentLocal + 1;
-  } catch (e) {
-    localNext = 1;
-  }
-
-  // 1. Authoritative central server API with concurrency serialization
-  try {
-    const res = await fetch('/api/orders/daily-sequence', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        restaurant_id: restaurantId,
-        action: 'next',
-      }),
-    });
-
-    if (res.ok) {
-      const data = await res.json();
-      if (data?.daily_order_number) {
-        const serverNum = Number(data.daily_order_number);
-        try {
-          localStorage.setItem(localKey, String(serverNum));
-          if (data.restaurant_id && data.restaurant_id !== restaurantId) {
-            localStorage.setItem(`qrieta_pos_seq_${data.restaurant_id}_${today}`, String(serverNum));
-          }
-        } catch (e) {}
-        return serverNum;
-      }
+    try {
+      const currentLocal = parseInt(localStorage.getItem(localKey) || '0', 10);
+      localNext = currentLocal + 1;
+    } catch (e) {
+      localNext = 1;
     }
-  } catch (err) {
-    console.warn('Daily sequence server request failed, falling back to database/local:', err);
-  }
 
-  // 2. Offline Fallback: check live orders and Supabase
-  let dbHighestSeq = 0;
-  try {
-    const cachedLive = await fetchLiveOrders(restaurantId).catch(() => []);
-    if (Array.isArray(cachedLive)) {
-      cachedLive.forEach(o => {
-        const num = Number(o.daily_order_number || 0);
-        if (num > dbHighestSeq) dbHighestSeq = num;
+    // 1. Authoritative central server API with concurrency serialization
+    try {
+      const res = await fetch('/api/orders/daily-sequence', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          restaurant_id: restaurantId,
+          action: 'next',
+        }),
       });
-    }
 
-    const startOfDay = new Date();
-    startOfDay.setHours(0, 0, 0, 0);
-
-    const { data: todayOrders } = await supabase
-      .from('orders')
-      .select('id, created_at, order_items(notes)')
-      .eq('restaurant_id', restaurantId)
-      .gte('created_at', startOfDay.toISOString());
-
-    if (Array.isArray(todayOrders)) {
-      if (todayOrders.length > dbHighestSeq) {
-        dbHighestSeq = todayOrders.length;
-      }
-      todayOrders.forEach(ord => {
-        if (Array.isArray(ord.order_items)) {
-          ord.order_items.forEach((it: any) => {
-            const note = it?.notes || '';
-            const match = String(note).match(/#(\d+)/);
-            if (match && match[1]) {
-              const parsed = parseInt(match[1], 10);
-              if (!isNaN(parsed) && parsed > dbHighestSeq) {
-                dbHighestSeq = parsed;
-              }
+      if (res.ok) {
+        const data = await res.json();
+        if (data?.daily_order_number) {
+          const serverNum = Number(data.daily_order_number);
+          try {
+            localStorage.setItem(localKey, String(serverNum));
+            if (data.restaurant_id && data.restaurant_id !== restaurantId) {
+              localStorage.setItem(`qrieta_pos_seq_${data.restaurant_id}_${today}`, String(serverNum));
             }
-          });
+          } catch (e) {}
+          return serverNum;
         }
-      });
+      }
+    } catch (err) {
+      console.warn('Daily sequence server request failed, falling back to database/local:', err);
     }
-  } catch (dbErr) {
-    console.warn('DB sequence check:', dbErr);
-  }
 
-  // Fallback to highest known sequence + 1
-  const finalSeq = Math.max(localNext, dbHighestSeq + 1);
-  try {
-    localStorage.setItem(localKey, String(finalSeq));
-  } catch (e) {}
-  syncDailyOrderSequence(restaurantId, finalSeq).catch(() => {});
-  return finalSeq;
+    // 2. Offline Fallback: check live orders and Supabase
+    let dbHighestSeq = 0;
+    try {
+      const cachedLive = await fetchLiveOrders(restaurantId).catch(() => []);
+      if (Array.isArray(cachedLive)) {
+        cachedLive.forEach(o => {
+          const num = Number(o.daily_order_number || 0);
+          if (num > dbHighestSeq) dbHighestSeq = num;
+        });
+      }
+
+      const startOfDay = new Date();
+      startOfDay.setHours(0, 0, 0, 0);
+
+      let todayOrders: any[] | null = null;
+      try {
+        const { data: resCol } = await supabase
+          .from('orders')
+          .select('id, created_at, daily_order_number, order_items(notes)')
+          .eq('restaurant_id', restaurantId)
+          .gte('created_at', startOfDay.toISOString());
+        if (Array.isArray(resCol)) todayOrders = resCol;
+      } catch (e) {}
+
+      if (!todayOrders) {
+        const { data: resBasic } = await supabase
+          .from('orders')
+          .select('id, created_at, order_items(notes)')
+          .eq('restaurant_id', restaurantId)
+          .gte('created_at', startOfDay.toISOString());
+        if (Array.isArray(resBasic)) todayOrders = resBasic;
+      }
+
+      if (Array.isArray(todayOrders)) {
+        if (todayOrders.length > dbHighestSeq) {
+          dbHighestSeq = todayOrders.length;
+        }
+        todayOrders.forEach(ord => {
+          if (ord.daily_order_number) {
+            const parsedNum = parseInt(String(ord.daily_order_number), 10);
+            if (!isNaN(parsedNum) && parsedNum > dbHighestSeq) {
+              dbHighestSeq = parsedNum;
+            }
+          }
+          if (Array.isArray(ord.order_items)) {
+            ord.order_items.forEach((it: any) => {
+              const note = it?.notes || '';
+              const match = String(note).match(/#(\d+)/);
+              if (match && match[1]) {
+                const parsed = parseInt(match[1], 10);
+                if (!isNaN(parsed) && parsed > dbHighestSeq) {
+                  dbHighestSeq = parsed;
+                }
+              }
+            });
+          }
+        });
+      }
+    } catch (dbErr) {
+      console.warn('DB sequence check:', dbErr);
+    }
+
+    // Fallback to highest known sequence + 1
+    const finalSeq = Math.max(localNext, dbHighestSeq + 1);
+    try {
+      localStorage.setItem(localKey, String(finalSeq));
+    } catch (e) {}
+    syncDailyOrderSequence(restaurantId, finalSeq).catch(() => {});
+    return finalSeq;
+  };
+
+  const chained = clientSequenceLock.then(runner, runner);
+  clientSequenceLock = chained.then(() => {}, () => {});
+  return chained;
 }
 
 // 2. Sync server sequence if Cashier generated a number locally or manually

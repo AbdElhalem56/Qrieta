@@ -1770,7 +1770,7 @@ export default function AdminDashboard() {
                           cursor={{fill: '#3b82f610'}} 
                           contentStyle={{borderRadius: '16px', border: 'none', boxShadow: '0 4px 12px rgba(0,0,0,0.1)'}}
                           labelFormatter={(value) => {
-                            const hour = parseInt(value);
+                            const hour = parseInt(String(value));
                             const period = hour >= 12 ? 'م' : 'ص';
                             const displayHour = hour % 12 || 12;
                             return `${displayHour}:00 ${period}`;

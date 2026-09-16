@@ -144,20 +144,20 @@ export const MovementsLogTab: React.FC<MovementsLogTabProps> = ({ movements }) =
                     <td className="p-3 font-black text-gray-900">{m.material_name}</td>
                     <td className="p-3 text-center">{getTypeBadge(m.type)}</td>
                     <td className="p-3 text-center font-black text-sm">
-                      <span className={m.quantity_delta > 0 ? 'text-emerald-600' : 'text-orange-600'}>
-                        {m.quantity_delta > 0 ? '+' : ''}{toEnglishDigits(m.quantity_delta)} {m.unit}
+                      <span className={m.quantity > 0 ? 'text-emerald-600' : 'text-orange-600'}>
+                        {m.quantity > 0 ? '+' : ''}{toEnglishDigits(m.quantity)} {m.unit}
                       </span>
                     </td>
                     <td className="p-3 text-center font-bold text-gray-500">
-                      {toEnglishDigits(m.stock_before)} {m.unit}
+                      {toEnglishDigits(m.prev_stock)} {m.unit}
                     </td>
                     <td className="p-3 text-center font-black text-gray-800">
-                      {toEnglishDigits(m.stock_after)} {m.unit}
+                      {toEnglishDigits(m.new_stock)} {m.unit}
                     </td>
                     <td className="p-3 font-medium text-gray-700">{m.reason}</td>
                     <td className="p-3 text-center text-gray-600 font-bold">{m.performed_by}</td>
                     <td className="p-3 text-center text-gray-400 font-medium">
-                      {new Date(m.created_at).toLocaleString('ar-EG')}
+                      {new Date(m.timestamp).toLocaleString('ar-EG')}
                     </td>
                   </tr>
                 ))

@@ -995,16 +995,38 @@ async function startServer() {
           const checkSince = new Date(Date.now() - 36 * 60 * 60 * 1000);
 
           try {
-            const { data: dbOrders, error } = await client
+            let dbOrders: any[] | null = null;
+            const resWithCol = await client
               .from("orders")
-              .select("id, created_at, order_items(notes)")
+              .select("id, created_at, daily_order_number, order_items(notes)")
               .in("restaurant_id", aliases)
               .gte("created_at", checkSince.toISOString());
 
-            if (!error && Array.isArray(dbOrders)) {
+            if (!resWithCol.error && Array.isArray(resWithCol.data)) {
+              dbOrders = resWithCol.data;
+            } else {
+              const resBasic = await client
+                .from("orders")
+                .select("id, created_at, order_items(notes)")
+                .in("restaurant_id", aliases)
+                .gte("created_at", checkSince.toISOString());
+              if (!resBasic.error && Array.isArray(resBasic.data)) {
+                dbOrders = resBasic.data;
+              }
+            }
+
+            if (Array.isArray(dbOrders)) {
+              let todayCount = 0;
               dbOrders.forEach((ord: any) => {
                 const cairoDate = getCairoDateForIso(ord.created_at);
                 if (cairoDate === dateKey) {
+                  todayCount++;
+                  if (ord.daily_order_number) {
+                    const parsedDaily = parseInt(String(ord.daily_order_number), 10);
+                    if (!isNaN(parsedDaily) && parsedDaily > dbCount) {
+                      dbCount = parsedDaily;
+                    }
+                  }
                   if (Array.isArray(ord.order_items)) {
                     ord.order_items.forEach((it: any) => {
                       const note = it?.notes || '';
@@ -1019,6 +1041,9 @@ async function startServer() {
                   }
                 }
               });
+              if (todayCount > dbCount) {
+                dbCount = todayCount;
+              }
             }
           } catch (dbErr) {
             console.warn("Daily count error from DB:", dbErr);

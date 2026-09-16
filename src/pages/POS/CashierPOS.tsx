@@ -218,6 +218,13 @@ export const CashierPOS: React.FC = () => {
   const [previewOrderNumber, setPreviewOrderNumber] = useState<number>(57);
   const [orderNotes, setOrderNotes] = useState<string>('');
 
+  // Tables display mode on Main Screen: 'grid' (shows all tables at once) vs 'strip' (compact ribbon)
+  const [tablesViewMode, setTablesViewMode] = useState<'grid' | 'strip'>(() => {
+    return (localStorage.getItem('qrieta_pos_tables_view') as 'grid' | 'strip') || 'grid';
+  });
+  const [tablesFilter, setTablesFilter] = useState<'all' | 'occupied' | 'available' | 'due'>('all');
+  const isSubmittingOrderRef = useRef<boolean>(false);
+
   // Quick Quantity Selector in Bottom Toolbar
   const [quickQty, setQuickQty] = useState<number>(1);
   const [isMobileSidebarOpen, setIsMobileSidebarOpen] = useState<boolean>(false);
@@ -317,6 +324,7 @@ export const CashierPOS: React.FC = () => {
     openedAt: new Date().toISOString(),
     isOpen: true,
     startingCash: 500,
+    totalSales: 0,
     cashSales: 0,
     cardSales: 0,
     walletSales: 0,
@@ -324,6 +332,7 @@ export const CashierPOS: React.FC = () => {
     totalTax: 0,
     totalServiceFee: 0,
     totalRefunds: 0,
+    totalVoids: 0,
     totalTips: 0,
     ordersCount: 0,
     transactions: [],
@@ -1105,6 +1114,8 @@ export const CashierPOS: React.FC = () => {
 
     setCart(loadedCartItems);
     setCustomOrderNumber(String(order.daily_order_number));
+    setCurrentCartOrderNumber(Number(order.daily_order_number));
+    setLoadedOrderIds([String(order.id)]);
 
     if (order.order_type === 'dine_in') {
       setOrderType('dine_in');
@@ -1415,6 +1426,11 @@ export const CashierPOS: React.FC = () => {
         activeOrders: matchedOrders,
         heldBills: matchedHeld
       };
+    }).sort((a, b) => {
+      const numA = parseInt(String(a.table_number).replace(/\D/g, ''), 10);
+      const numB = parseInt(String(b.table_number).replace(/\D/g, ''), 10);
+      if (!isNaN(numA) && !isNaN(numB)) return numA - numB;
+      return String(a.table_number).localeCompare(String(b.table_number), undefined, { numeric: true });
     });
   }, [tables, activeOrders, customerLiveOrders, heldBills]);
 
@@ -1425,6 +1441,27 @@ export const CashierPOS: React.FC = () => {
   const occupiedTablesCount = useMemo(() => {
     return tablesFinancials.filter(t => t.isOccupied || t.totalDue > 0).length;
   }, [tablesFinancials]);
+
+  const dueTablesCount = useMemo(() => {
+    return tablesFinancials.filter(t => t.totalDue > 0).length;
+  }, [tablesFinancials]);
+
+  const availableTablesCount = useMemo(() => {
+    return tablesFinancials.filter(t => !t.isOccupied && t.totalDue === 0).length;
+  }, [tablesFinancials]);
+
+  const filteredTablesFinancials = useMemo(() => {
+    if (tablesFilter === 'occupied') {
+      return tablesFinancials.filter(t => t.isOccupied || t.totalDue > 0);
+    }
+    if (tablesFilter === 'due') {
+      return tablesFinancials.filter(t => t.totalDue > 0);
+    }
+    if (tablesFilter === 'available') {
+      return tablesFinancials.filter(t => !t.isOccupied && t.totalDue === 0);
+    }
+    return tablesFinancials;
+  }, [tablesFinancials, tablesFilter]);
 
   // Render Product Card matching reference image
   const renderProductCard = (item: Product) => {
@@ -1759,127 +1796,150 @@ export const CashierPOS: React.FC = () => {
       return;
     }
 
-    let dailyOrderNum = parseInt(customOrderNumber) || 0;
-    if (!dailyOrderNum && currentCartOrderNumber) {
-      dailyOrderNum = currentCartOrderNumber;
-    }
-    if (!dailyOrderNum && loadedOrderIds.length > 0) {
-      const alreadyNumberedOrder = activeOrders.find(o => loadedOrderIds.includes(String(o.id)) && o.daily_order_number);
-      if (alreadyNumberedOrder && alreadyNumberedOrder.daily_order_number) {
-        dailyOrderNum = Number(alreadyNumberedOrder.daily_order_number);
+    if (isSubmittingOrderRef.current) return;
+    isSubmittingOrderRef.current = true;
+
+    try {
+      let dailyOrderNum = parseInt(customOrderNumber) || 0;
+      if (!dailyOrderNum && currentCartOrderNumber) {
+        dailyOrderNum = currentCartOrderNumber;
       }
-    }
-    if (!dailyOrderNum && selectedRestaurant) {
-      dailyOrderNum = await getNextDailyOrderNumber(selectedRestaurant.id);
-    }
-    if (!dailyOrderNum) dailyOrderNum = activeOrders.length + 1;
-    setCurrentCartOrderNumber(dailyOrderNum);
+      if (!dailyOrderNum && loadedOrderIds.length > 0) {
+        const alreadyNumberedOrder = 
+          activeOrders.find(o => loadedOrderIds.includes(String(o.id)) && o.daily_order_number) ||
+          customerLiveOrders.find(o => loadedOrderIds.includes(String(o.id)) && o.daily_order_number) ||
+          heldBills.find(h => loadedOrderIds.includes(String(h.id)) && h.daily_order_number);
+        if (alreadyNumberedOrder && alreadyNumberedOrder.daily_order_number) {
+          dailyOrderNum = Number(alreadyNumberedOrder.daily_order_number);
+        }
+      }
+      if (!dailyOrderNum && selectedTable) {
+        const tableOrder = 
+          customerLiveOrders.find(o => (String(o.table_id) === String(selectedTable.id) || String(o.table_number) === String(selectedTable.table_number)) && o.daily_order_number) ||
+          activeOrders.find(o => (String(o.table_id) === String(selectedTable.id) || String(o.table_number) === String(selectedTable.table_number)) && o.daily_order_number) ||
+          heldBills.find(h => (String(h.tableId) === String(selectedTable.id) || String(h.tableNumber) === String(selectedTable.table_number)) && h.daily_order_number);
+        if (tableOrder && (tableOrder as any).daily_order_number) {
+          dailyOrderNum = Number((tableOrder as any).daily_order_number);
+        }
+      }
+      if (!dailyOrderNum && selectedRestaurant) {
+        dailyOrderNum = await getNextDailyOrderNumber(selectedRestaurant.id);
+      }
+      if (!dailyOrderNum) dailyOrderNum = activeOrders.length + 1;
+      setCurrentCartOrderNumber(dailyOrderNum);
 
-    // 1. طباعة البون الموحد للمطبخ تلقائياً وفوراً
-    printKitchenTicket({
-      restaurantName: selectedRestaurant?.name || 'مطعم وكافيه كريتا',
-      orderNumber: dailyOrderNum,
-      orderType,
-      tableNumber: selectedTable?.table_number,
-      customerName: customerName.trim() || undefined,
-      customerPhone: customerPhone.trim() || undefined,
-      deliveryAddress: customerAddress.trim() || undefined,
-      cashierName: shift.cashierName || 'الرئيسي',
-      items: cart.map(it => ({
-        name: it.name,
-        quantity: it.quantity,
-        notes: it.notes,
-        options: it.options
-      })),
-      orderNotes: orderNotes.trim() || undefined
-    });
-
-    // 2. إنشاء / تحديث طلب المطبخ النشط كطلب وحيد مباشر
-    const targetOrderId = (loadedOrderIds.length > 0 ? loadedOrderIds[0] : null) || `pos-kot-${Date.now()}`;
-
-    const title = orderType === 'dine_in' 
-      ? `صالة - طاولة #${selectedTable?.table_number || 'بدون'}`
-      : orderType === 'takeaway'
-      ? `سفري - ${customerName || 'عميل كاشير'}`
-      : `دليفري - ${customerName || 'طلب خارجي'}`;
-
-    if (selectedRestaurant) {
-      const liveOrderData: any = {
-        id: targetOrderId,
-        daily_order_number: dailyOrderNum,
-        restaurant_id: selectedRestaurant.id,
-        source: 'cashier_pos',
-        order_type: orderType,
-        table_id: selectedTable?.id || null,
-        table_number: selectedTable?.table_number || null,
-        customer_name: customerName.trim() || undefined,
-        customer_phone: customerPhone.trim() || undefined,
-        delivery_address: customerAddress.trim() || undefined,
-        notes: orderNotes.trim() || undefined,
-        total_price: finalTotal,
-        total_amount: finalTotal,
-        status: 'preparing',
-        payment_status: 'unpaid',
+      // 1. طباعة البون الموحد للمطبخ تلقائياً وفوراً
+      printKitchenTicket({
+        restaurantName: selectedRestaurant?.name || 'مطعم وكافيه كريتا',
+        orderNumber: dailyOrderNum,
+        orderType,
+        tableNumber: selectedTable?.table_number,
+        customerName: customerName.trim() || undefined,
+        customerPhone: customerPhone.trim() || undefined,
+        deliveryAddress: customerAddress.trim() || undefined,
+        cashierName: shift.cashierName || 'الرئيسي',
         items: cart.map(it => ({
-          id: it.menuItemId,
           name: it.name,
           quantity: it.quantity,
-          price: it.price,
           notes: it.notes,
           options: it.options
         })),
-        created_at: new Date().toISOString()
-      };
+        orderNotes: orderNotes.trim() || undefined
+      });
 
-      // تسجيل في خادم الطلبات المباشرة
-      registerLiveOrder(liveOrderData).catch(() => {});
+      // 2. إنشاء / تحديث طلب المطبخ النشط كطلب وحيد مباشر
+      const targetOrderId = (loadedOrderIds.length > 0 ? loadedOrderIds[0] : null) || `pos-kot-${Date.now()}`;
 
-      // خصم مكونات الوصفات من المخزون بمجرد الإرسال للمطبخ للتحضير
-      deductOrderRecipeStock(
-        selectedRestaurant.id,
-        cart.map(it => ({
-          id: it.menuItemId,
-          name: it.name,
-          quantity: it.quantity,
-          options: it.options,
-          notes: (it as any).notes,
-          sugar_level: (it as any).sugar_level || (it as any).sugar,
-          selectedOptions: (it as any).selectedOptions
-        })),
-        String(dailyOrderNum),
-        shift.cashierName || 'كاشير'
-      ).catch(() => {});
+      const title = orderType === 'dine_in' 
+        ? `صالة - طاولة #${selectedTable?.table_number || 'بدون'}`
+        : orderType === 'takeaway'
+        ? `سفري - ${customerName || 'عميل كاشير'}`
+        : `دليفري - ${customerName || 'طلب خارجي'}`;
 
-      // تحديث قائمة الطلبات النشطة محلياً وتجنب التكرار
-      const existingIds = new Set(loadedOrderIds.map(String));
-      setActiveOrders(prev => [
-        liveOrderData,
-        ...prev.filter(o => String(o.id) !== String(targetOrderId) && !existingIds.has(String(o.id)))
-      ]);
+      if (selectedRestaurant) {
+        const liveOrderData: any = {
+          id: targetOrderId,
+          daily_order_number: dailyOrderNum,
+          restaurant_id: selectedRestaurant.id,
+          source: 'cashier_pos',
+          order_type: orderType,
+          table_id: selectedTable?.id || null,
+          table_number: selectedTable?.table_number || null,
+          customer_name: customerName.trim() || undefined,
+          customer_phone: customerPhone.trim() || undefined,
+          delivery_address: customerAddress.trim() || undefined,
+          notes: orderNotes.trim() || undefined,
+          total_price: finalTotal,
+          total_amount: finalTotal,
+          status: 'preparing',
+          payment_status: 'unpaid',
+          items: cart.map(it => ({
+            id: it.menuItemId,
+            name: it.name,
+            quantity: it.quantity,
+            price: it.price,
+            notes: it.notes,
+            options: it.options
+          })),
+          created_at: new Date().toISOString()
+        };
 
-      // إشغال الطاولة في حال كان طلب صالة
-      if (selectedTable?.id) {
-        setTables(prev => prev.map(t => t.id === selectedTable.id ? { ...t, is_occupied: true } : t));
-        supabase.from('tables').update({ is_occupied: true }).eq('id', selectedTable.id).then(() => {}, () => {});
+        // تسجيل في خادم الطلبات المباشرة
+        registerLiveOrder(liveOrderData).catch(() => {});
+
+        // خصم مكونات الوصفات من المخزون بمجرد الإرسال للمطبخ للتحضير
+        deductOrderRecipeStock(
+          selectedRestaurant.id,
+          cart.map(it => ({
+            id: it.menuItemId,
+            name: it.name,
+            quantity: it.quantity,
+            options: it.options,
+            notes: (it as any).notes,
+            sugar_level: (it as any).sugar_level || (it as any).sugar,
+            selectedOptions: (it as any).selectedOptions
+          })),
+          String(dailyOrderNum),
+          shift.cashierName || 'كاشير'
+        ).catch(() => {});
+
+        // تحديث قائمة الطلبات النشطة محلياً وتجنب التكرار
+        const existingIds = new Set(loadedOrderIds.map(String));
+        setActiveOrders(prev => [
+          liveOrderData,
+          ...prev.filter(o => String(o.id) !== String(targetOrderId) && !existingIds.has(String(o.id)))
+        ]);
+
+        // إشغال الطاولة في حال كان طلب صالة
+        if (selectedTable?.id) {
+          setTables(prev => prev.map(t => t.id === selectedTable.id ? { ...t, is_occupied: true } : t));
+          supabase.from('tables').update({ is_occupied: true }).eq('id', selectedTable.id).then(() => {}, () => {});
+        }
+
+        // إذا كان هذا الطلب تم استرجاعه من المعلقات، يتم حذفه من المعلقات حتى لا يتكرر
+        if (loadedOrderIds.length > 0) {
+          setHeldBills(prev => prev.filter(b => !existingIds.has(String(b.id))));
+        }
       }
 
-      // إذا كان هذا الطلب تم استرجاعه من المعلقات، يتم حذفه من المعلقات حتى لا يتكرر
-      if (loadedOrderIds.length > 0) {
-        setHeldBills(prev => prev.filter(b => !existingIds.has(String(b.id))));
-      }
+      setCart([]);
+      setLoadedOrderIds([]);
+      setDiscountValue(0);
+      setTipsAmount(0);
+      setOrderNotes('');
+      setCustomerName('');
+      setCustomerPhone('');
+      setSelectedTable(null);
+      setCustomOrderNumber('');
+      setCurrentCartOrderNumber(null);
+
+      addAuditLog('create_order', `تم إرسال الطلب للمطبخ (${title}) برقم #${dailyOrderNum} وإجمالي ${finalTotal.toFixed(2)} ج.م`);
+    } catch (err: any) {
+      console.error('Error sending order to kitchen:', err);
+      alert('حدث خطأ أثناء إرسال الطلب للمطبخ: ' + (err?.message || 'يرجى المحاولة مجدداً'));
+    } finally {
+      isSubmittingOrderRef.current = false;
     }
-
-    setCart([]);
-    setLoadedOrderIds([]);
-    setDiscountValue(0);
-    setTipsAmount(0);
-    setOrderNotes('');
-    setCustomerName('');
-    setCustomerPhone('');
-    setSelectedTable(null);
-    setCustomOrderNumber('');
-
-    addAuditLog('create_order', `تم إرسال الطلب للمطبخ (${title}) برقم #${dailyOrderNum} وإجمالي ${finalTotal.toFixed(2)} ج.م`);
   };
 
   // Quick Print Current Cart Bill without Full Settlement
@@ -1890,16 +1950,17 @@ export const CashierPOS: React.FC = () => {
     }
     const receiptData: TaxReceiptData = {
       restaurantName: selectedRestaurant?.name || 'مطعم وكافيه كريتا',
-      restaurantPhone: selectedRestaurant?.phone || '01000000000',
-      restaurantAddress: selectedRestaurant?.address || 'الفرع الرئيسي',
-      vatNumber: (selectedRestaurant as any)?.vat_number || '300-123-456',
-      commercialRegistration: (selectedRestaurant as any)?.cr_number || '123456',
-      orderNumber: currentCartOrderNumber || previewOrderNumber || 57,
+      restaurantLogo: selectedRestaurant?.logo_url,
+      taxNumber: restaurantGeofence?.tax_number || (selectedRestaurant as any)?.vat_number || '100-245-890',
+      commercialRegistration: restaurantGeofence?.commercial_registration || (selectedRestaurant as any)?.cr_number || '45892',
+      branchAddress: restaurantGeofence?.address || selectedRestaurant?.address || 'الفرع الرئيسي',
+      branchPhone: restaurantGeofence?.phone || selectedRestaurant?.phone || '01000000000',
+      invoiceNumber: `INV-${currentCartOrderNumber || previewOrderNumber || 57}`,
+      dailyOrderNumber: currentCartOrderNumber || previewOrderNumber || 57,
       orderType: orderType,
       tableNumber: selectedTable?.table_number,
       cashierName: shift.cashierName || 'كاشير',
-      date: new Date().toLocaleDateString('ar-EG'),
-      time: new Date().toLocaleTimeString('ar-EG', { hour: '2-digit', minute: '2-digit' }),
+      dateTime: new Date(),
       items: cart.map(it => ({
         name: it.name,
         quantity: it.quantity,
@@ -1916,7 +1977,7 @@ export const CashierPOS: React.FC = () => {
       deliveryFee: deliveryFee,
       discountAmount: discountAmount,
       finalTotal: finalTotal,
-      paymentMethod: paymentMethod,
+      paymentMethod: paymentMethod === 'split' ? 'cash' : paymentMethod,
       amountPaid: finalTotal,
       changeDue: 0,
       customerName: customerName.trim() || undefined,
@@ -2044,7 +2105,17 @@ export const CashierPOS: React.FC = () => {
 
       // 7. Prepare thermal receipt
       if (amountToCollect > 0) {
-        const dailyNum = await getNextDailyOrderNumber(selectedRestaurant.id);
+        let dailyNum = 0;
+        const existingNumbered = 
+          matchedOrders.find((o: any) => o.daily_order_number) ||
+          matchedHeld.find((h: any) => h.daily_order_number);
+        if (existingNumbered && existingNumbered.daily_order_number) {
+          dailyNum = Number(existingNumbered.daily_order_number);
+        }
+        if (!dailyNum && selectedRestaurant) {
+          dailyNum = await getNextDailyOrderNumber(selectedRestaurant.id);
+        }
+        if (!dailyNum) dailyNum = 1;
         const receiptData: TaxReceiptData = {
           restaurantName: selectedRestaurant?.name || 'مطعم وكافيه كريتا',
           restaurantLogo: selectedRestaurant?.logo_url,
@@ -2216,6 +2287,18 @@ export const CashierPOS: React.FC = () => {
     setLoadedOrderIds(loadedIds);
     setSelectedTable(tableData);
     setOrderType('dine_in');
+
+    const existingNumbered = 
+      matchedOrders.find((o: any) => o.daily_order_number) ||
+      matchedHeld.find((h: any) => h.daily_order_number);
+    if (existingNumbered && existingNumbered.daily_order_number) {
+      setCurrentCartOrderNumber(Number(existingNumbered.daily_order_number));
+      setCustomOrderNumber(String(existingNumbered.daily_order_number));
+    } else {
+      setCurrentCartOrderNumber(null);
+      setCustomOrderNumber('');
+    }
+
     setSettleModalTable(null);
     setActiveTab('pos');
     setSidebarView('cart');
@@ -2347,9 +2430,21 @@ export const CashierPOS: React.FC = () => {
         dailyOrderNum = currentCartOrderNumber;
       }
       if (!dailyOrderNum && loadedOrderIds.length > 0) {
-        const alreadyNumberedOrder = activeOrders.find(o => loadedOrderIds.includes(String(o.id)) && o.daily_order_number);
+        const alreadyNumberedOrder = 
+          activeOrders.find(o => loadedOrderIds.includes(String(o.id)) && o.daily_order_number) ||
+          customerLiveOrders.find(o => loadedOrderIds.includes(String(o.id)) && o.daily_order_number) ||
+          heldBills.find(h => loadedOrderIds.includes(String(h.id)) && h.daily_order_number);
         if (alreadyNumberedOrder && alreadyNumberedOrder.daily_order_number) {
           dailyOrderNum = Number(alreadyNumberedOrder.daily_order_number);
+        }
+      }
+      if (!dailyOrderNum && selectedTable) {
+        const tableOrder = 
+          customerLiveOrders.find(o => (String(o.table_id) === String(selectedTable.id) || String(o.table_number) === String(selectedTable.table_number)) && o.daily_order_number) ||
+          activeOrders.find(o => (String(o.table_id) === String(selectedTable.id) || String(o.table_number) === String(selectedTable.table_number)) && o.daily_order_number) ||
+          heldBills.find(h => (String(h.tableId) === String(selectedTable.id) || String(h.tableNumber) === String(selectedTable.table_number)) && h.daily_order_number);
+        if (tableOrder && (tableOrder as any).daily_order_number) {
+          dailyOrderNum = Number((tableOrder as any).daily_order_number);
         }
       }
       if (!dailyOrderNum && selectedRestaurant) {
@@ -3397,44 +3492,143 @@ export const CashierPOS: React.FC = () => {
           {/* Tab 1: Product Grid View (Items side-by-side) */}
           {activeTab === 'pos' && (
             <div className="flex-1 overflow-y-auto p-3 sm:p-4 space-y-4">
-              {/* 🍽️ LIVE DINING TABLES & FINANCIALS STRIP (معروضة في الشاشة الرئيسية قدام عين الكاشير) */}
+              {/* 🍽️ LIVE DINING TABLES & FINANCIALS (معروضة في الشاشة الرئيسية قدام عين الكاشير - عرض كل الطاولات) */}
               {tablesFinancials.length > 0 && (
-                <div className="bg-white rounded-2xl border border-slate-200/90 shadow-sm p-3.5 space-y-3">
-                  {/* Tables Header */}
-                  <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-100 pb-2.5">
-                    <div className="flex items-center gap-2">
-                      <div className="w-8 h-8 rounded-xl bg-amber-500 text-white flex items-center justify-center shadow-sm shadow-amber-500/20">
+                <div className="bg-white rounded-2xl border border-slate-200 shadow-xs p-3.5 space-y-3">
+                  {/* Tables Header & Controls */}
+                  <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-100 pb-2.5">
+                    <div className="flex items-center gap-2.5">
+                      <div className="w-8 h-8 rounded-xl bg-amber-500 text-white flex items-center justify-center shadow-xs shadow-amber-500/20 shrink-0">
                         <UtensilsCrossed size={16} />
                       </div>
                       <div>
-                        <div className="flex items-center gap-2">
+                        <div className="flex items-center gap-2 flex-wrap">
                           <h4 className="font-black text-sm text-slate-800">
                             طاولات الصالة والحسابات المفتوحة
                           </h4>
                           <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-slate-100 text-slate-600">
-                            {occupiedTablesCount} مشغولة من أصل {tablesFinancials.length}
+                            {tablesFinancials.length} طاولة مسجلة
                           </span>
                         </div>
                         <p className="text-[11px] text-slate-400">
-                          معاينة لحظية لكل طاولة والمبلغ المطلوب تحصيله منها فوراً
+                          {occupiedTablesCount > 0 ? `يوجد ${occupiedTablesCount} طاولة مشغولة حالياً (${dueTablesCount} عليها حساب مطلوب تحصيله)` : 'جميع الطاولات متاحة حالياً'}
                         </p>
                       </div>
                     </div>
 
-                    {/* Top Highlight Badge for Grand Total */}
-                    <div className="flex items-center gap-2">
-                      <div className="px-3 py-1.5 rounded-xl bg-gradient-to-r from-amber-500 to-orange-500 text-white shadow-sm flex items-center gap-2 font-black text-xs">
-                        <span>إجمالي مستحقات الطاولات:</span>
-                        <span className="font-mono text-sm bg-black/20 px-2 py-0.5 rounded-lg">
-                          {allTablesTotalDue.toFixed(2)} ج.م
-                        </span>
+                    {/* Filter Tabs + View Mode Toggle + Grand Total Badge */}
+                    <div className="flex items-center flex-wrap gap-2">
+                      {/* Filter Tabs */}
+                      <div className="flex items-center bg-slate-100 p-1 rounded-xl gap-1">
+                        <button
+                          type="button"
+                          onClick={() => setTablesFilter('all')}
+                          className={cn(
+                            "px-2.5 py-1 rounded-lg text-xs font-bold transition-all cursor-pointer",
+                            tablesFilter === 'all' 
+                              ? "bg-white text-slate-900 shadow-xs" 
+                              : "text-slate-500 hover:text-slate-900"
+                          )}
+                        >
+                          الكل ({tablesFinancials.length})
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setTablesFilter('occupied')}
+                          className={cn(
+                            "px-2.5 py-1 rounded-lg text-xs font-bold transition-all cursor-pointer",
+                            tablesFilter === 'occupied' 
+                              ? "bg-amber-500 text-white shadow-xs" 
+                              : "text-slate-500 hover:text-slate-900"
+                          )}
+                        >
+                          مشغولة ({occupiedTablesCount})
+                        </button>
+                        {dueTablesCount > 0 && (
+                          <button
+                            type="button"
+                            onClick={() => setTablesFilter('due')}
+                            className={cn(
+                              "px-2.5 py-1 rounded-lg text-xs font-bold transition-all cursor-pointer",
+                              tablesFilter === 'due' 
+                                ? "bg-rose-600 text-white shadow-xs" 
+                                : "text-rose-600 hover:bg-rose-50"
+                            )}
+                          >
+                            عليها حساب ({dueTablesCount})
+                          </button>
+                        )}
+                        <button
+                          type="button"
+                          onClick={() => setTablesFilter('available')}
+                          className={cn(
+                            "px-2.5 py-1 rounded-lg text-xs font-bold transition-all cursor-pointer",
+                            tablesFilter === 'available' 
+                              ? "bg-emerald-600 text-white shadow-xs" 
+                              : "text-slate-500 hover:text-slate-900"
+                          )}
+                        >
+                          متاحة ({availableTablesCount})
+                        </button>
                       </div>
+
+                      {/* Display Mode Toggle */}
+                      <div className="flex items-center bg-slate-100 p-1 rounded-xl gap-1">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setTablesViewMode('grid');
+                            localStorage.setItem('qrieta_pos_tables_view', 'grid');
+                          }}
+                          className={cn(
+                            "px-2 py-1 rounded-lg text-xs font-bold flex items-center gap-1.5 transition-all cursor-pointer",
+                            tablesViewMode === 'grid' 
+                              ? "bg-white text-amber-700 shadow-xs" 
+                              : "text-slate-500 hover:text-slate-900"
+                          )}
+                          title="عرض كل الطاولات في شبكة متعددة الصفوف"
+                        >
+                          <LayoutGrid size={13} />
+                          <span>عرض كل الطاولات</span>
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setTablesViewMode('strip');
+                            localStorage.setItem('qrieta_pos_tables_view', 'strip');
+                          }}
+                          className={cn(
+                            "px-2 py-1 rounded-lg text-xs font-bold flex items-center gap-1.5 transition-all cursor-pointer",
+                            tablesViewMode === 'strip' 
+                              ? "bg-white text-amber-700 shadow-xs" 
+                              : "text-slate-500 hover:text-slate-900"
+                          )}
+                          title="شريط أفقي مدمج"
+                        >
+                          <Menu size={13} />
+                          <span>شريط</span>
+                        </button>
+                      </div>
+
+                      {/* Grand Total Badge */}
+                      {allTablesTotalDue > 0 && (
+                        <div className="px-3 py-1.5 rounded-xl bg-gradient-to-r from-amber-500 to-orange-500 text-white shadow-xs flex items-center gap-2 font-black text-xs">
+                          <span>إجمالي مستحقات الطاولات:</span>
+                          <span className="font-mono text-sm bg-black/20 px-2 py-0.5 rounded-lg">
+                            {allTablesTotalDue.toFixed(2)} ج.م
+                          </span>
+                        </div>
+                      )}
                     </div>
                   </div>
 
-                  {/* Tables Ribbon / Horizontal Scrollable Grid */}
-                  <div className="flex items-stretch gap-2.5 overflow-x-auto no-scrollbar py-1">
-                    {tablesFinancials.map(t => {
+                  {/* Render Tables: Grid Mode (All tables visible) vs Strip Mode */}
+                  <div className={cn(
+                    tablesViewMode === 'grid'
+                      ? "grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 2xl:grid-cols-7 gap-2.5 max-h-[380px] overflow-y-auto p-1"
+                      : "flex items-stretch gap-2.5 overflow-x-auto no-scrollbar py-1"
+                  )}>
+                    {filteredTablesFinancials.map(t => {
                       const isSelected = selectedTable?.id === t.id;
                       const hasDue = t.totalDue > 0;
 
@@ -3442,16 +3636,18 @@ export const CashierPOS: React.FC = () => {
                         <div
                           key={t.id}
                           className={cn(
-                            "shrink-0 min-w-[130px] p-2 rounded-2xl border text-center transition-all flex flex-col justify-between gap-1.5 select-none",
+                            "p-2.5 rounded-2xl border text-center transition-all flex flex-col justify-between gap-2 select-none",
+                            tablesViewMode === 'strip' ? "shrink-0 min-w-[135px]" : "w-full",
                             isSelected
-                              ? "bg-amber-500/10 border-amber-500 shadow-md ring-2 ring-amber-300"
+                              ? "bg-amber-50 border-amber-500 shadow-md ring-2 ring-amber-300"
                               : hasDue
-                              ? "bg-rose-50/95 border-rose-300 text-rose-900 shadow-xs"
+                              ? "bg-rose-50/90 border-rose-300 text-rose-950 shadow-xs hover:border-rose-400"
                               : t.isOccupied
-                              ? "bg-amber-50 border-amber-200 text-amber-900"
-                              : "bg-slate-50 border-slate-200 text-slate-700"
+                              ? "bg-amber-50/80 border-amber-200 text-amber-950 hover:border-amber-300"
+                              : "bg-slate-50/80 border-slate-200 text-slate-700 hover:border-slate-300 hover:bg-white"
                           )}
                         >
+                          {/* Table Header: Number & Status Dot */}
                           <div 
                             onClick={() => {
                               if (hasDue) {
@@ -3463,14 +3659,23 @@ export const CashierPOS: React.FC = () => {
                             }}
                             className="flex items-center justify-between w-full cursor-pointer"
                           >
-                            <span className="font-black text-xs">طاولة #{t.table_number}</span>
-                            <span className={cn(
-                              "w-2.5 h-2.5 rounded-full",
-                              hasDue ? "bg-rose-500 animate-pulse" : t.isOccupied ? "bg-amber-500" : "bg-emerald-400"
-                            )} />
+                            <span className="font-black text-xs text-slate-800 flex items-center gap-1">
+                              <span>طاولة #{t.table_number}</span>
+                            </span>
+                            <div className="flex items-center gap-1">
+                              {t.ordersCount > 0 && (
+                                <span className="text-[9px] font-bold px-1.5 py-0.2 rounded-md bg-white border border-slate-200 text-slate-600">
+                                  {t.ordersCount} طلب
+                                </span>
+                              )}
+                              <span className={cn(
+                                "w-2.5 h-2.5 rounded-full shrink-0",
+                                hasDue ? "bg-rose-500 animate-pulse ring-2 ring-rose-300" : t.isOccupied ? "bg-amber-500 ring-2 ring-amber-200" : "bg-emerald-400"
+                              )} />
+                            </div>
                           </div>
 
-                          {/* Money to be collected under each table */}
+                          {/* Table Financial Due or Status Box */}
                           <div 
                             onClick={() => {
                               if (hasDue) {
@@ -3480,32 +3685,55 @@ export const CashierPOS: React.FC = () => {
                                 setOrderType('dine_in');
                               }
                             }}
-                            className="w-full bg-white/95 rounded-xl py-1 px-1 text-center border border-black/5 shadow-2xs cursor-pointer"
+                            className="w-full bg-white rounded-xl py-1.5 px-2 text-center border border-slate-200/60 shadow-2xs cursor-pointer"
                           >
                             <span className="text-[10px] text-slate-400 font-bold block leading-none mb-0.5">
-                              {hasDue ? 'مطلوب تحصيله:' : 'الحالة:'}
+                              {hasDue ? 'المطلوب تحصيله:' : t.isOccupied ? 'الحالة:' : 'الحالة:'}
                             </span>
                             <span className={cn(
                               "font-mono font-black text-xs block leading-tight",
-                              hasDue ? "text-rose-700 font-black text-sm" : "text-emerald-600"
+                              hasDue ? "text-rose-700 font-black text-sm" : t.isOccupied ? "text-amber-700 text-xs" : "text-emerald-600 text-xs"
                             )}>
-                              {hasDue ? `${t.totalDue.toFixed(0)} ج.م` : 'متاحة (0 ج.م)'}
+                              {hasDue ? `${t.totalDue.toFixed(0)} ج.م` : t.isOccupied ? 'قيد التجهيز' : 'متاحة (فاضية)'}
                             </span>
                           </div>
 
-                          {/* Quick Action Button: Settle/Clear if hasDue, or Select if empty */}
+                          {/* Action Buttons: Settle, Edit/Add items, or Open new order */}
                           {hasDue ? (
+                            <div className="flex items-center gap-1 w-full">
+                              <button
+                                type="button"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  setSettleModalTable(t);
+                                }}
+                                className="flex-1 py-1.5 px-2 bg-rose-600 hover:bg-rose-700 text-white rounded-xl font-bold text-[11px] flex items-center justify-center gap-1 shadow-xs active:scale-95 transition-all cursor-pointer"
+                                title="سداد وتحصيل حساب الطاولة"
+                              >
+                                <DollarSign size={12} />
+                                <span>تحصيل</span>
+                              </button>
+                              <button
+                                type="button"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  handleLoadTableToCart(t);
+                                }}
+                                className="py-1.5 px-2 bg-white hover:bg-slate-100 text-slate-700 border border-slate-200 rounded-xl font-bold text-[11px] flex items-center justify-center gap-1 active:scale-95 transition-all cursor-pointer"
+                                title="إضافة أصناف جديدة لحساب الطاولة"
+                              >
+                                <ShoppingCart size={12} />
+                                <span>+صنف</span>
+                              </button>
+                            </div>
+                          ) : t.isOccupied ? (
                             <button
                               type="button"
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                setSettleModalTable(t);
-                              }}
-                              className="w-full py-1 px-1.5 bg-rose-600 hover:bg-rose-700 text-white rounded-xl font-bold text-[10px] flex items-center justify-center gap-1 shadow-sm active:scale-95 transition-all cursor-pointer"
-                              title="تحصيل وسداد حساب الطاولة أو تصفيره وإخلاء الطاولة"
+                              onClick={() => handleLoadTableToCart(t)}
+                              className="w-full py-1.5 px-2 bg-amber-500 hover:bg-amber-600 text-white rounded-xl font-bold text-[11px] flex items-center justify-center gap-1 shadow-xs active:scale-95 transition-all cursor-pointer"
                             >
-                              <DollarSign size={11} />
-                              <span>سداد وتحصيل</span>
+                              <ShoppingCart size={12} />
+                              <span>إضافة أصناف</span>
                             </button>
                           ) : (
                             <button
@@ -3515,16 +3743,24 @@ export const CashierPOS: React.FC = () => {
                                 setOrderType('dine_in');
                               }}
                               className={cn(
-                                "w-full py-1 px-1.5 rounded-xl font-bold text-[10px] flex items-center justify-center gap-1 transition-all cursor-pointer",
-                                isSelected ? "bg-amber-500 text-white" : "bg-white hover:bg-slate-100 text-slate-600 border border-slate-200"
+                                "w-full py-1.5 px-2 rounded-xl font-bold text-[11px] flex items-center justify-center gap-1 transition-all cursor-pointer",
+                                isSelected 
+                                  ? "bg-amber-500 text-white shadow-xs" 
+                                  : "bg-white hover:bg-slate-100 text-slate-700 border border-slate-200"
                               )}
                             >
-                              <span>{isSelected ? 'طاولة محددة' : 'فتح طلب'}</span>
+                              <span>{isSelected ? 'طاولة محددة ✓' : 'فتح طلب'}</span>
                             </button>
                           )}
                         </div>
                       );
                     })}
+
+                    {filteredTablesFinancials.length === 0 && (
+                      <div className="col-span-full py-6 text-center text-slate-400 text-xs">
+                        لا توجد طاولات مطابقة للتصفية المختارة
+                      </div>
+                    )}
                   </div>
                 </div>
               )}

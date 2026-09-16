@@ -236,6 +236,9 @@ export type Table = {
   id: string;
   restaurant_id: string;
   table_number: string;
+  name?: string;
+  is_occupied?: boolean;
+  capacity?: number;
 };
 
 export type CategoryOptionChoice = {
@@ -289,13 +292,26 @@ export type Profile = {
 };
 
 export type Order = {
-  id: number;
+  id: number | string;
   restaurant_id: string;
   table_id: string | null;
-  status: 'new' | 'preparing' | 'delivered' | 'cancelled';
+  status: 'new' | 'preparing' | 'ready' | 'delivered' | 'completed' | 'cancelled';
   total_price: number;
+  total_amount?: number;
+  daily_order_number?: number;
+  order_type?: 'dine_in' | 'takeaway' | 'delivery';
+  table_number?: string | number | null;
+  customer_name?: string | { name?: string };
+  customer_phone?: string;
+  delivery_address?: string | { address?: string };
+  payment_status?: 'paid' | 'unpaid' | 'refunded' | string;
+  payment_method?: 'cash' | 'card' | 'wallet' | 'split' | 'unpaid' | string;
   created_at: string;
   table?: { table_number: string };
+  order_items?: any[];
+  items?: any[];
+  notes?: string;
+  source?: string;
 };
 
 export type OrderItem = {
