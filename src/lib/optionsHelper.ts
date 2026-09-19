@@ -545,3 +545,57 @@ export async function syncAllProductOptions(): Promise<Record<string, CategoryOp
   }
   return {};
 }
+
+// -------------------------------------------------------------
+// Product Categories (Many-to-Many Categories Support)
+// -------------------------------------------------------------
+const PRODUCT_CATEGORIES_LOCAL_PREFIX = 'qrieta_product_cats_';
+
+export function getLocalProductCategories(productId: string): string[] {
+  try {
+    const raw = localStorage.getItem(`${PRODUCT_CATEGORIES_LOCAL_PREFIX}${productId}`);
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed)) return parsed;
+    }
+  } catch (e) {}
+  return [];
+}
+
+export function saveLocalProductCategories(productId: string, categoryIds: string[]) {
+  try {
+    localStorage.setItem(`${PRODUCT_CATEGORIES_LOCAL_PREFIX}${productId}`, JSON.stringify(categoryIds));
+  } catch (e) {}
+}
+
+export async function fetchAllProductCategories(): Promise<Record<string, string[]>> {
+  try {
+    const res = await fetch('/api/admin/product-categories');
+    if (res.ok) {
+      const data = await res.json();
+      if (data.categories) {
+        Object.entries(data.categories).forEach(([pid, cids]) => {
+          saveLocalProductCategories(pid, cids as string[]);
+        });
+        return data.categories;
+      }
+    }
+  } catch (e) {
+    console.warn('Fetch all product categories background error:', e);
+  }
+  return {};
+}
+
+export async function saveServerProductCategories(productId: string, categoryIds: string[]) {
+  saveLocalProductCategories(productId, categoryIds);
+  try {
+    await fetch('/api/admin/save-product-categories', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ product_id: productId, category_ids: categoryIds })
+    });
+  } catch (e) {
+    console.warn('Save server product categories background error:', e);
+  }
+}
+

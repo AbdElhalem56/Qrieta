@@ -268,6 +268,7 @@ export type Product = {
   id: string;
   restaurant_id: string;
   category_id: string;
+  category_ids?: string[];
   name_en: string;
   name_ar: string;
   description_en: string;

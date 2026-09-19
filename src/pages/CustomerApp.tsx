@@ -37,7 +37,17 @@ import {
   Trash2
 } from 'lucide-react';
 import { cn, formatCurrency } from '../lib/utils';
-import { getLocalCategoryOptions, syncAllCategoryOptions, syncAllProductOptions, resolveProductOptions, calculateProductEffectivePrice, getProductPriceRange, cleanAndEnrichOptions } from '../lib/optionsHelper';
+import { 
+  getLocalCategoryOptions, 
+  syncAllCategoryOptions, 
+  syncAllProductOptions, 
+  resolveProductOptions, 
+  calculateProductEffectivePrice, 
+  getProductPriceRange, 
+  cleanAndEnrichOptions,
+  fetchAllProductCategories,
+  getLocalProductCategories
+} from '../lib/optionsHelper';
 import { calculateDistanceMeters, getCurrentPosition, fetchAllServerGeofences, getLocalRestaurantGeofence } from '../lib/geoHelper';
 import { DeliveryZone, fetchAllServerDeliveryZones, getLocalDeliveryZones, DEFAULT_DELIVERY_ZONES } from '../lib/deliveryHelper';
 import { initMetaPixel, trackViewContent, trackAddToCart, trackPurchase, trackCallWaiter } from '../lib/analytics';

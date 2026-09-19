@@ -440,6 +440,154 @@ async function startServer() {
     }
   });
 
+  // Admin Upsert / Save Product API endpoint (guarantees DB persistence & clean payloads)
+  app.post("/api/admin/save-product", async (req, res) => {
+    const {
+      id,
+      restaurant_id,
+      category_id,
+      name_en,
+      name_ar,
+      description_en,
+      description_ar,
+      price,
+      availability,
+      image_url,
+      options,
+      category_ids
+    } = req.body;
+
+    if (!restaurant_id || !name_ar) {
+      return res.status(400).json({ error: "اسم المنتج بالعربي ومعرف المطعم مطلوبان." });
+    }
+
+    const supabaseUrl = process.env.VITE_SUPABASE_URL || process.env.SUPABASE_URL;
+    const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+    const anonKey = process.env.VITE_SUPABASE_ANON_KEY || process.env.SUPABASE_ANON_KEY;
+
+    if (!supabaseUrl) {
+      return res.status(500).json({ error: "Supabase غير مهيأ على الخادم." });
+    }
+
+    try {
+      const client = serviceRoleKey
+        ? createClient(supabaseUrl, serviceRoleKey)
+        : createClient(supabaseUrl, anonKey || "");
+
+      const cleanPrice = parseFloat(String(price || 0)) || 0;
+      const cleanAvailability = availability !== false;
+
+      // Base fields that exist on all Supabase products tables
+      const basePayload: Record<string, any> = {
+        restaurant_id,
+        name_ar: String(name_ar).trim(),
+        name_en: name_en ? String(name_en).trim() : String(name_ar).trim(),
+        price: cleanPrice,
+        availability: cleanAvailability,
+      };
+
+      if (category_id) basePayload.category_id = category_id;
+      if (description_ar !== undefined) basePayload.description_ar = description_ar || null;
+      if (description_en !== undefined) basePayload.description_en = description_en || null;
+      if (image_url !== undefined) basePayload.image_url = image_url || null;
+      if (options !== undefined) basePayload.options = options;
+
+      let savedProduct: any = null;
+
+      if (id) {
+        // Try update with full payload
+        let { data, error } = await client
+          .from("products")
+          .update(basePayload)
+          .eq("id", id)
+          .select()
+          .single();
+
+        // If error might be due to column missing (e.g. options column), retry without options
+        if (error && basePayload.options !== undefined) {
+          const fallbackPayload = { ...basePayload };
+          delete fallbackPayload.options;
+          const retry = await client
+            .from("products")
+            .update(fallbackPayload)
+            .eq("id", id)
+            .select()
+            .single();
+          data = retry.data;
+          error = retry.error;
+        }
+
+        if (error) {
+          console.error("Error updating product in Supabase:", error);
+          throw error;
+        }
+        savedProduct = data;
+      } else {
+        // Insert new product
+        let { data, error } = await client
+          .from("products")
+          .insert(basePayload)
+          .select()
+          .single();
+
+        if (error && basePayload.options !== undefined) {
+          const fallbackPayload = { ...basePayload };
+          delete fallbackPayload.options;
+          const retry = await client
+            .from("products")
+            .insert(fallbackPayload)
+            .select()
+            .single();
+          data = retry.data;
+          error = retry.error;
+        }
+
+        if (error) {
+          console.error("Error inserting product in Supabase:", error);
+          throw error;
+        }
+        savedProduct = data;
+      }
+
+      const finalProductId = savedProduct?.id || id;
+
+      // Handle product options persistence
+      if (finalProductId && options) {
+        productOptionsStore[finalProductId] = options;
+        persistProductOptions();
+      }
+
+      // Handle multiple categories persistence
+      if (finalProductId && Array.isArray(category_ids)) {
+        const cleanCats = Array.from(new Set(category_ids.filter((c: any) => typeof c === 'string' && c.trim().length > 0)));
+        productCategoriesStore[finalProductId] = cleanCats;
+        persistProductCategories();
+
+        try {
+          await client.from("product_categories").delete().eq("product_id", finalProductId);
+          if (cleanCats.length > 0) {
+            const rows = cleanCats.map(catId => ({
+              product_id: finalProductId,
+              category_id: catId
+            }));
+            await client.from("product_categories").insert(rows);
+          }
+        } catch (catDbErr) {
+          // Table product_categories may not exist yet; productCategoriesStore handles it
+        }
+      }
+
+      res.status(200).json({
+        success: true,
+        message: "تم حفظ المنتج بنجاح وتحديث قاعدة البيانات.",
+        product: savedProduct || { id: finalProductId, ...basePayload }
+      });
+    } catch (err: any) {
+      console.error("Admin save-product endpoint error:", err);
+      res.status(500).json({ error: err.message || "فشل حفظ المنتج في قاعدة البيانات." });
+    }
+  });
+
   // Admin Delete Category API endpoint
   app.post("/api/admin/delete-category", async (req, res) => {
     const { category_id } = req.body;
@@ -578,6 +726,108 @@ async function startServer() {
       console.warn("Could not sync category options from Supabase:", e);
     }
     res.status(200).json({ options: categoryOptionsStore });
+  });
+
+  // Persistent product-to-categories mapping store (for multiple categories per product)
+  const productCategoriesFilePath = path.join(process.cwd(), "product-categories.json");
+  let productCategoriesStore: Record<string, string[]> = {}; // product_id -> category_ids[]
+
+  try {
+    if (fs.existsSync(productCategoriesFilePath)) {
+      const pcData = fs.readFileSync(productCategoriesFilePath, "utf-8");
+      productCategoriesStore = JSON.parse(pcData || "{}");
+    }
+  } catch (e) {
+    console.warn("Could not read product-categories.json:", e);
+  }
+
+  const persistProductCategories = () => {
+    try {
+      fs.writeFileSync(productCategoriesFilePath, JSON.stringify(productCategoriesStore, null, 2), "utf-8");
+    } catch (e) {
+      console.warn("Could not write product-categories.json:", e);
+    }
+  };
+
+  // Get product categories map
+  app.get("/api/admin/product-categories", async (req, res) => {
+    try {
+      // Optional: sync from database if product_categories table exists
+      const supabaseUrl = process.env.VITE_SUPABASE_URL || process.env.SUPABASE_URL;
+      const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+      const anonKey = process.env.VITE_SUPABASE_ANON_KEY || process.env.SUPABASE_ANON_KEY;
+
+      if (supabaseUrl) {
+        try {
+          const client = serviceRoleKey
+            ? createClient(supabaseUrl, serviceRoleKey)
+            : createClient(supabaseUrl, anonKey || "");
+
+          const { data: dbMap } = await client.from("product_categories").select("product_id, category_id");
+          if (Array.isArray(dbMap) && dbMap.length > 0) {
+            dbMap.forEach((row: any) => {
+              if (row.product_id && row.category_id) {
+                if (!productCategoriesStore[row.product_id]) {
+                  productCategoriesStore[row.product_id] = [];
+                }
+                if (!productCategoriesStore[row.product_id].includes(row.category_id)) {
+                  productCategoriesStore[row.product_id].push(row.category_id);
+                }
+              }
+            });
+            persistProductCategories();
+          }
+        } catch (dbErr) {
+          // Table may not be created yet, fallback to local store safely
+        }
+      }
+    } catch (e) {
+      console.warn("Error syncing product_categories from DB:", e);
+    }
+
+    res.status(200).json({ categories: productCategoriesStore });
+  });
+
+  // Save multiple categories for a product
+  app.post("/api/admin/save-product-categories", async (req, res) => {
+    const { product_id, category_ids } = req.body;
+    if (!product_id) {
+      return res.status(400).json({ error: "معرف المنتج مطلوب." });
+    }
+
+    const cleanCategoryIds: string[] = Array.isArray(category_ids)
+      ? Array.from(new Set(category_ids.filter((c: any) => typeof c === 'string' && c.trim().length > 0)))
+      : [];
+
+    productCategoriesStore[product_id] = cleanCategoryIds;
+    persistProductCategories();
+
+    // Sync to Supabase product_categories table if it exists
+    const supabaseUrl = process.env.VITE_SUPABASE_URL || process.env.SUPABASE_URL;
+    const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+    const anonKey = process.env.VITE_SUPABASE_ANON_KEY || process.env.SUPABASE_ANON_KEY;
+
+    if (supabaseUrl) {
+      try {
+        const client = serviceRoleKey
+          ? createClient(supabaseUrl, serviceRoleKey)
+          : createClient(supabaseUrl, anonKey || "");
+
+        // Delete existing relations and re-insert
+        await client.from("product_categories").delete().eq("product_id", product_id);
+        if (cleanCategoryIds.length > 0) {
+          const rows = cleanCategoryIds.map(catId => ({
+            product_id,
+            category_id: catId
+          }));
+          await client.from("product_categories").insert(rows);
+        }
+      } catch (dbErr) {
+        // Table may not exist yet, store handles persistence
+      }
+    }
+
+    res.status(200).json({ success: true, product_id, category_ids: cleanCategoryIds });
   });
 
   // Persistent product options file store (for size pricing & custom product options)

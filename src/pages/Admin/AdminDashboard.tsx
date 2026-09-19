@@ -12,7 +12,10 @@ import {
   getLocalProductOptions,
   saveProductOptions,
   syncAllProductOptions,
-  resolveProductOptions
+  resolveProductOptions,
+  fetchAllProductCategories,
+  saveServerProductCategories,
+  getLocalProductCategories
 } from '../../lib/optionsHelper';
 import { 
   DeliveryZone, 
@@ -138,7 +141,9 @@ export default function AdminDashboard() {
   const [isProductModalOpen, setIsProductModalOpen] = useState(false);
   const [editingProduct, setEditingProduct] = useState<Partial<Product> | null>(null);
   const [editingProductOptions, setEditingProductOptions] = useState<CategoryOption[]>([]);
+  const [editingProductCategoryIds, setEditingProductCategoryIds] = useState<string[]>([]);
   const [serverProductOptions, setServerProductOptions] = useState<Record<string, CategoryOption[]>>({});
+  const [serverProductCategories, setServerProductCategories] = useState<Record<string, string[]>>({});
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   const [copySuccess, setCopySuccess] = useState(false);
   const [copiedDeliveryLink, setCopiedDeliveryLink] = useState(false);
@@ -525,6 +530,7 @@ export default function AdminDashboard() {
       category_id: firstCatId,
       availability: true
     });
+    setEditingProductCategoryIds(firstCatId ? [firstCatId] : []);
     setEditingProductOptions(catOpts && catOpts.length > 0 ? JSON.parse(JSON.stringify(catOpts)) : []);
     setIsProductModalOpen(true);
   };
@@ -534,6 +540,12 @@ export default function AdminDashboard() {
     const cat = categories.find(c => c.id === p.category_id);
     const resolved = resolveProductOptions(p, cat, undefined, serverProductOptions);
     setEditingProductOptions(resolved && resolved.length > 0 ? JSON.parse(JSON.stringify(resolved)) : []);
+    
+    // Resolve assigned categories
+    const storedCatIds = serverProductCategories[p.id] || getLocalProductCategories(p.id) || (p.category_ids && p.category_ids.length > 0 ? p.category_ids : []);
+    const initialCatIds = storedCatIds.length > 0 ? storedCatIds : (p.category_id ? [p.category_id] : []);
+    setEditingProductCategoryIds(initialCatIds);
+
     setIsProductModalOpen(true);
   };
 
@@ -844,6 +856,11 @@ export default function AdminDashboard() {
       // Sync server product options
       syncAllProductOptions().then((optsMap) => {
         if (optsMap) setServerProductOptions(optsMap);
+      }).catch(() => {});
+
+      // Sync server product categories (multiple categories support)
+      fetchAllProductCategories().then((catsMap) => {
+        if (catsMap) setServerProductCategories(catsMap);
       }).catch(() => {});
       
       // Process analytics safely
@@ -1226,35 +1243,81 @@ export default function AdminDashboard() {
     e.preventDefault();
     if (!editingProduct) return;
 
+    const primaryCatId = editingProductCategoryIds[0] || editingProduct.category_id || categories[0]?.id || '';
+
     const payload = {
       ...editingProduct,
       restaurant_id: profile.restaurant_id,
+      category_id: primaryCatId,
+      category_ids: editingProductCategoryIds,
+      options: editingProductOptions
     };
 
     let savedId = editingProduct.id;
 
-    if (editingProduct.id) {
-      await supabase.from('products').update(payload).eq('id', editingProduct.id);
-    } else {
-      const { data: inserted, error: insertErr } = await supabase
-        .from('products')
-        .insert(payload)
-        .select('id')
-        .single();
-      
-      if (inserted?.id) {
-        savedId = inserted.id;
+    try {
+      // 1. Call server API endpoint for guaranteed database persistence & clean schemas
+      const res = await fetch('/api/admin/save-product', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+      });
+
+      if (res.ok) {
+        const data = await res.json();
+        if (data.product?.id) {
+          savedId = data.product.id;
+        }
+      } else {
+        // Fallback directly to client Supabase if server API fails
+        if (editingProduct.id) {
+          await supabase.from('products').update({
+            restaurant_id: payload.restaurant_id,
+            category_id: payload.category_id,
+            name_en: payload.name_en,
+            name_ar: payload.name_ar,
+            description_en: payload.description_en,
+            description_ar: payload.description_ar,
+            price: payload.price,
+            availability: payload.availability,
+            image_url: payload.image_url
+          }).eq('id', editingProduct.id);
+        } else {
+          const { data: inserted } = await supabase
+            .from('products')
+            .insert({
+              restaurant_id: payload.restaurant_id,
+              category_id: payload.category_id,
+              name_en: payload.name_en,
+              name_ar: payload.name_ar,
+              description_en: payload.description_en,
+              description_ar: payload.description_ar,
+              price: payload.price,
+              availability: payload.availability,
+              image_url: payload.image_url
+            })
+            .select('id')
+            .single();
+          if (inserted?.id) savedId = inserted.id;
+        }
       }
+    } catch (saveErr) {
+      console.warn('Error saving product via API, falling back to direct:', saveErr);
     }
 
     if (savedId) {
       await saveProductOptions(savedId, editingProductOptions);
       setServerProductOptions(prev => ({ ...prev, [savedId!]: editingProductOptions }));
+
+      // Save multiple categories
+      await saveServerProductCategories(savedId, editingProductCategoryIds);
+      setServerProductCategories(prev => ({ ...prev, [savedId!]: editingProductCategoryIds }));
     }
     
     setIsProductModalOpen(false);
     setEditingProduct(null);
     setEditingProductOptions([]);
+    setEditingProductCategoryIds([]);
     fetchData();
   };
 
@@ -2604,7 +2667,25 @@ export default function AdminDashboard() {
                       </td>
                       <td className="px-6 py-4 font-bold">{formatCurrency(p.price)}</td>
                       <td className="px-6 py-4 text-sm text-gray-500">
-                        {categories.find(c => c.id === p.category_id)?.name_ar || 'غير مصنف'}
+                        {(() => {
+                          const catIds = serverProductCategories[p.id] || getLocalProductCategories(p.id) || (p.category_ids && p.category_ids.length > 0 ? p.category_ids : (p.category_id ? [p.category_id] : []));
+                          if (!catIds || catIds.length === 0) return 'غير مصنف';
+                          const matchedNames = catIds
+                            .map((cid: string) => categories.find(c => c.id === cid)?.name_ar)
+                            .filter(Boolean);
+                          if (matchedNames.length === 0) {
+                            return categories.find(c => c.id === p.category_id)?.name_ar || 'غير مصنف';
+                          }
+                          return (
+                            <div className="flex flex-wrap gap-1">
+                              {matchedNames.map((name: string, nIdx: number) => (
+                                <span key={nIdx} className="bg-slate-100 text-slate-700 px-2 py-0.5 rounded-md text-xs font-semibold">
+                                  {name}
+                                </span>
+                              ))}
+                            </div>
+                          );
+                        })()}
                       </td>
                       <td className="px-6 py-4">
                         <div className="flex justify-center">
@@ -4035,13 +4116,16 @@ export default function AdminDashboard() {
                       />
                     </div>
                     <div className="col-span-1">
-                      <label className="block text-xs font-black uppercase text-gray-400 mb-2">التصنيف *</label>
+                      <label className="block text-xs font-black uppercase text-gray-400 mb-2">التصنيف الأساسي *</label>
                       <select 
                         className="w-full bg-gray-50 border border-gray-200 focus:bg-white rounded-xl px-4 py-3 outline-none focus:ring-2 ring-orange-500 text-right font-bold text-sm"
                         value={editingProduct?.category_id || ''}
                         onChange={e => {
                           const newCatId = e.target.value;
                           setEditingProduct({...editingProduct, category_id: newCatId});
+                          if (newCatId && !editingProductCategoryIds.includes(newCatId)) {
+                            setEditingProductCategoryIds(prev => [newCatId, ...prev.filter(id => id !== newCatId)]);
+                          }
                           const targetCat = categories.find(c => c.id === newCatId);
                           const catOpts = targetCat?.options || (targetCat?.id ? getLocalCategoryOptions(targetCat.id, targetCat?.name_ar, targetCat?.name_en) : []);
                           if (catOpts && catOpts.length > 0) {
@@ -4051,13 +4135,72 @@ export default function AdminDashboard() {
                           }
                         }}
                       >
-                        <option value="">اختر التصنيف</option>
+                        <option value="">اختر التصنيف الأساسي</option>
                         {categories.length === 0 ? (
                           <option value="" disabled>لا توجد تصنيفات مضافة حتى الآن</option>
                         ) : (
                           categories.map(c => <option key={c.id} value={c.id}>{c.name_ar} ({c.name_en})</option>)
                         )}
                       </select>
+                    </div>
+
+                    {/* Multiple Categories Selection */}
+                    <div className="col-span-1 sm:col-span-2 bg-amber-50/40 p-4 rounded-2xl border border-amber-100/80">
+                      <div className="flex items-center justify-between mb-2">
+                        <label className="text-xs font-black text-amber-900 flex items-center gap-1.5">
+                          <Tags size={15} className="text-amber-600" />
+                          <span>إدراج المنتج في عدة تصنيفات (Multiple Categories)</span>
+                        </label>
+                        <span className="text-[11px] font-bold text-amber-700 bg-amber-100 px-2 py-0.5 rounded-md">
+                          {editingProductCategoryIds.length} تصنيف محدد
+                        </span>
+                      </div>
+                      <p className="text-[11px] text-gray-500 font-medium mb-3">
+                        يمكنك اختيار أكثر من تصنيف يظهر فيه هذا المنتج للزبون والكاشير (مثال: الفراخ تظهر في المشويات وأيضاً في الوجبات السريعة).
+                      </p>
+                      <div className="flex flex-wrap gap-2">
+                        {categories.map(cat => {
+                          const isSelected = editingProductCategoryIds.includes(cat.id);
+                          const isPrimary = editingProduct?.category_id === cat.id;
+                          return (
+                            <button
+                              key={cat.id}
+                              type="button"
+                              onClick={() => {
+                                setEditingProductCategoryIds(prev => {
+                                  if (prev.includes(cat.id)) {
+                                    const next = prev.filter(id => id !== cat.id);
+                                    if (editingProduct?.category_id === cat.id) {
+                                      setEditingProduct(p => p ? ({ ...p, category_id: next[0] || '' }) : null);
+                                    }
+                                    return next;
+                                  } else {
+                                    const next = [...prev, cat.id];
+                                    if (!editingProduct?.category_id) {
+                                      setEditingProduct(p => p ? ({ ...p, category_id: cat.id }) : null);
+                                    }
+                                    return next;
+                                  }
+                                });
+                              }}
+                              className={cn(
+                                "flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold transition-all border cursor-pointer select-none",
+                                isSelected 
+                                  ? "bg-amber-600 text-white border-amber-600 shadow-sm" 
+                                  : "bg-white text-gray-700 border-gray-200 hover:border-amber-300"
+                              )}
+                            >
+                              <span>{cat.name_ar || cat.name_en}</span>
+                              {isPrimary && (
+                                <span className="bg-amber-800 text-[9px] px-1.5 py-0.2 rounded text-amber-100 font-bold">
+                                  أساسي
+                                </span>
+                              )}
+                              {isSelected && <Check size={13} className="mr-0.5" />}
+                            </button>
+                          );
+                        })}
+                      </div>
                     </div>
 
                     {/* Product Image Management */}
