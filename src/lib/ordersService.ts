@@ -486,13 +486,7 @@ export function playNewOrderAlertSound(): void {
 export function getDisplayOrderNumber(order: any): number | string {
   if (!order) return 1;
 
-  // 1. Direct daily_order_number field
-  if (order.daily_order_number !== undefined && order.daily_order_number !== null) {
-    const n = Number(order.daily_order_number);
-    if (!isNaN(n) && n > 0) return n;
-  }
-
-  // 2. Parse from notes (e.g. "[طلب زبون #5 | ...]" or "[طلب كاشير POS #12 | ...]")
+  // 1. Highest priority: Parse from notes (e.g. "[طلب زبون #5 | ...]" or "[طلب كاشير POS #12 | ...]")
   const sourcesToCheck = [
     order.notes,
     order.delivery_notes,
@@ -508,6 +502,12 @@ export function getDisplayOrderNumber(order: any): number | string {
         if (!isNaN(parsed) && parsed > 0) return parsed;
       }
     }
+  }
+
+  // 2. Direct daily_order_number field if valid
+  if (order.daily_order_number !== undefined && order.daily_order_number !== null) {
+    const n = Number(order.daily_order_number);
+    if (!isNaN(n) && n > 0) return n;
   }
 
   // 3. Clean string ID or numeric fallback
@@ -641,7 +641,12 @@ export function syncCustomerDeviceOrdersWithLive(
           existing.status = live.status;
         }
         existing.payment_status = live.payment_status || existing.payment_status;
-        if (live.daily_order_number) existing.daily_order_number = live.daily_order_number;
+        const resolvedSeq = getDisplayOrderNumber(live);
+        if (typeof resolvedSeq === 'number' && resolvedSeq > 0) {
+          existing.daily_order_number = resolvedSeq;
+        } else if (live.daily_order_number) {
+          existing.daily_order_number = Number(live.daily_order_number);
+        }
         if (live.customer_name && !existing.customer_name) existing.customer_name = live.customer_name;
         if (live.customer_phone && !existing.customer_phone) existing.customer_phone = live.customer_phone;
         if (live.customer_email && !existing.customer_email) existing.customer_email = live.customer_email;
@@ -655,9 +660,14 @@ export function syncCustomerDeviceOrdersWithLive(
       const matchesEmail = trimmedEmail && live.customer_email && String(live.customer_email).trim().toLowerCase() === trimmedEmail;
 
       if ((matchesTable || matchesPhone || matchesEmail) && (live.source === 'customer_app' || !live.source)) {
+        const resolvedLiveSeq = getDisplayOrderNumber(live);
+        const dailySeq = (typeof resolvedLiveSeq === 'number' && resolvedLiveSeq > 0)
+          ? resolvedLiveSeq
+          : (Number(live.daily_order_number) || 1);
+
         const newSavedOrder: CustomerSavedOrder = {
           id: live.id,
-          daily_order_number: Number(live.daily_order_number) || 1,
+          daily_order_number: dailySeq,
           restaurant_id: live.restaurant_id,
           order_type: live.order_type,
           table_number: live.table_number,

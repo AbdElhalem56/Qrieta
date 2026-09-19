@@ -48,9 +48,8 @@ export const OPTION_PRESETS: OptionPreset[] = [
       name_ar: 'درجة الطعم',
       name_en: 'Spiciness',
       choices: [
-        { id: 'regular', name_ar: 'عادي (Regular)', name_en: 'Regular', price_delta: 0 },
-        { id: 'spicy', name_ar: 'سبايسي (Spicy)', name_en: 'Spicy', price_delta: 0 },
-        { id: 'extra_spicy', name_ar: 'إكسترا سبايسي (Extra Spicy)', name_en: 'Extra Spicy', price_delta: 0 }
+        { id: 'regular', name_ar: 'عادي (Regular)', name_en: 'Regular', price: 100, price_delta: 0 },
+        { id: 'spicy', name_ar: 'سبايسي (Spicy)', name_en: 'Spicy', price: 120, price_delta: 20 }
       ]
     }
   },
@@ -191,12 +190,11 @@ export function getSmartDefaultOptions(
     return [
       {
         id: 'spice_level',
-        name_ar: 'درجة الحرارة / الطعم',
+        name_ar: 'درجة الطعم',
         name_en: 'Spiciness',
         choices: [
-          { id: 'regular', name_ar: 'عادي (Regular)', name_en: 'Regular', price_delta: 0 },
-          { id: 'spicy', name_ar: 'سبايسي (Spicy)', name_en: 'Spicy', price_delta: 0 },
-          { id: 'extra_spicy', name_ar: 'إكسترا سبايسي (Extra Spicy)', name_en: 'Extra Spicy', price_delta: 0 }
+          { id: 'regular', name_ar: 'عادي (Regular)', name_en: 'Regular', price: 100, price_delta: 0 },
+          { id: 'spicy', name_ar: 'سبايسي (Spicy)', name_en: 'Spicy', price: 120, price_delta: 20 }
         ]
       }
     ];
@@ -277,69 +275,117 @@ export function getLocalProductOptions(productId: string): CategoryOption[] {
   return [];
 }
 
+export function cleanAndEnrichOptions(
+  options: CategoryOption[],
+  product?: { name_ar?: string; name_en?: string },
+  category?: { name_ar?: string; name_en?: string }
+): CategoryOption[] {
+  if (!Array.isArray(options)) return [];
+
+  const combined = `${product?.name_ar || ''} ${product?.name_en || ''} ${category?.name_ar || ''} ${category?.name_en || ''}`.toLowerCase();
+  const isChicken = combined.includes('فراخ') || combined.includes('دجاج') || combined.includes('chicken') || combined.includes('fried') || combined.includes('فرايد');
+
+  return options.map(opt => {
+    // 1. Remove extra_spicy choice always
+    let choices = (opt.choices || []).filter(c => c.id !== 'extra_spicy');
+
+    // 2. If this is spice_level for chicken category/product, ensure regular is 100 and spicy is 120 if not explicitly priced
+    if (isChicken && (opt.id.includes('spice') || opt.name_ar?.includes('طعم') || opt.name_ar?.includes('حرارة') || opt.name_en?.toLowerCase().includes('spice'))) {
+      choices = choices.map(c => {
+        if (c.id === 'regular') {
+          return {
+            ...c,
+            price: (c.price !== undefined && c.price !== null && !isNaN(Number(c.price)) && Number(c.price) > 0) ? Number(c.price) : 100,
+            price_delta: (c.price_delta !== undefined && c.price_delta !== null) ? Number(c.price_delta) : 0
+          };
+        }
+        if (c.id === 'spicy') {
+          return {
+            ...c,
+            price: (c.price !== undefined && c.price !== null && !isNaN(Number(c.price)) && Number(c.price) > 0) ? Number(c.price) : 120,
+            price_delta: (c.price_delta !== undefined && c.price_delta !== null && Number(c.price_delta) > 0) ? Number(c.price_delta) : 20
+          };
+        }
+        return c;
+      });
+    }
+
+    return {
+      ...opt,
+      choices
+    };
+  }).filter(opt => opt.choices && opt.choices.length > 0);
+}
+
 export function resolveProductOptions(
   product: { id?: string; name_ar?: string; name_en?: string; category_id?: string; options?: any },
   category?: { id?: string; name_ar?: string; name_en?: string; options?: any },
   serverCategoryOptionsMap?: Record<string, CategoryOption[]>,
   serverProductOptionsMap?: Record<string, CategoryOption[]>
 ): CategoryOption[] {
-  // 1. Direct product options if attached to product object
-  let directProductOpts = product?.options;
-  if (typeof directProductOpts === 'string') {
-    try { directProductOpts = JSON.parse(directProductOpts); } catch (e) { directProductOpts = undefined; }
-  }
-  if (Array.isArray(directProductOpts) && directProductOpts.length > 0) {
-    return directProductOpts;
-  }
-
-  // 2. Server product-specific options (with explicit size pricing)
-  if (product?.id && serverProductOptionsMap && serverProductOptionsMap[product.id] && Array.isArray(serverProductOptionsMap[product.id]) && serverProductOptionsMap[product.id].length > 0) {
-    return serverProductOptionsMap[product.id];
-  }
-
-  // 3. Local product-specific options
-  if (product?.id) {
-    const localProdOpts = getLocalProductOptions(product.id);
-    if (localProdOpts && Array.isArray(localProdOpts) && localProdOpts.length > 0) {
-      return localProdOpts;
-    }
-  }
-
-  // 4. Category options if present on category object
+  // Category options resolver helper
   let directCatOpts = category?.options;
   if (typeof directCatOpts === 'string') {
     try { directCatOpts = JSON.parse(directCatOpts); } catch (e) { directCatOpts = undefined; }
   }
-  if (Array.isArray(directCatOpts) && directCatOpts.length > 0) {
-    return directCatOpts;
-  }
 
-  // 5. Server category options map
   const catId = category?.id || product?.category_id;
-  if (catId && serverCategoryOptionsMap && serverCategoryOptionsMap[catId] && serverCategoryOptionsMap[catId].length > 0) {
-    return serverCategoryOptionsMap[catId];
-  }
+  const serverCatOpts = (catId && serverCategoryOptionsMap && serverCategoryOptionsMap[catId]) ? serverCategoryOptionsMap[catId] : undefined;
 
-  // 6. Local category storage
+  let localCatOpts: CategoryOption[] | undefined;
   if (catId) {
     try {
       const raw = localStorage.getItem(`${LOCAL_STORAGE_KEY_PREFIX}${catId}`);
       if (raw) {
         const parsed = JSON.parse(raw);
-        if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+        if (Array.isArray(parsed) && parsed.length > 0) localCatOpts = parsed;
       }
     } catch (e) {
       // ignore
     }
   }
 
-  // 7. Smart options from Product Name + Category Name
-  return getSmartDefaultOptions(
+  const resolvedCategoryOptions = (Array.isArray(directCatOpts) && directCatOpts.length > 0)
+    ? directCatOpts
+    : ((Array.isArray(serverCatOpts) && serverCatOpts.length > 0)
+      ? serverCatOpts
+      : localCatOpts);
+
+  // If category has explicit option configuration from admin, it takes authoritative precedence for items in that category
+  if (resolvedCategoryOptions && resolvedCategoryOptions.length > 0) {
+    return cleanAndEnrichOptions(resolvedCategoryOptions, product, category);
+  }
+
+  // 1. Direct product options if attached to product object
+  let directProductOpts = product?.options;
+  if (typeof directProductOpts === 'string') {
+    try { directProductOpts = JSON.parse(directProductOpts); } catch (e) { directProductOpts = undefined; }
+  }
+  if (Array.isArray(directProductOpts) && directProductOpts.length > 0) {
+    return cleanAndEnrichOptions(directProductOpts, product, category);
+  }
+
+  // 2. Server product-specific options (with explicit size pricing)
+  if (product?.id && serverProductOptionsMap && serverProductOptionsMap[product.id] && Array.isArray(serverProductOptionsMap[product.id]) && serverProductOptionsMap[product.id].length > 0) {
+    return cleanAndEnrichOptions(serverProductOptionsMap[product.id], product, category);
+  }
+
+  // 3. Local product-specific options
+  if (product?.id) {
+    const localProdOpts = getLocalProductOptions(product.id);
+    if (localProdOpts && Array.isArray(localProdOpts) && localProdOpts.length > 0) {
+      return cleanAndEnrichOptions(localProdOpts, product, category);
+    }
+  }
+
+  // 4. Smart options from Product Name + Category Name
+  const smartOpts = getSmartDefaultOptions(
     product?.name_ar || '',
     product?.name_en || '',
     category?.name_ar || '',
     category?.name_en || ''
   );
+  return cleanAndEnrichOptions(smartOpts, product, category);
 }
 
 export function calculateProductEffectivePrice(
@@ -356,24 +402,20 @@ export function calculateProductEffectivePrice(
     const selectedChoiceId = selectedOptionsMap[opt.id] || (opt.choices[0]?.id);
     const choice = opt.choices.find(c => c.id === selectedChoiceId);
     if (choice) {
-      const hasPrice = choice.price !== undefined && choice.price !== null && !isNaN(Number(choice.price));
+      const hasPrice = choice.price !== undefined && choice.price !== null && !isNaN(Number(choice.price)) && Number(choice.price) > 0;
       const hasDelta = choice.price_delta !== undefined && choice.price_delta !== null && !isNaN(Number(choice.price_delta));
       const numPrice = hasPrice ? Number(choice.price) : undefined;
       const numDelta = hasDelta ? Number(choice.price_delta) : undefined;
 
-      if (hasDelta && numDelta !== undefined && numDelta !== 0) {
-        totalDelta += numDelta;
-      } else if (hasPrice && numPrice !== undefined && basePrice > 0) {
-        // Delta relative to base product price
-        totalDelta += (numPrice - basePrice);
-      } else if (hasPrice && numPrice !== undefined && basePrice === 0) {
-        // If product base price is 0, this choice defines the standalone price
+      if (hasPrice && numPrice !== undefined) {
         if (!hasExplicitStandalonePrice) {
           standalonePrice = numPrice;
           hasExplicitStandalonePrice = true;
         } else {
-          totalDelta += numPrice;
+          totalDelta += (numDelta !== undefined && numDelta !== 0 ? numDelta : (numPrice - basePrice));
         }
+      } else if (hasDelta && numDelta !== undefined) {
+        totalDelta += numDelta;
       }
     }
   });

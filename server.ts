@@ -542,7 +542,41 @@ async function startServer() {
   });
 
   // Get All Category Options API
-  app.get("/api/category-options", (req, res) => {
+  app.get("/api/category-options", async (req, res) => {
+    try {
+      const supabaseUrl = process.env.VITE_SUPABASE_URL || process.env.SUPABASE_URL;
+      const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+      const anonKey = process.env.VITE_SUPABASE_ANON_KEY || process.env.SUPABASE_ANON_KEY;
+
+      if (supabaseUrl) {
+        const client = serviceRoleKey
+          ? createClient(supabaseUrl, serviceRoleKey)
+          : createClient(supabaseUrl, anonKey || "");
+
+        const { data: cats } = await client
+          .from("categories")
+          .select("id, name_ar, name_en, options")
+          .not("options", "is", null);
+
+        if (Array.isArray(cats)) {
+          cats.forEach((c: any) => {
+            let opts = c.options;
+            if (typeof opts === "string") {
+              try { opts = JSON.parse(opts); } catch (e) { opts = null; }
+            }
+            if (Array.isArray(opts) && opts.length > 0) {
+              const cleanedOpts = opts.map((opt: any) => ({
+                ...opt,
+                choices: (opt.choices || []).filter((ch: any) => ch.id !== 'extra_spicy')
+              }));
+              categoryOptionsStore[c.id] = cleanedOpts;
+            }
+          });
+        }
+      }
+    } catch (e) {
+      console.warn("Could not sync category options from Supabase:", e);
+    }
     res.status(200).json({ options: categoryOptionsStore });
   });
 
@@ -1401,9 +1435,27 @@ async function startServer() {
 
               if (matchesEmail || matchesPhone) {
                 if (!matchedMap.has(String(dbo.id))) {
+                  let dailyNum = 0;
+                  const noteMatch = firstItemNotes.match(/#(\d+)/);
+                  if (noteMatch && noteMatch[1]) {
+                    const parsed = parseInt(noteMatch[1], 10);
+                    if (!isNaN(parsed) && parsed > 0) {
+                      dailyNum = parsed;
+                    }
+                  }
+                  if (!dailyNum && dbo.daily_order_number) {
+                    const parsed = parseInt(String(dbo.daily_order_number), 10);
+                    if (!isNaN(parsed) && parsed > 0 && parsed < 10000) {
+                      dailyNum = parsed;
+                    }
+                  }
+                  if (!dailyNum) {
+                    dailyNum = dbo.id;
+                  }
+
                   matchedMap.set(String(dbo.id), {
                     id: dbo.id,
-                    daily_order_number: dbo.daily_order_number || dbo.id,
+                    daily_order_number: dailyNum,
                     restaurant_id: dbo.restaurant_id,
                     source: "customer_app",
                     order_type: firstItemNotes.includes("دليفري") ? "delivery" : "dine_in",

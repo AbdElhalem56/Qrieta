@@ -84,7 +84,8 @@ export function getProductOptionGroups(
           groupName.includes('نوع') ||
           groupName.includes('درجة');
 
-        const choices: POSOptionChoice[] = opt.choices.map((ch: any, cIdx: number) => {
+        const validChoices = opt.choices.filter((ch: any) => ch.id !== 'extra_spicy');
+        const choices: POSOptionChoice[] = validChoices.map((ch: any, cIdx: number) => {
           let delta = 0;
           const choicePrice = (ch.price !== undefined && ch.price !== null && !isNaN(Number(ch.price))) ? Number(ch.price) : undefined;
           const choiceDelta = (ch.price_delta !== undefined && ch.price_delta !== null && !isNaN(Number(ch.price_delta))) ? Number(ch.price_delta) : undefined;

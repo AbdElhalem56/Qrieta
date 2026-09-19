@@ -37,7 +37,7 @@ import {
   Trash2
 } from 'lucide-react';
 import { cn, formatCurrency } from '../lib/utils';
-import { getLocalCategoryOptions, syncAllCategoryOptions, syncAllProductOptions, resolveProductOptions, calculateProductEffectivePrice, getProductPriceRange } from '../lib/optionsHelper';
+import { getLocalCategoryOptions, syncAllCategoryOptions, syncAllProductOptions, resolveProductOptions, calculateProductEffectivePrice, getProductPriceRange, cleanAndEnrichOptions } from '../lib/optionsHelper';
 import { calculateDistanceMeters, getCurrentPosition, fetchAllServerGeofences, getLocalRestaurantGeofence } from '../lib/geoHelper';
 import { DeliveryZone, fetchAllServerDeliveryZones, getLocalDeliveryZones, DEFAULT_DELIVERY_ZONES } from '../lib/deliveryHelper';
 import { initMetaPixel, trackViewContent, trackAddToCart, trackPurchase, trackCallWaiter } from '../lib/analytics';
@@ -393,12 +393,19 @@ export default function CustomerApp() {
       const results = await Promise.all(queries);
       const fallbackData = getInitialOfflineFallbackData(res.id);
       const rawCategories = (results[0].data && results[0].data.length > 0) ? results[0].data : fallbackData.categories;
-      const formattedCategories = rawCategories.map((cat: any) => ({
-        ...cat,
-        options: cat.options && cat.options.length > 0 
-          ? cat.options 
-          : (syncedOpts[cat.id] || getLocalCategoryOptions(cat.id, cat.name_ar, cat.name_en))
-      }));
+      const formattedCategories = rawCategories.map((cat: any) => {
+        let catOptions = cat.options;
+        if (typeof catOptions === 'string') {
+          try { catOptions = JSON.parse(catOptions); } catch (e) { catOptions = null; }
+        }
+        if (!catOptions || (Array.isArray(catOptions) && catOptions.length === 0)) {
+          catOptions = syncedOpts[cat.id] || getLocalCategoryOptions(cat.id, cat.name_ar, cat.name_en);
+        }
+        return {
+          ...cat,
+          options: cleanAndEnrichOptions(catOptions, cat.name_ar, cat.name_en)
+        };
+      });
 
       setCategories(formattedCategories);
       const rawProducts = (results[1].data && results[1].data.length > 0) ? results[1].data : fallbackData.products;
@@ -1068,7 +1075,7 @@ export default function CustomerApp() {
 
       setCart([]);
       setIsCartOpen(false);
-      setLastOrderId(typeof finalOrderId === 'number' ? finalOrderId : dailySeqNum);
+      setLastOrderId(dailySeqNum);
       setPlacedDailyOrderNum(dailySeqNum);
       setPlacedOrderTotal(total);
       setPlacedOrderIsPrepaid(isPrepaidRest && !isDeliveryOrder);
@@ -2527,7 +2534,7 @@ export default function CustomerApp() {
                 </div>
                 <div className="bg-white/15 px-4 py-2 rounded-xl border border-white/20">
                   <span className="text-3xl sm:text-4xl font-black font-mono tracking-tight text-white">
-                    #{placedDailyOrderNum || lastOrderId || 1}
+                    #{placedDailyOrderNum || (customerOrders[0] ? getDisplayOrderNumber(customerOrders[0]) : 1)}
                   </span>
                 </div>
               </div>
@@ -2547,7 +2554,7 @@ export default function CustomerApp() {
                     </span>{' '}
                     للطلب الخاص بك رقم{' '}
                     <span className="text-sm sm:text-base font-black text-amber-950 bg-amber-200/90 px-2 py-0.5 rounded-lg font-mono">
-                      #{placedDailyOrderNum || lastOrderId || 1}
+                      #{placedDailyOrderNum || (customerOrders[0] ? getDisplayOrderNumber(customerOrders[0]) : 1)}
                     </span>
                   </p>
                   <p className="text-[11px] text-amber-700 font-medium">
